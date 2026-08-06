@@ -175,6 +175,7 @@ def render_clahe_blend(
     background_std: float,
     blend_radius_um: float,
     pixel_size_um: float,
+    use_clahe: bool = True,
     **_ignored,
 ) -> np.ndarray:
     """The historical BF path: CLAHE, then blend against synthetic background noise.
@@ -182,6 +183,11 @@ def render_clahe_blend(
     Photometric and proud of it -- this product is a model input, not a measurement. Imported
     lazily so the recipe registry does not drag skimage's CLAHE into every module that merely wants
     to KNOW what recipes exist.
+
+    ``use_clahe=False`` keeps the noise blend but skips the equalization, for sources that arrive
+    already normalized (SeaHub's inverted 8-bit images set it via the runtime overlay). That is a
+    property of the SOURCE, not a different product, which is why it is a parameter here rather
+    than a third registry entry -- the output is still the CLAHE-path BF snip, contract and all.
     """
     from data_pipeline.object_extraction.snip_processing.augmentation import augment_snip
 
@@ -192,6 +198,7 @@ def render_clahe_blend(
         background_std,
         blend_radius_um=float(blend_radius_um),
         pixel_size_um=float(pixel_size_um),
+        use_clahe=bool(use_clahe),
     )
     return augmented
 

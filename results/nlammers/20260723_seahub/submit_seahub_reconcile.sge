@@ -1,0 +1,50 @@
+#!/bin/bash
+# Regenerate the reconciled SeaHub FOV table in a fresh production run root.
+
+#$ -N seahub_reconcile
+#$ -cwd
+#$ -q trapnell-short.q
+#$ -l mfree=8G
+#$ -l h_rt=3600
+#$ -pe serial 1
+#$ -o /net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/logs/seahub_reconcile.$JOB_ID.out
+#$ -e /net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/logs/seahub_reconcile.$JOB_ID.err
+
+set -euo pipefail
+
+REPO_ROOT="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq"
+SRC_ROOT="${REPO_ROOT}/src"
+WORK_DIR="${REPO_ROOT}/results/nlammers/20260723_seahub"
+source "${WORK_DIR}/seahub_run_env.sh"
+seahub_configure_run \
+    "${WORK_DIR}" \
+    "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/seahub/derived"
+
+INTEGRATION_DIR="${SEAHUB_RUN_ROOT}/integration"
+IMAGE_RECONCILIATION="${WORK_DIR}/outputs/image_metadata_reconciliation.csv"
+COLLECTION_METADATA="/net/trapnell/vol1/home/nlammers/projects/data/morphseq/seahub/metadata/collection_metadata.xlsx"
+CONDA="/net/trapnell/vol1/home/nlammers/micromamba/bin/conda"
+
+if [[ -e "${SEAHUB_RUN_ROOT}" ]]; then
+    EXISTING="$(find "${SEAHUB_RUN_ROOT}" -mindepth 1 -print -quit)"
+    if [[ -n "${EXISTING}" ]]; then
+        echo "ERROR: refusing nonempty SeaHub run root: ${SEAHUB_RUN_ROOT}" >&2
+        echo "First existing entry: ${EXISTING}" >&2
+        exit 2
+    fi
+fi
+
+mkdir -p "${REPO_ROOT}/logs" "${INTEGRATION_DIR}"
+cd "${REPO_ROOT}"
+
+echo "=== SeaHub reconciliation START $(date) ==="
+echo "run_id=${SEAHUB_RUN_ID} run_root=${SEAHUB_RUN_ROOT}"
+"${CONDA}" run -n morphseq-env --no-capture-output \
+    env PYTHONPATH="${SRC_ROOT}" PYTHONDONTWRITEBYTECODE=1 \
+    python -m data_pipeline.acquisition.seahub reconcile \
+    --image-reconciliation-csv "${IMAGE_RECONCILIATION}" \
+    --collection-metadata-xlsx "${COLLECTION_METADATA}" \
+    --output-dir "${INTEGRATION_DIR}"
+
+test -s "${INTEGRATION_DIR}/reconciled_fovs.csv"
+echo "=== SeaHub reconciliation FINISHED $(date) ==="

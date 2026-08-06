@@ -1,0 +1,8 @@
+asset,path,exists,detail
+packaged_reference_used_by_QC,/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/data_pipeline/quality_control/surface_area_qc/references/surface_area_reference_v1.csv,True,Authoritative v1 p5/p50/p95 stage curve used in this analysis.
+original_reference_curve,/net/trapnell/vol1/home/mdcolon/proj/morphseq/metadata/sa_reference_curves.csv,True,README states v1 was copied verbatim from this file.
+reference_build_script,/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/data_pipeline/quality_control/generate_references/build_sa_reference.py,True,"Intended to filter WT/control rows, but control_flag is True for every archived source row; see reference_cohort_audit.csv."
+reference_source_tables,/net/trapnell/vol1/home/mdcolon/proj/morphseq/morphseq_playground/metadata/build04_output,True,87 qc_staged CSVs; 1.88 GB.
+strict_WT_stage_snapshot,/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/results/nlammers/20260723_seahub/outputs/surface_area_calibration/strict_wt_reference_stage_summary.csv,True,"Explicit WT genotype and/or phenotype=wt, no chemical perturbation, use_embryo=True, +/-0.25 hpf windows."
+quarantined_SeaHub_pipeline_products,/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline/stale_output/20260730_SeaHub_full_reset/active_pipeline,True,23 experiments with merged mask geometry and stage prediction.
+quarantined_SeaHub_materialization_bundle,/net/trapnell/vol1/home/nlammers/projects/data/morphseq/seahub/derived/stale/20260730_SeaHub_full_reset/bundle,True,Plate metadata used to identify controls and source FOVs.

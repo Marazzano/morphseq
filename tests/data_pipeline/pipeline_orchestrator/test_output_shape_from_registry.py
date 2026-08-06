@@ -62,7 +62,7 @@ _GRANDFATHERED: frozenset[str] = frozenset({
     "build_physical_embryo_registry_for_well",
     "build_pose_kinematics_for_well",
     "build_snip_auxiliary_masks_for_well",
-    # The two resident-model-server client rules (2026-07-25). They are per-well by design and
+    # The resident-model-server client rules. They are per-well by design and
     # agree with the registry (both steps are EXECUTION_PER_WELL): a server changes WHERE the model
     # lives, not how many jobs Snakemake runs. Each is a thin socket client paired with a
     # service() rule that loads the model once per run. They are listed here for the same reason as
@@ -79,6 +79,7 @@ _GRANDFATHERED: frozenset[str] = frozenset({
     # intensity off a CLAHE'd raster is a different quantity from intensity off a quantitative one,
     # so the source product belongs in the key.
     "channel_intensity_per_well",
+    "frame_masks_per_well_served",
     "build_snip_qc_for_well",
     "build_stage_predictions_for_well",
     "build_surface_area_qc_for_well",
@@ -110,7 +111,6 @@ _GRANDFATHERED: frozenset[str] = frozenset({
     "validate_frame_inventory_for_well",
     "validate_frame_inventory_product_for_well",
     "validate_frame_masks_for_well",
-    "validate_latent_embeddings_for_well",
     "validate_mask_geometry_for_well",
     "validate_mask_quality_qc_for_well",
     "validate_motion_blur_qc_for_well",
@@ -121,11 +121,6 @@ _GRANDFATHERED: frozenset[str] = frozenset({
     "validate_snip_qc_for_well",
     "validate_stage_predictions_for_well",
     "validate_surface_area_qc_for_well",
-    # latent_embeddings is the one step still DECLARING run_batch while its rule fans out per
-    # well. It is exempt here only because step_outputs() does not exist (see the note above this
-    # list) -- not because the pairing is correct. It is CPU-bound, so unlike the GPU steps it was
-    # not given a resident server; the honest fix is to retag the registry row PER_WELL.
-    "encode_latent_embeddings_for_well",
     "write_resolved_product_plan_for_well",
     "write_snip_qc_resolved_sources_for_well",
 })

@@ -68,7 +68,6 @@ def validate_surface_area_qc(
 
     from data_pipeline.quality_control.applicability import (
         ALLOWED_QC_APPLICABILITY,
-        QC_APPLICABILITY_DIAGNOSTIC_ONLY,
         QC_APPLICABILITY_NOT_APPLICABLE,
     )
 
@@ -78,10 +77,6 @@ def validate_surface_area_qc(
         raise ValueError(
             f"{scope_label}: surface_area_qc_applicability has unknown value(s) "
             f"{unknown}."
-        )
-    if applicability.eq(QC_APPLICABILITY_DIAGNOSTIC_ONLY).any():
-        raise ValueError(
-            f"{scope_label}: surface-area QC is either exclusion-capable or not applicable."
         )
     not_applicable = applicability.eq(QC_APPLICABILITY_NOT_APPLICABLE)
     if df.loc[not_applicable, "sa_outlier_flag"].any():

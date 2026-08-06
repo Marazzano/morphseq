@@ -1,0 +1,59 @@
+Loading R/4.4.1
+  Loading requirement: hdf5/1.14.3-cxxenabled geos/3.13.0 gdal/3.9.2
+    flexiblas/3.4.4 proj/9.4.1
+covariates: 553 embryos across 48 cohorts
+loading CDS (8.4 GB -- expect this to dominate)...
+  [load_cds] 397.4 s
+  cds: 31551 genes x 1894242 cells
+  dropping 227 cells with NA cell_type
+  cds embryos 651 | covariates 553 | shared 535
+fitting 48 cohort model(s): ~ cohort_PC1 + cohort_PC2
+  vhat_method=bootstrap  pln_num_penalties=1
+
+=== atf6 | 24C | 24hpf ===
+  10 embryos
+  [ccs_atf6 | 24C | 24hpf] 0.7 s
+  ccs: 226 cell groups x 10 samples
+[1] "fitting model with 4 threads"
+  [fit_atf6 | 24C | 24hpf] 1666.3 s
+  wrote 678 coefficient rows
+=== atf6 | 24C | 30hpf ===
+  11 embryos
+  [ccs_atf6 | 24C | 30hpf] 0.7 s
+  ccs: 222 cell groups x 11 samples
+[1] "fitting model with 4 threads"
+  [fit_atf6 | 24C | 30hpf] 1901.9 s
+  wrote 666 coefficient rows
+=== atf6 | 24C | 36hpf ===
+  11 embryos
+  [ccs_atf6 | 24C | 36hpf] 2.8 s
+  ccs: 247 cell groups x 11 samples
+[1] "fitting model with 4 threads"
+  [fit_atf6 | 24C | 36hpf] 2099.3 s
+  wrote 741 coefficient rows
+=== atf6 | 28C | 24hpf ===
+  11 embryos
+  [ccs_atf6 | 28C | 24hpf] 0.6 s
+  ccs: 253 cell groups x 11 samples
+[1] "fitting model with 4 threads"
+  [fit_atf6 | 28C | 24hpf] 2147.8 s
+  wrote 759 coefficient rows
+=== atf6 | 28C | 30hpf ===
+  11 embryos
+  [ccs_atf6 | 28C | 30hpf] 0.6 s
+  ccs: 242 cell groups x 11 samples
+[1] "fitting model with 4 threads"
+  [fit_atf6 | 28C | 30hpf] 1654.1 s
+  wrote 726 coefficient rows
+=== atf6 | 28C | 36hpf ===
+  10 embryos
+  [ccs_atf6 | 28C | 36hpf] 0.8 s
+  ccs: 261 cell groups x 10 samples
+[1] "fitting model with 4 threads"
+  [fit_atf6 | 28C | 36hpf] 1437.9 s
+  wrote 783 coefficient rows
+=== atf6 | 34C | 24hpf ===
+  12 embryos
+  [ccs_atf6 | 34C | 24hpf] 0.7 s
+  ccs: 242 cell groups x 12 samples
+[1] "fitting model with 4 threads"

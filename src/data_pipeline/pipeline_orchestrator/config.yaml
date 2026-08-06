@@ -185,7 +185,8 @@ unet_snip:
 snip_processing:
   # Crop output (H, W) IS the canonical snip grid — point at the same anchor, never a bare copy.
   output_shape: *snip_frame_shape
-  target_pixel_size_um: 7.8
+  # Canonical scale used to train the legacy morphology VAE.
+  target_pixel_size_um: 6.5
   save_raw_crops: true
   write_manifest_csv: true
   background_n_samples: 100
@@ -195,9 +196,14 @@ snip_processing:
   # produces a visually dark background that contrasts with the CLAHE-brightened
   # embryo interior. Increase toward 1.0 to match real background brightness.
   background_noise_scale: 0.1
-  # Physical soft-edge blend used when replacing non-target pixels with synthetic background.
-  # Keep this small enough that close neighboring embryos are not visibly carried into the snip.
-  blend_radius_um: 20.0
+  # Preserve legacy Keyence/YX1 preprocessing by default. SeaHub runtime
+  # configs disable this because those inputs are already 8-bit display images
+  # whose dark source anatomy is amplified to saturation by another CLAHE pass.
+  apply_clahe: true
+  # Physical soft-edge blend used by legacy production and the morphology-VAE input contract.
+  # Neighbor contamination must be handled by masking source pixels outside the target embryo,
+  # not by narrowing this taper without retraining the downstream models.
+  blend_radius_um: 75.0
 
 # Feature extraction stage defaults.
 feature_extraction:

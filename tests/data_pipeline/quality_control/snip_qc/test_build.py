@@ -180,3 +180,24 @@ def test_diagnostic_and_not_applicable_flags_do_not_exclude():
     assert out["focus_flag"].tolist() == [True]
     assert out["focus_qc_applicability"].tolist() == ["diagnostic_only"]
     validate_snip_qc(out)
+
+
+def test_diagnostic_death_and_surface_area_flags_do_not_exclude():
+    uni = _universe(1)
+    flags = _flags(
+        uni,
+        [["viability_dead_flag", "persistence_dead_flag", "sa_outlier_flag"]],
+    )
+    flags["death_detection_qc_applicability"] = "diagnostic_only"
+    flags["surface_area_qc_applicability"] = "diagnostic_only"
+
+    out = build_snip_qc_verdict(
+        uni, flags, exclusion_flags=SNIP_QC_EXCLUSION_FLAGS
+    )
+
+    assert out["qc_fail_reasons"].tolist() == [""]
+    assert out["use_snip"].tolist() == [True]
+    assert out["viability_dead_flag"].tolist() == [True]
+    assert out["persistence_dead_flag"].tolist() == [True]
+    assert out["sa_outlier_flag"].tolist() == [True]
+    validate_snip_qc(out)

@@ -275,6 +275,11 @@ SNIP_INVENTORY_PAYLOAD_COLUMNS: tuple[str, ...] = (
     "crop_y_max_px",
     "crop_width_px",
     "crop_height_px",
+    # Physical-scale provenance at the resampling boundary.  The source value
+    # comes from the frame inventory and may vary by image; the snip value is
+    # the canonical output grid used by downstream image models.
+    "source_micrometers_per_pixel",
+    "snip_micrometers_per_pixel",
     "is_valid_snip",
     "error_message",
 )

@@ -244,7 +244,8 @@ acquisition/{experiment_id}/
 - `src/data_pipeline/analysis_ready/contract.py` — `broadcast_plate_columns`, spine columns.
 - `results/nlammers/20260723_seahub/seahub_workflow.py` — existing GroundingDINO detection + position
   assignment + cropping to REUSE (don't reimplement detection).
-- `results/nlammers/20260723_seahub/run_sam2_masks.py` — reference only (masks NOT used in Scheme A;
-  instruction ii is box-crop + pad, no mask).
+- `results/nlammers/20260723_seahub/run_sam2_masks.py` — the original Scheme A used only box-crop
+  + pad, but production hardening now persists the cleaned source-FOV SAM2 masks and hands them
+  through as authoritative `frame_masks`; see `SEAHUB_IMPLEMENTATION_CONTRACT.md`.
 - A finished acquisition tree, e.g. `.../pipeline/output/acquisition/20240813_24hpf/`, as the layout
   ground-truth to diff against.

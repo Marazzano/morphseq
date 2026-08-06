@@ -1,0 +1,124 @@
+{
+  "experiment_id": "20250612_30hpf_ctrl_atf6",
+  "n_shared_wells": 93,
+  "current_model_names": [
+    "20241107_ds_sweep01_optimum"
+  ],
+  "dimension_ordering": {
+    "hungarian_identity_matches": 78,
+    "argmax_identity_matches": 31,
+    "median_direct_correlation": 0.6874607144741394,
+    "direct_correlation_q05_q95": [
+      0.12774546674830564,
+      0.8512803111920557
+    ],
+    "n_direct_correlation_ge_0_9": 2,
+    "n_direct_correlation_ge_0_75": 36,
+    "n_direct_correlation_lt_0_5": 23
+  },
+  "all_100_dimensions": {
+    "standardized_rmse": 1.0092283363656762,
+    "median_sample_cosine_similarity": 0.5992512951512275,
+    "nearest_legacy_self_match_fraction": 0.1827956989247312,
+    "pairwise_distance_pearson": 0.6599838436264447,
+    "pairwise_distance_spearman": 0.6613693486468026,
+    "legacy_temperature_r2": 0.5064172038425201,
+    "current_temperature_r2": 0.3131371715281264,
+    "legacy_genotype_r2": 0.01096780118370413,
+    "current_genotype_r2": 0.010209272083209488,
+    "legacy_pca_explained_variance_first_10": [
+      0.346090611156626,
+      0.25776304942535516,
+      0.13289539226059843,
+      0.052912568676690155,
+      0.029842305954256614,
+      0.028796797773737816,
+      0.022744479142254678,
+      0.017939151272999835,
+      0.01433384449098274,
+      0.013689476320710336
+    ],
+    "legacy_vs_current_pc_score_correlations": [
+      0.8780133011662705,
+      0.4748063610980621,
+      0.6362935351383581,
+      0.7262805616263956,
+      0.7150058791089694,
+      0.486381229236777,
+      0.6586757027315021,
+      0.35966128906694234,
+      0.7604975309436325,
+      0.33489974503577696
+    ]
+  },
+  "biological_dimensions_20_99": {
+    "standardized_rmse": 0.9099252936105726,
+    "median_sample_cosine_similarity": 0.7392962215505418,
+    "nearest_legacy_self_match_fraction": 0.13978494623655913,
+    "pairwise_distance_pearson": 0.6457825284269028,
+    "pairwise_distance_spearman": 0.6506913393134004,
+    "legacy_temperature_r2": 0.5820758725072496,
+    "current_temperature_r2": 0.3527435778514005,
+    "legacy_genotype_r2": 0.009429237097837054,
+    "current_genotype_r2": 0.00851539586374721,
+    "legacy_pca_explained_variance_first_10": [
+      0.41940277362945116,
+      0.30237274725914315,
+      0.1582431331915695,
+      0.06121172281835179,
+      0.021200962423242067,
+      0.009536325140355035,
+      0.0068892739115549145,
+      0.003936707099252652,
+      0.0019159462654305057,
+      0.001613608732511374
+    ],
+    "legacy_vs_current_pc_score_correlations": [
+      0.8710400979522873,
+      0.47834504647564885,
+      0.6047712465953095,
+      0.6856587420433465,
+      0.6926371448497659,
+      0.6934316275160102,
+      0.4891645559896317,
+      0.47643775389769016,
+      0.03350839295425939,
+      0.09257443028379858
+    ]
+  },
+  "nuisance_dimensions_0_19": {
+    "standardized_rmse": 1.3344860489371952,
+    "median_sample_cosine_similarity": 0.3206906962219386,
+    "nearest_legacy_self_match_fraction": 0.08602150537634409,
+    "pairwise_distance_pearson": 0.5428322140431547,
+    "pairwise_distance_spearman": 0.4026608989389504,
+    "legacy_temperature_r2": 0.20378252918360262,
+    "current_temperature_r2": 0.1679260808605123,
+    "legacy_genotype_r2": 0.01712205752717243,
+    "current_genotype_r2": 0.016419621269560977,
+    "legacy_pca_explained_variance_first_10": [
+      0.16265625894406693,
+      0.13623800802605962,
+      0.118231962118082,
+      0.09152179452981858,
+      0.07705532255840082,
+      0.07145574661339749,
+      0.06275701435436182,
+      0.05153736436735163,
+      0.04062588565442952,
+      0.030674369688145797
+    ],
+    "legacy_vs_current_pc_score_correlations": [
+      0.28206795469890644,
+      0.25127645715472824,
+      0.6668878898810882,
+      0.7195465513304279,
+      0.6041685516214177,
+      0.5738539814287583,
+      0.4486566372289125,
+      0.2710594022902699,
+      0.36671754449409455,
+      0.059520324099694495
+    ]
+  }
+}

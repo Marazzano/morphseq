@@ -15,7 +15,12 @@ set -euo pipefail
 REPO_ROOT="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq"
 SRC_ROOT="${REPO_ROOT}/src"
 WORKFLOW_DIR="${SRC_ROOT}/data_pipeline/pipeline_orchestrator"
-BUNDLE_ROOT="/net/trapnell/vol1/home/nlammers/projects/data/morphseq/seahub/derived/20260724/bundle"
+WORK_DIR="${REPO_ROOT}/results/nlammers/20260723_seahub"
+source "${WORK_DIR}/seahub_run_env.sh"
+seahub_configure_run \
+    "${WORK_DIR}" \
+    "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/seahub/derived"
+BUNDLE_ROOT="${SEAHUB_BUNDLE_ROOT}"
 EXPERIMENTS="${BUNDLE_ROOT}/integration/experiments.txt"
 CONDA_BASE="/net/trapnell/vol1/home/mdcolon/software/miniconda3"
 CONDA_ENV="segmentation_grounded_sam"
@@ -44,6 +49,14 @@ for REQUIRED in "${RUNTIME_CONFIG}" "${FRAME_VALIDATED}" "${PLATE_VALIDATED}"; d
         exit 2
     fi
 done
+
+# Reopen and verify every recorded image before handing the shard to GPU work.
+"/net/trapnell/vol1/home/nlammers/micromamba/bin/conda" \
+    run -n morphseq-env --no-capture-output \
+    env PYTHONPATH="${SRC_ROOT}" \
+    python -m data_pipeline.acquisition.seahub preflight-shard \
+    --bundle-root "${BUNDLE_ROOT}" \
+    --experiment-id "${EXPERIMENT_ID}"
 
 OUTPUT_ROOT="$("${PYTHON}" -c \
     "import yaml; print(yaml.safe_load(open('${WORKFLOW_DIR}/env.yaml'))['paths']['output_root'])")"
@@ -78,8 +91,9 @@ fi
     --configfile "${WORKFLOW_DIR}/config.yaml" "${RUNTIME_CONFIG}" \
     --directory "${SMK_WORKDIR}" \
     --cores "${CORES}" \
+    --resources gpu=1 \
+    --latency-wait 300 \
     --rerun-triggers mtime \
-    --forcerun split_dropin_inventory \
     --keep-going \
     --printshellcmds \
     "${TARGET}"

@@ -349,6 +349,7 @@ class TestRegistryIntrospection:
         assert known_artifacts("frame_detections") == ("frame_detections",)
         assert known_artifacts("frame_masks") == ("frame_masks", "prompt_seeds")
         assert known_artifacts("snip_auxiliary_masks") == ("manifest",)
+        assert known_artifacts("latent_embeddings") == ("batch_complete", "latents")
         assert known_artifacts("discover_wells") == ("wells",)
 
     def test_every_step_has_required_keys(self):

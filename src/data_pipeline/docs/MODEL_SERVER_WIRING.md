@@ -1,7 +1,7 @@
 # Wiring model servers into the Snakemake DAG
 
-Status: design, pre-implementation. The harness, SAM2 adapter, and GroundingDINO
-adapter exist and are proven equivalent to their per-well paths; nothing is wired yet.
+Status: implemented. GroundingDINO, SAM2, and snip auxiliary-mask adapters are wired behind
+per-step config toggles. SeaHub enables all three resident services.
 
 ---
 
@@ -34,9 +34,9 @@ correctly concludes nothing is runnable and blocks forever. There is no log line
 that says why. This is the single most expensive mistake available here, which is
 why the warning already sits in the rule files.
 
-`snip_auxiliary_masks` gets the same treatment once its adapter lands.
-`frame_masks` (SAM2) should NOT be converted — measured ratio ~0.005, so serving it
-buys ~0.5% and adds a moving part. It keeps its plain per-well rule and its `gpu=1`.
+`snip_auxiliary_masks` and `frame_masks` use the same resource inversion. SAM2 remains off by
+default because serving buys little on long time-series wells, but it is valuable for SeaHub's
+one-frame wells and is enabled in SeaHub runtime overlays.
 
 ---
 
@@ -88,9 +88,8 @@ WorkflowError: Not enough resources ... Excess Resources: _cores: 2/1
 ```
 
 Several existing runtime configs and the Tier-1 smoke path use `--cores 1`. Any
-invocation that pulls in a served step must move to `--cores 2` or more. This is a
-further argument for leaving `frame_masks` (SAM2) unserved: a `--cores 1` run stays
-viable for everything that does not need a resident model.
+invocation that pulls in a served step must move to `--cores 2` or more. The SeaHub
+submission uses four cores.
 
 ---
 

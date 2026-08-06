@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #$ -N morphseq_tests
-#$ -q trapnell-login.q
+#$ -q trapnell-short.q
 #$ -l mfree=16G
 #$ -l h_rt=2:00:00
 #$ -j y

@@ -7,6 +7,11 @@ from typing import Any
 
 import pandas as pd
 
+from data_pipeline.object_extraction.snip_processing.defaults import (
+    DEFAULT_BLEND_RADIUS_UM,
+    DEFAULT_TARGET_PIXEL_SIZE_UM,
+)
+
 from data_pipeline.object_extraction.snip_processing.io import (
     SnipPaths,
     merged_output_dirs,
@@ -42,9 +47,11 @@ def run_snip_processing_well(
     # 6.5 µm/px matches the materialized z-slice target (see materialized_image_write_policy
     # .DEFAULT_TARGET_MICROMETERS_PER_PIXEL), so z-snips need no upsampling. Callers may still set a
     # coarser target here; anything FINER than the source resolution would invent detail.
-    target_pixel_size_um = float(snip_cfg.get("target_pixel_size_um", 6.5))
+    target_pixel_size_um = float(
+        snip_cfg.get("target_pixel_size_um", DEFAULT_TARGET_PIXEL_SIZE_UM)
+    )
     output_shape_hw = tuple(int(x) for x in (snip_cfg.get("output_shape_hw") or [576, 256]))
-    blend_radius_um = float(snip_cfg.get("blend_radius_um", 20.0))
+    blend_radius_um = float(snip_cfg.get("blend_radius_um", DEFAULT_BLEND_RADIUS_UM))
     save_raw_crops = bool(snip_cfg.get("save_raw_crops", True))
     overwrite = bool(snip_cfg.get("overwrite", False))
     skip_existing = bool(snip_cfg.get("skip_existing", True))

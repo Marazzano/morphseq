@@ -11,6 +11,10 @@ mass-distribution heuristic and extraction uses a zero yolk mask.
 from data_pipeline.object_extraction.snip_processing.snip_frame_shape import (
     resolve_snip_frame_shape as _resolve_snip_frame_shape,
 )
+from data_pipeline.object_extraction.snip_processing.defaults import (
+    DEFAULT_BLEND_RADIUS_UM,
+    DEFAULT_TARGET_PIXEL_SIZE_UM,
+)
 
 SNIP_INVENTORY_STEP = "snip_inventory"
 
@@ -184,7 +188,9 @@ rule snip_materialization_per_well:
         snip_product_key=lambda wc: wc.snip_product_key,
         snips_dir=lambda wc: _snip_inventory_snips_dir(wc.experiment, wc.well_id),
         target_pixel_size_um=lambda wc: float(
-            config.get("snip_processing", {}).get("target_pixel_size_um", 7.8)
+            config.get("snip_processing", {}).get(
+                "target_pixel_size_um", DEFAULT_TARGET_PIXEL_SIZE_UM
+            )
         ),
         # Crop output (H, W) comes from the single snip_frame_shape source of truth so the snip
         # image, the saved embryo mask, and the per-snip via mask all share one grid.
@@ -194,8 +200,16 @@ rule snip_materialization_per_well:
             config.get("snip_processing", {}).get("background_noise_scale", 0.1)
         ),
         blend_radius_um=lambda wc: float(
-            config.get("snip_processing", {}).get("blend_radius_um", 20.0)
+            config.get("snip_processing", {}).get(
+                "blend_radius_um", DEFAULT_BLEND_RADIUS_UM
+            )
         ),
+        # Legacy microscopy/checkpoint behavior stays ON by default. SeaHub's
+        # runtime overlay explicitly sets this false for already-normalized
+        # inverted 8-bit source images.
+        apply_clahe=lambda wc: str(
+            config.get("snip_processing", {}).get("apply_clahe", True)
+        ).lower(),
     shell:
         """
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks snip-processing \
@@ -211,7 +225,8 @@ rule snip_materialization_per_well:
           --output-height-px "{params.output_height_px}" \
           --output-width-px "{params.output_width_px}" \
           --background-noise-scale "{params.background_noise_scale}" \
-          --blend-radius-um "{params.blend_radius_um}"
+          --blend-radius-um "{params.blend_radius_um}" \
+          --apply-clahe "{params.apply_clahe}"
         """
 
 

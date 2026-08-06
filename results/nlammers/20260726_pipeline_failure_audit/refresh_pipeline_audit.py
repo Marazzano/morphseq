@@ -55,21 +55,61 @@ STAGES = [
     ("frame_masks", "SAM2 segmentation"),
     ("physical_embryo_registry", "Physical embryo registry"),
     ("snip_processing", "Snip processing"),
+    ("mask_geometry", "Mask geometry"),
+    ("curvature_metrics", "Curvature metrics"),
+    ("pose_kinematics", "Pose/kinematics"),
+    ("stage_predictions", "Stage predictions"),
+    ("latent_embeddings", "Latent embeddings"),
+    ("fraction_alive", "Fraction alive"),
     ("focus_qc", "Focus QC"),
     ("motion_blur_qc", "Motion-blur QC"),
     ("mask_quality_qc", "Mask-quality QC"),
     ("surface_area_qc", "Surface-area QC"),
-    ("snip_qc", "Combined snip QC"),
     ("death_detection", "Death detection"),
-    ("mask_geometry", "Mask geometry"),
-    ("curvature_metrics", "Curvature metrics"),
-    ("stage_predictions", "Stage predictions"),
-    ("latent_embeddings", "Latent embeddings"),
-    ("pose_kinematics", "Pose/kinematics"),
-    ("fraction_alive", "Fraction alive"),
+    ("snip_qc", "Combined snip QC"),
     ("analysis_ready", "Analysis-ready"),
 ]
 STAGE_ORDER = {name: i for i, (name, _) in enumerate(STAGES)}
+
+# A pipeline DAG is not a linear list: feature and QC products fan out after snip
+# processing and later reconverge. These gates provide a true monotonic funnel.
+# A dataset reaches a gate only when that gate AND every earlier gate are complete.
+PROGRESSION_GATES = [
+    ("metadata", "Metadata", ("metadata_ingest",)),
+    ("materialized", "Materialized", ("materialization",)),
+    ("detected", "Detected", ("frame_detections",)),
+    (
+        "segmented",
+        "Segmented + registered",
+        ("frame_masks", "physical_embryo_registry"),
+    ),
+    ("snips", "Snips", ("snip_processing",)),
+    (
+        "features",
+        "Feature set",
+        (
+            "mask_geometry",
+            "curvature_metrics",
+            "pose_kinematics",
+            "stage_predictions",
+            "latent_embeddings",
+            "fraction_alive",
+        ),
+    ),
+    (
+        "qc",
+        "QC set",
+        (
+            "focus_qc",
+            "motion_blur_qc",
+            "mask_quality_qc",
+            "surface_area_qc",
+            "death_detection",
+            "snip_qc",
+        ),
+    ),
+    ("analysis_ready", "Analysis-ready", ("analysis_ready",)),
+]
 
 
 def _failure(
@@ -333,14 +373,15 @@ def known_failures() -> dict[str, list[Failure]]:
             "20260224",
         ],
         _failure(
-            "Detection/segmentation",
-            "All masks invalid; snip writer emits a headerless empty CSV",
+            "Artifact compatibility",
+            "Pre-fix headerless empty snip inventory",
             "snip_processing",
-            3,
-            "segmentation_retry_needed",
+            1,
+            "fixed_in_head_needs_rerun",
             "pandas.errors.EmptyDataError: No columns to parse from file",
-            "Always emit a schemaful empty table and quarantine the failed well; separately retry "
-            "detection/segmentation to recover its biological observations.",
+            "Current code emits a schemaful empty table and can quarantine the failed well. Rerun "
+            "to complete the dataset; retry detection/segmentation separately only to recover "
+            "that well's biological observations.",
         ),
     )
     add(
@@ -978,7 +1019,17 @@ def audit_datasets() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
             row[f"stage_{stage}"] = states[stage]
         rows.append(row)
 
-    audit = pd.DataFrame(rows).sort_values(
+    audit = pd.DataFrame(rows)
+    reached_so_far = pd.Series(True, index=audit.index)
+    for gate, _label, members in PROGRESSION_GATES:
+        raw_complete = audit[[f"stage_{stage}" for stage in members]].eq(1).all(axis=1)
+        audit[f"gate_raw_{gate}"] = raw_complete.astype(int)
+        reached_so_far = reached_so_far & raw_complete
+        audit[f"gate_reached_{gate}"] = reached_so_far.astype(int)
+    reached_columns = [f"gate_reached_{gate}" for gate, _, _ in PROGRESSION_GATES]
+    audit["pipeline_progression_fraction"] = audit[reached_columns].mean(axis=1).round(3)
+
+    audit = audit.sort_values(
         ["scope", "confirmed_clean_latest_run", "recovery_tier", "experiment_id"],
         ascending=[True, True, True, True],
     )
@@ -1160,6 +1211,7 @@ def data_dictionary(audit: pd.DataFrame) -> pd.DataFrame:
         "confirmed_clean_latest_run": "1 only when analysis_ready exists and the latest back-half log has a FINISHED marker.",
         "terminal_product_present": "1 when the analysis-ready parquet exists, regardless of latest rerun state.",
         "pipeline_completion_fraction": "Mean of the 19 binary stage-completion columns.",
+        "pipeline_progression_fraction": "Mean of the monotonic reached-gate columns.",
         "approx_frame_count": "Approximate canonical frame-inventory rows, not raw TIFF/ND2 planes.",
         "failure_category": "Primary/earliest classified blocker.",
         "all_failure_categories": "All known blockers; categories can overlap for one dataset.",
@@ -1172,6 +1224,12 @@ def data_dictionary(audit: pd.DataFrame) -> pd.DataFrame:
             description = (
                 f"Binary completion for {dict(STAGES).get(stage, stage)}. "
                 "Per-well stages require all expected shards; merged stages require the terminal artifact."
+            )
+        elif column.startswith("gate_raw_"):
+            description = "Raw completion of this pipeline gate, independent of predecessor gates."
+        elif column.startswith("gate_reached_"):
+            description = (
+                "Monotonic funnel indicator: this gate and every preceding gate are complete."
             )
         else:
             description = descriptions.get(column, "See column name; retained for detailed audit/reference.")
@@ -1244,6 +1302,16 @@ def write_workbook(
     with pd.ExcelWriter(WORKBOOK, engine="openpyxl") as writer:
         summary.to_excel(writer, sheet_name="Executive Summary", index=False)
         audit.to_excel(writer, sheet_name="Dataset Audit", index=False)
+        progression_columns = [
+            "experiment_id",
+            "scope",
+            *[f"gate_raw_{gate}" for gate, _, _ in PROGRESSION_GATES],
+            *[f"gate_reached_{gate}" for gate, _, _ in PROGRESSION_GATES],
+            "pipeline_progression_fraction",
+        ]
+        audit[progression_columns].to_excel(
+            writer, sheet_name="Progression", index=False
+        )
         taxonomy.to_excel(writer, sheet_name="Failure Taxonomy", index=False)
         failure_details.to_excel(writer, sheet_name="Failure Details", index=False)
         recovery.to_excel(writer, sheet_name="Recovery Priorities", index=False)
@@ -1277,6 +1345,7 @@ from IPython.display import display, Markdown
 plt.style.use("seaborn-v0_8-whitegrid")
 WORKBOOK = Path("pipeline_audit.xlsx")
 audit = pd.read_excel(WORKBOOK, sheet_name="Dataset Audit")
+progression = pd.read_excel(WORKBOOK, sheet_name="Progression")
 summary = pd.read_excel(WORKBOOK, sheet_name="Executive Summary")
 taxonomy = pd.read_excel(WORKBOOK, sheet_name="Failure Taxonomy")
 recovery = pd.read_excel(WORKBOOK, sheet_name="Recovery Priorities")
@@ -1302,22 +1371,51 @@ ax.tick_params(axis="x", rotation=0)
 plt.tight_layout()
 plt.show()"""
         ),
-        nbf.v4.new_markdown_cell("## Stage-completion funnel"),
+        nbf.v4.new_markdown_cell(
+            """## Monotonic data funnel
+
+A dataset reaches a gate only when that gate and every preceding gate are complete.
+This is the appropriate progression view for a branching DAG."""
+        ),
+        nbf.v4.new_code_cell(
+            """gate_cols = [c for c in progression.columns if c.startswith("gate_reached_")]
+gate_labels = [c.removeprefix("gate_reached_").replace("_", " ").title() for c in gate_cols]
+gate_by_scope = progression.groupby("scope")[gate_cols].mean().T
+gate_by_scope.index = gate_labels
+
+fig, ax = plt.subplots(figsize=(10, 8))
+image = ax.imshow(gate_by_scope.T.values, aspect="auto", vmin=0, vmax=1, cmap="RdYlGn")
+ax.set_yticks(range(len(gate_by_scope.columns)), gate_by_scope.columns)
+ax.set_xticks(range(len(gate_by_scope.index)), gate_by_scope.index, rotation=55, ha="right")
+for y in range(gate_by_scope.shape[1]):
+    for x in range(gate_by_scope.shape[0]):
+        ax.text(x, y, f"{gate_by_scope.iloc[x, y]:.0%}", ha="center", va="center", fontsize=9)
+fig.colorbar(image, ax=ax, label="Fraction complete")
+ax.set_title("Cumulative pipeline progression by scope")
+plt.tight_layout()
+plt.show()"""
+        ),
+        nbf.v4.new_markdown_cell(
+            """### Raw artifact availability
+
+This diagnostic is intentionally **not** a funnel. Independent branches and stale products can
+make a later artifact present while another branch is incomplete."""
+        ),
         nbf.v4.new_code_cell(
             """stage_cols = [c for c in audit.columns if c.startswith("stage_")]
 stage_labels = [c.removeprefix("stage_").replace("_", " ").title() for c in stage_cols]
 stage_by_scope = audit.groupby("scope")[stage_cols].mean().T
 stage_by_scope.index = stage_labels
 
-fig, ax = plt.subplots(figsize=(10, 8))
+fig, ax = plt.subplots(figsize=(12, 8))
 image = ax.imshow(stage_by_scope.T.values, aspect="auto", vmin=0, vmax=1, cmap="RdYlGn")
 ax.set_yticks(range(len(stage_by_scope.columns)), stage_by_scope.columns)
 ax.set_xticks(range(len(stage_by_scope.index)), stage_by_scope.index, rotation=65, ha="right")
 for y in range(stage_by_scope.shape[1]):
     for x in range(stage_by_scope.shape[0]):
         ax.text(x, y, f"{stage_by_scope.iloc[x, y]:.0%}", ha="center", va="center", fontsize=8)
-fig.colorbar(image, ax=ax, label="Fraction complete")
-ax.set_title("Stage completion by scope")
+fig.colorbar(image, ax=ax, label="Fraction with artifact")
+ax.set_title("Raw stage-artifact availability by scope")
 plt.tight_layout()
 plt.show()"""
         ),

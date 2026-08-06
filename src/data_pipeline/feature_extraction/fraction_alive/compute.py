@@ -46,11 +46,14 @@ def compute_fraction_alive_features(
     output_root=None,
     missing_via_policy: str = MISSING_VIA_FAIL,
 ) -> pd.DataFrame:
-    """Return one fraction_alive row per snip from the saved embryo mask + the snip via mask."""
+    """Return one fraction_alive row per valid snip from its embryo and via masks."""
     via_by_snip = _via_path_by_snip(snip_auxiliary_masks_df)
+    valid_snips = snip_inventory_df[
+        snip_inventory_df["is_valid_snip"].eq(True).fillna(False)
+    ]
 
     rows: list[dict] = []
-    for _, snip in snip_inventory_df.iterrows():
+    for _, snip in valid_snips.iterrows():
         snip_id = str(snip["snip_id"])
 
         embryo_path = snip.get("embryo_mask")

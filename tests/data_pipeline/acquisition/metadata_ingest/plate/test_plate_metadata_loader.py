@@ -116,6 +116,20 @@ class TestIngestPlateGridSheetToLong:
         with pytest.raises(ValueError, match="row labels"):
             ingest_plate_grid_sheet_to_long(df, page_name="genotype")
 
+    def test_blank_eighth_label_is_normalized_to_h(self):
+        df = _make_grid_df()
+        df.loc[7, "row"] = None
+        long = ingest_plate_grid_sheet_to_long(df, page_name="genotype")
+        assert long.loc[long["well_index"] == "H01", "genotype"].item() == "H01"
+        assert long.loc[long["well_index"] == "H12", "genotype"].item() == "H12"
+
+    def test_blank_eighth_label_with_extra_rows_still_fails(self):
+        df = _make_grid_df()
+        df.loc[7, "row"] = None
+        df.loc[8] = ["footer", *([None] * 12)]
+        with pytest.raises(ValueError, match="row labels"):
+            ingest_plate_grid_sheet_to_long(df, page_name="genotype")
+
     def test_wrong_shape_raises(self):
         df = pd.DataFrame({"a": [1, 2]})
         with pytest.raises(ValueError, match="shape"):

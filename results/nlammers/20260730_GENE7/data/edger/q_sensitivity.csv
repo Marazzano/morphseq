@@ -1,0 +1,19 @@
+family,subset,q,n_contrasts,binary_only,shared,morph_only,total,morph_share,indirect,direct,lost,neg_control
+head-to-head s_z,all,0.1,35,189.0,343.0,115,647.0,0.1777434312210201,,,,
+head-to-head s_z,validated,0.1,16,72.0,259.0,79,410.0,0.1926829268292683,,,,
+head-to-head hinge_z,all,0.1,35,197.0,335.0,124,656.0,0.18902439024390244,,,,
+head-to-head hinge_z,validated,0.1,16,72.0,259.0,87,418.0,0.20813397129186603,,,,
+gain accounting,all,0.1,35,532.0,,84,616.0,0.13636363636363635,17.0,67.0,7.0,1.0
+gain accounting,validated,0.1,16,331.0,,58,389.0,0.14910025706940874,12.0,46.0,3.0,0.0
+DACT escaper_vs_control,all,0.1,35,,,214,,,,,,
+DACT severe_vs_control,all,0.1,35,,,524,,,,,,
+DACT severe_vs_escaper,all,0.1,35,,,31,,,,,,
+head-to-head s_z,all,0.05,35,173.0,253.0,97,523.0,0.18546845124282982,,,,
+head-to-head s_z,validated,0.05,16,66.0,207.0,74,347.0,0.2132564841498559,,,,
+head-to-head hinge_z,all,0.05,35,169.0,257.0,115,541.0,0.21256931608133087,,,,
+head-to-head hinge_z,validated,0.05,16,67.0,206.0,82,355.0,0.23098591549295774,,,,
+gain accounting,all,0.05,35,426.0,,73,499.0,0.1462925851703407,25.0,48.0,7.0,0.0
+gain accounting,validated,0.05,16,273.0,,50,323.0,0.15479876160990713,19.0,31.0,2.0,0.0
+DACT escaper_vs_control,all,0.05,35,,,151,,,,,,
+DACT severe_vs_control,all,0.05,35,,,420,,,,,,
+DACT severe_vs_escaper,all,0.05,35,,,13,,,,,,

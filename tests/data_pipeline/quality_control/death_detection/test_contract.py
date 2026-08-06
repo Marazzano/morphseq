@@ -39,6 +39,7 @@ def _qc_df():
                 "snip_id": snip_id,
                 "viability_dead_flag": False,
                 "persistence_dead_flag": True,
+                "death_detection_qc_applicability": "exclusion",
             }
         ],
         columns=DEATH_DETECTION_QC_TABLE_COLUMNS,
@@ -74,6 +75,12 @@ def test_qc_non_bool_flag_fails():
         validate_death_detection_qc(df)
 
 
+def test_qc_diagnostic_only_retains_observed_flags():
+    df = _qc_df()
+    df["death_detection_qc_applicability"] = "diagnostic_only"
+    validate_death_detection_qc(df)
+
+
 def test_event_valid_passes():
     validate_death_event(_event_df())
 
@@ -85,10 +92,16 @@ def test_event_with_embryo_id_fails():
         validate_death_event(df)
 
 
-def test_event_null_annotation_fails():
+def test_event_null_stage_annotation_passes():
     df = _event_df()
     df["death_event_stage_hpf"] = [None]
-    with pytest.raises(ValueError, match="null/non-numeric"):
+    validate_death_event(df)
+
+
+def test_event_non_numeric_stage_annotation_fails():
+    df = _event_df()
+    df["death_event_stage_hpf"] = ["unknown"]
+    with pytest.raises(ValueError, match="non-numeric"):
         validate_death_event(df)
 
 

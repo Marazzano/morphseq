@@ -58,7 +58,8 @@ WORKBOOK_PATH = DATA_DIR / "training_corpus_census.xlsx"
 OVERRIDES_PATH = HERE / "sequencing_pairing_overrides.csv"
 
 REFERENCE_TEMPERATURE_C = 28.5
-ENVIRONMENTAL_DELTA_C = 1.0
+ENVIRONMENTAL_TEMPERATURE_MIN_C = 27.0
+ENVIRONMENTAL_TEMPERATURE_MAX_C = 30.0
 
 NULL_STRINGS = {
     "",
@@ -165,6 +166,14 @@ def temperatures_from_text(*values: Any) -> list[float]:
         for match in re.finditer(r"(?<!\d)(1[5-9]|2\d|3\d)(?:\.\d+)?\s*°?\s*[cC]\b", text):
             result.append(float(match.group(0).lower().replace("°", "").replace("c", "")))
     return result
+
+
+def is_environmental_temperature(temperature_c: float) -> bool:
+    """Return whether a temperature is outside the agreed non-perturbative range."""
+    return (
+        temperature_c < ENVIRONMENTAL_TEMPERATURE_MIN_C
+        or temperature_c > ENVIRONMENTAL_TEMPERATURE_MAX_C
+    )
 
 
 def split_genetic_targets(value: Any, *, explicit_domain: bool = False) -> list[str]:
@@ -296,8 +305,7 @@ def classify_perturbation(row: pd.Series | dict[str, Any]) -> dict[str, Any]:
     )
 
     environmental = any(
-        abs(temp - REFERENCE_TEMPERATURE_C) >= ENVIRONMENTAL_DELTA_C
-        for temp in effective_temperatures
+        is_environmental_temperature(temp) for temp in effective_temperatures
     ) or heat_shock
 
     genetic_source = explicit if domain == "genetic" and explicit else genotype
@@ -360,7 +368,7 @@ def classify_perturbation(row: pd.Series | dict[str, Any]) -> dict[str, Any]:
         env_temps = [
             temp
             for temp in effective_temperatures
-            if abs(temp - REFERENCE_TEMPERATURE_C) >= ENVIRONMENTAL_DELTA_C
+            if is_environmental_temperature(temp)
         ]
         env_labels = [f"{temp:g}C" for temp in env_temps]
         if heat_shock:
@@ -404,7 +412,7 @@ def classify_perturbation(row: pd.Series | dict[str, Any]) -> dict[str, Any]:
         atomic.extend(
             ("environmental", f"{temp:g}C")
             for temp in effective_temperatures
-            if abs(temp - REFERENCE_TEMPERATURE_C) >= ENVIRONMENTAL_DELTA_C
+            if is_environmental_temperature(temp)
         )
         if heat_shock:
             atomic.append(("environmental", "heat shock"))
@@ -1369,6 +1377,7 @@ import json
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
 from IPython.display import display
 
 ROOT = Path.cwd()
@@ -1410,6 +1419,71 @@ display(retention.style.format({
     "retention_ci95_low": "{:.1%}",
     "retention_ci95_high": "{:.1%}",
 }))"""
+        ),
+        nbf.v4.new_markdown_cell(
+            """## Cumulative corpus growth by version
+
+Each bar includes every acquisition dated on or before that version's cutoff. `v5` includes
+the complete present-day **censusable** corpus.
+
+- **Lower estimate:** strict current QC retention, extrapolated to every censusable dataset.
+- **Upper estimate:** only death and structural mask-geometry exclusions.
+- **Midpoint:** arithmetic midpoint of those bounds, used for the bar plots.
+
+Both bounds assume that all censusable datasets eventually complete processing; they are not
+counts of datasets that have already completed. SeaHub uses current detection completion as its
+lower estimate and all reconciled embryos as its upper estimate because comparable downstream QC
+is not yet available. The five-z comparison applies the fixed 5× expansion only to Keyence and
+YX1 embryo-timepoints; SeaHub remains at one image per embryo. It is a projection, not measured
+stack depth. Unique-perturbation trends count atomic perturbations from Keyence and YX1 only."""
+        ),
+        nbf.v4.new_code_cell(
+            """from plot_training_corpus_versions import (
+    REQUESTED_SLIDE_DIR,
+    generate_version_figures,
+)
+from IPython.display import Image
+
+# Plot controls.
+COUNT_UNIT = "embryo_times"  # "embryos" or "embryo_times"
+Z_SLICE_MULTIPLIER = 5
+
+# The requested laptop path is used when the notebook runs there. Cluster execution falls
+# back to a repository-local mirror because /Users/nick is not mounted on the cluster.
+SLIDE_OUTPUT_DIR = (
+    REQUESTED_SLIDE_DIR
+    if REQUESTED_SLIDE_DIR.parent.is_dir()
+    else ROOT / "data_census"
+)
+
+version_result = generate_version_figures(
+    data_dir=DATA,
+    output_dir=SLIDE_OUTPUT_DIR,
+    count_unit=COUNT_UNIT,
+    z_slice_multiplier=Z_SLICE_MULTIPLIER,
+)
+display(
+    version_result["version_estimates"].style.format({
+        "gross_count": "{:,.0f}",
+        "lower_estimate": "{:,.0f}",
+        "midpoint_estimate": "{:,.0f}",
+        "upper_estimate": "{:,.0f}",
+        "unique_perturbation_count": "{:,.0f}",
+        "midpoint_5z_estimate": "{:,.0f}",
+    })
+)
+display(
+    version_result["projection_rates"].style.format({
+        "lower_timepoint_rate": "{:.1%}",
+        "upper_timepoint_rate": "{:.1%}",
+        "lower_embryo_rate": "{:.1%}",
+        "upper_embryo_rate": "{:.1%}",
+    })
+)
+for figure_path in version_result["figure_paths"]:
+    if figure_path.suffix.lower() == ".png":
+        display(Image(filename=str(figure_path)))
+print(f"Slide outputs: {version_result['output_dir']}")"""
         ),
         nbf.v4.new_markdown_cell(
             """## Corpus scale by acquisition scope
@@ -1616,7 +1690,10 @@ def main() -> None:
     assumptions = {
         "generated_at": datetime.now().astimezone().isoformat(),
         "reference_temperature_c": REFERENCE_TEMPERATURE_C,
-        "environmental_delta_c": ENVIRONMENTAL_DELTA_C,
+        "environmental_temperature_rule": (
+            f"temperature < {ENVIRONMENTAL_TEMPERATURE_MIN_C:g}C or "
+            f"> {ENVIRONMENTAL_TEMPERATURE_MAX_C:g}C; 30C is not environmental"
+        ),
         "channel_policy": "BF when present, otherwise first channel; channels collapsed",
         "seahub_gross_policy": "8 embryos per include_for_seahub FOV",
         "projection_policy": (

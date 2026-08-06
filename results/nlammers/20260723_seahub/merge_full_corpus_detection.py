@@ -32,6 +32,18 @@ def main() -> None:
     experiments = sorted(included["experiment_id"].dropna().astype(str).unique())
     output_root = args.output_root.expanduser().resolve()
 
+    stale_merge_outputs = [
+        output_root / "embryo_manifest.csv",
+        output_root / "segmentation_qc.csv",
+        output_root / "_MERGE_SUCCESS",
+    ]
+    existing_merge_outputs = [path for path in stale_merge_outputs if path.exists()]
+    if existing_merge_outputs:
+        raise FileExistsError(
+            "Refusing to overwrite prior SeaHub merged detection products: "
+            f"{existing_merge_outputs}. Use a fresh SEAHUB_RUN_ID."
+        )
+
     manifests: list[pd.DataFrame] = []
     qcs: list[pd.DataFrame] = []
     for experiment_id in experiments:

@@ -1,5 +1,7 @@
 #!/bin/bash
-# Merge job submitted with -hold_jid <SeaHub detection array job id>.
+# Merge job submitted with:
+#   qsub -v SEAHUB_RUN_ID=20260731_prod01 \
+#     -hold_jid <SeaHub detection array job id> merge_full_corpus_detection.sge
 
 #$ -N seahub_merge
 #$ -cwd
@@ -14,8 +16,12 @@ set -euo pipefail
 
 REPO_ROOT="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq"
 WORK_DIR="${REPO_ROOT}/results/nlammers/20260723_seahub"
-RECONCILED="${WORK_DIR}/outputs/full_corpus_20260724/integration/reconciled_fovs.csv"
-OUTPUT_ROOT="${WORK_DIR}/outputs/full_corpus_20260724/detection"
+source "${WORK_DIR}/seahub_run_env.sh"
+seahub_configure_run \
+    "${WORK_DIR}" \
+    "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/seahub/derived"
+RECONCILED="${SEAHUB_RUN_ROOT}/integration/reconciled_fovs.csv"
+OUTPUT_ROOT="${SEAHUB_RUN_ROOT}/detection"
 CONDA="/net/trapnell/vol1/home/nlammers/micromamba/bin/conda"
 
 cd "${REPO_ROOT}"

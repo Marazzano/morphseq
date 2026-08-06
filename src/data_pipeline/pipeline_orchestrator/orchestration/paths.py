@@ -527,13 +527,10 @@ PIPELINE_STEPS: dict[str, dict] = {
     # ALL run-well shards before exiting — model load dominates per-well encode cost. The encode
     # body runs under the model interpreter (MODEL_RUN), not the normal RUN env.
     #
-    # STILL ASPIRATIONAL (2026-07-25). The rule fans out per well, so this tag does not yet
-    # describe reality — but unlike frame_masks (retagged PER_WELL on measurement), batching here
-    # is genuinely the right answer and is already half-built: legacy_embeddings/entrypoint.py
-    # accepts a LIST of (inventory, output) pairs and loads once; the rule just hands it a single
-    # pair. Wiring the rule to the existing batch entrypoint is the whole fix — no server needed,
-    # and a GPU server would be pointless anyway since this stage is CPU-only (its py3.9 torch
-    # build has no CUDA). This is the live remaining item from PLANNED_REVISIONS.md §1.
+    # WIRED (2026-07-29). One experiment-level rule passes the full checkpoint-resolved inventory
+    # list to legacy_embeddings/entrypoint.py. The Python-3.9 process loads the VAE once, writes
+    # every canonical per-well parquet + .validated sentinel, and finally writes a batch-complete
+    # gate consumed by the ordinary merge. This remains CPU-only.
     "latent_embeddings": {
         "stage": "feature_extraction",
         "product_dir": "latent_embeddings",
@@ -543,6 +540,12 @@ PIPELINE_STEPS: dict[str, dict] = {
             "latents": {
                 PATH_MODE_PER_WELL: "{well_id}_latents.parquet",
                 PATH_MODE_MERGED: "{experiment_id}_latents.parquet",
+            },
+            # Internal orchestration gate: the batch entrypoint writes this only after every
+            # per-well parquet and its .validated sentinel have been finalized. Per-well and
+            # merged public artifact paths remain unchanged.
+            "batch_complete": {
+                PATH_MODE_MERGED: "{experiment_id}_latents_batch_complete.validated",
             },
         },
     },

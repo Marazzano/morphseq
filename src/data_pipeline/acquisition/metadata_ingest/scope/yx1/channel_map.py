@@ -21,6 +21,7 @@ YX1_CHANNEL_MAP = ScopeChannelMap(
         "EYES - GFP":  "GFP",
         # tdTomato is a red fluorophore, so it shares the RFP canonical id with "EYES - RFP".
         "tdtomato":    "RFP",
+        "Celesta 473": "GFP",
         "EYES - RFP":  "RFP",
     },
 )

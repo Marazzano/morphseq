@@ -21,7 +21,10 @@ from data_pipeline.feature_extraction.legacy_embeddings.contract import (
     EMBEDDING_MODEL_NAME_COL,
     validate_latent_embeddings,
 )
-from data_pipeline.feature_extraction.legacy_embeddings.entrypoint import run_legacy_embeddings
+from data_pipeline.feature_extraction.legacy_embeddings.entrypoint import (
+    _derive_output_parquets,
+    run_legacy_embeddings,
+)
 
 LATENT_DIM = 6
 MODEL_INPUT_SHAPE = (16, 8)  # (H, W) matching the fixtures
@@ -71,6 +74,11 @@ def test_run_legacy_embeddings_writes_one_validated_parquet_per_well(tmp_path):
     csv_b = _make_well(tmp_path, "20250912_C01", n_snips=2)
     out_a = tmp_path / "out" / "20250912_B01_latents.parquet"
     out_b = tmp_path / "out" / "20250912_C01_latents.parquet"
+    completion_flag = tmp_path / "out" / "batch_complete.validated"
+    completion_flag.parent.mkdir(parents=True)
+    completion_flag.write_text("stale\n")
+    out_b.parent.mkdir(parents=True, exist_ok=True)
+    out_b.with_name(out_b.name + ".validated").write_text("stale\n")
 
     with patch(_RESOLVE, return_value=tmp_path / "fake_model_dir") as mock_resolve, \
          patch(_LOADER, return_value=_FakeEncoder()) as mock_loader:
@@ -84,14 +92,17 @@ def test_run_legacy_embeddings_writes_one_validated_parquet_per_well(tmp_path):
             model_input_channels=1,
             batch_size=2,
             device="cpu",
+            completion_flag=completion_flag,
         )
 
     # Model loaded exactly once for the whole batch (the entire point of RUN_BATCH).
     assert mock_loader.call_count == 1
     assert mock_resolve.call_count == 1
+    assert completion_flag.read_text() == "ok\n"
 
     for out, csv in ((out_a, csv_a), (out_b, csv_b)):
         assert out.exists(), f"missing shard {out}"
+        assert out.with_name(out.name + ".validated").read_text() == "ok\n"
         df = pd.read_parquet(out)
         validate_latent_embeddings(df, source=str(out))  # passes the full contract
         expected_ids = list(pd.read_csv(csv)["snip_id"])
@@ -110,6 +121,55 @@ def test_run_legacy_embeddings_mismatched_input_output_counts_raises(tmp_path):
             model_name=MODEL_NAME,
             model_input_shape=MODEL_INPUT_SHAPE,
         )
+
+
+def test_derive_output_parquets_uses_canonical_per_well_paths(tmp_path):
+    inventories = [
+        tmp_path / "snips" / "per_well" / "20250912_A01" / "inventory.csv",
+        tmp_path / "snips" / "per_well" / "20250912_B02" / "inventory.csv",
+    ]
+    outputs = _derive_output_parquets(
+        snip_inventory_csvs=inventories,
+        output_root=tmp_path / "output",
+        experiment_id="20250912",
+    )
+    assert [path.name for path in outputs] == [
+        "20250912_A01_latents.parquet",
+        "20250912_B02_latents.parquet",
+    ]
+    assert [path.parent.name for path in outputs] == [
+        "20250912_A01",
+        "20250912_B02",
+    ]
+
+
+def test_completion_flag_is_not_written_when_a_later_well_fails(tmp_path):
+    csv_a = _make_well(tmp_path, "20250912_B01", n_snips=1)
+    missing_csv = tmp_path / "missing_snip_inventory.csv"
+    out_a = tmp_path / "out" / "20250912_B01_latents.parquet"
+    out_b = tmp_path / "out" / "20250912_C01_latents.parquet"
+    completion_flag = tmp_path / "out" / "batch_complete.validated"
+    completion_flag.parent.mkdir(parents=True)
+    completion_flag.write_text("stale\n")
+    out_b.with_name(out_b.name + ".validated").write_text("stale\n")
+
+    with patch(_RESOLVE, return_value=tmp_path / "fake_model_dir"), \
+         patch(_LOADER, return_value=_FakeEncoder()), \
+         pytest.raises(FileNotFoundError):
+        run_legacy_embeddings(
+            snip_inventory_csvs=[csv_a, missing_csv],
+            output_parquets=[out_a, out_b],
+            output_root=tmp_path,
+            models_root=tmp_path / "models",
+            model_name=MODEL_NAME,
+            model_input_shape=MODEL_INPUT_SHAPE,
+            completion_flag=completion_flag,
+        )
+
+    assert out_a.exists()
+    assert out_a.with_name(out_a.name + ".validated").exists()
+    assert not completion_flag.exists()
+    assert not out_b.with_name(out_b.name + ".validated").exists()
 
 
 def test_run_legacy_embeddings_writes_and_merges_empty_well(tmp_path):

@@ -14,16 +14,28 @@ from __future__ import annotations
 
 import pandas as pd
 
+from data_pipeline.acquisition.image_materialization.frame_modality import (
+    FRAME_MODALITY_COLUMNS,
+    IMAGE_KIND_SINGLE_Z,
+    frame_modality_for_image,
+)
 from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_identity_contract import (
     PHYSICAL_EMBRYO_ID_SPINE_COLUMNS,
     SNIP_ID_SPINE_COLUMNS,
+)
+from data_pipeline.quality_control.applicability import (
+    QC_APPLICABILITY_DIAGNOSTIC_ONLY,
+    QC_APPLICABILITY_EXCLUSION,
 )
 
 _SNIP_FLAG_COLUMNS = ("viability_dead_flag", "persistence_dead_flag")
 
 
 def reconcile_death_flags_to_snip_grain(
-    death_flags_df: pd.DataFrame, snip_universe_df: pd.DataFrame
+    death_flags_df: pd.DataFrame,
+    snip_universe_df: pd.DataFrame,
+    *,
+    frame_inventory_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Project the per-snip death flags onto the full snip universe (full spine + two flags).
 
@@ -55,7 +67,40 @@ def reconcile_death_flags_to_snip_grain(
     snip_ids = out["snip_id"].astype(str)
     for col in _SNIP_FLAG_COLUMNS:
         out[col] = pd.array([bool(flags_by_snip.loc[s, col]) for s in snip_ids], dtype=bool)
+    out["death_detection_qc_applicability"] = _death_applicability_by_snip(
+        universe, frame_inventory_df
+    )
     return out
+
+
+def _death_applicability_by_snip(
+    snip_universe_df: pd.DataFrame,
+    frame_inventory_df: pd.DataFrame | None,
+) -> list[str]:
+    """Keep single-z death evidence for audit without allowing it to exclude."""
+    if frame_inventory_df is None or not all(
+        column in frame_inventory_df.columns for column in FRAME_MODALITY_COLUMNS
+    ):
+        return [QC_APPLICABILITY_EXCLUSION] * len(snip_universe_df)
+    if "image_id" not in snip_universe_df.columns:
+        raise ValueError(
+            "death_detection: modality-aware applicability requires image_id in the "
+            "snip_inventory universe."
+        )
+
+    modality_by_image: dict[str, str] = {}
+    applicability: list[str] = []
+    for image_id_value in snip_universe_df["image_id"]:
+        image_id = str(image_id_value)
+        if image_id not in modality_by_image:
+            modality = frame_modality_for_image(frame_inventory_df, image_id=image_id)
+            modality_by_image[image_id] = str(modality["image_kind"])
+        applicability.append(
+            QC_APPLICABILITY_DIAGNOSTIC_ONLY
+            if modality_by_image[image_id] == IMAGE_KIND_SINGLE_Z
+            else QC_APPLICABILITY_EXCLUSION
+        )
+    return applicability
 
 
 def reconcile_death_events_to_physical_embryo_grain(

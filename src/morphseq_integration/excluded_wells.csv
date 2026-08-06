@@ -1,0 +1,15 @@
+experiment_date,collection_time_hpf,perturbation,well_index,well_id,reason,curated_by,curated_on
+20250612,24,ctrl_atf6,A08,20250612_24hpf_ctrl_atf6_A08,image_qc,nlammers,2026-07-30
+20250612,24,ctrl_atf6,E12,20250612_24hpf_ctrl_atf6_E12,image_qc,nlammers,2026-07-30
+20250612,24,ctrl_atf6,G02,20250612_24hpf_ctrl_atf6_G02,image_qc,nlammers,2026-07-30
+20250612,24,ctrl_atf6,H09,20250612_24hpf_ctrl_atf6_H09,image_qc,nlammers,2026-07-30
+20250612,24,wfs1_ctcf,A03,20250612_24hpf_wfs1_ctcf_A03,image_qc,nlammers,2026-07-30
+20250612,24,wfs1_ctcf,B07,20250612_24hpf_wfs1_ctcf_B07,image_qc,nlammers,2026-07-30
+20250612,24,wfs1_ctcf,F08,20250612_24hpf_wfs1_ctcf_F08,image_qc,nlammers,2026-07-30
+20250612,30,ctrl_atf6,F08,20250612_30hpf_ctrl_atf6_F08,image_qc,nlammers,2026-07-30
+20250612,30,ctrl_atf6,F11,20250612_30hpf_ctrl_atf6_F11,image_qc,nlammers,2026-07-30
+20250612,36,ctrl_atf6,C11,20250612_36hpf_ctrl_atf6_C11,image_qc,nlammers,2026-07-30
+20250612,36,ctrl_atf6,E08,20250612_36hpf_ctrl_atf6_E08,image_qc,nlammers,2026-07-30
+20250612,36,ctrl_atf6,E09,20250612_36hpf_ctrl_atf6_E09,image_qc,nlammers,2026-07-30
+20250612,36,wfs1_ctcf,F10,20250612_36hpf_wfs1_ctcf_F10,image_qc,nlammers,2026-07-30
+20250612,36,wfs1_ctcf,H06,20250612_36hpf_wfs1_ctcf_H06,image_qc,nlammers,2026-07-30
