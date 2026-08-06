@@ -68,18 +68,40 @@ def _write_plate_workbook(xlsx_path: Path, *, row_labels: list[object]) -> None:
             w, sheet_name="series_number_map", index=False)
 
 
-def test_missing_row_label_is_REJECTED_not_inferred(tmp_path: Path) -> None:
-    """A grid page whose row labels are not exactly A-H in sequence must fail loud.
+def test_trailing_blank_H_label_is_repaired(tmp_path: Path) -> None:
+    """``A..G, blank`` is a known legacy grid dialect and is repaired to ``A..H``.
 
-    POLICY REVERSAL, pinned deliberately. This test previously asserted the opposite — that a blank
-    "H" label cell was tolerated and the row recovered by position. The loader now requires exact
-    A-H (_assert_rows_are_A_to_H_in_sequence), and that is the safer contract: inferring a plate row
-    from its position is how an entire row of 12 wells silently acquires the wrong genotype when a
-    sheet has an extra, missing, or reordered row. A hard failure names the sheet; a silent
-    inference does not.
+    I briefly rewrote this test to assert the OPPOSITE — that the blank label is rejected — after
+    seeing _assert_rows_are_A_to_H_in_sequence fail on it. That was wrong: the strict assert is
+    real, but _normalize_trailing_blank_h_label (added in 77cc55ff) runs FIRST and repairs exactly
+    this shape. The original assertion was right; I had not yet fetched the commit that made it so.
+
+    The repair is safe precisely because it is narrow — the H row is the LAST row of an
+    exactly-eight-row grid whose other seven labels are already A–G, so its position is not
+    ambiguous. See the companion test below for what is still rejected.
     """
     xlsx_path = tmp_path / "plate.xlsx"
     _write_plate_workbook(xlsx_path, row_labels=["A", "B", "C", "D", "E", "F", "G", np.nan])
+
+    df = process_plate_layout(xlsx_path, experiment_id="EXP", output_csv=tmp_path / "out.csv")
+
+    # The recovered H row carries the right values, not merely the right count.
+    h = df[df["well_index"].astype(str).str.startswith("H")].set_index("well_index")
+    assert len(h) == 12
+    assert h.loc["H01", "genotype"] == "hom"
+    assert h.loc["H02", "genotype"] == "het"
+
+
+def test_a_row_label_that_is_not_merely_a_trailing_blank_is_REJECTED(tmp_path: Path) -> None:
+    """The repair above must stay narrow: any OTHER malformed layout still fails loud.
+
+    This is the half that keeps _normalize_trailing_blank_h_label honest. Inferring a plate row
+    from its position is how twelve wells silently acquire the wrong genotype, so it is licensed
+    only for the one unambiguous dialect. Here 'Z' is a real label in the wrong place rather than a
+    blank, so nothing can be inferred and the loader must name the offending sheet.
+    """
+    xlsx_path = tmp_path / "plate.xlsx"
+    _write_plate_workbook(xlsx_path, row_labels=["A", "B", "C", "D", "E", "F", "G", "Z"])
 
     with pytest.raises(ValueError, match="must be exactly"):
         process_plate_layout(xlsx_path, experiment_id="EXP", output_csv=tmp_path / "out.csv")
