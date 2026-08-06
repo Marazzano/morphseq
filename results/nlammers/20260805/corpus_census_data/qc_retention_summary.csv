@@ -1,0 +1,4 @@
+scope,qc_evaluated_timepoints,confirmed_usable_timepoints,retention_rate,retention_ci95_low,retention_ci95_high,projection_basis
+Keyence,23293,11954,0.5132013909758296,0.5067808233986181,0.5196176047900339,completed snip_qc tables
+SeaHub,8152,8064,0.9892051030421982,0.9867201538903134,0.9912291971613303,detection completion only; downstream QC unavailable
+YX1,422276,153880,0.36440621773437276,0.3629558786674168,0.3658590238718476,completed snip_qc tables

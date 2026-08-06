@@ -1,0 +1,26 @@
+#!/bin/bash
+# Merge job submitted with -hold_jid <SeaHub detection array job id>.
+
+#$ -N seahub_merge
+#$ -cwd
+#$ -q trapnell-short.q
+#$ -l mfree=8G
+#$ -l h_rt=3600
+#$ -pe serial 1
+#$ -o /net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/logs/seahub_merge.$JOB_ID.out
+#$ -e /net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/logs/seahub_merge.$JOB_ID.err
+
+set -euo pipefail
+
+REPO_ROOT="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq"
+WORK_DIR="${REPO_ROOT}/results/nlammers/20260723_seahub"
+RECONCILED="${WORK_DIR}/outputs/full_corpus_20260724/integration/reconciled_fovs.csv"
+OUTPUT_ROOT="${WORK_DIR}/outputs/full_corpus_20260724/detection"
+CONDA="/net/trapnell/vol1/home/nlammers/micromamba/bin/conda"
+
+cd "${REPO_ROOT}"
+export PYTHONDONTWRITEBYTECODE=1
+"${CONDA}" run -n morphseq-env --no-capture-output \
+    python "${WORK_DIR}/merge_full_corpus_detection.py" \
+    --reconciled-fovs-csv "${RECONCILED}" \
+    --output-root "${OUTPUT_ROOT}"

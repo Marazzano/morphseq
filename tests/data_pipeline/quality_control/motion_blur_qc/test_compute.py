@@ -90,6 +90,11 @@ def _snip_rows(tmp_path, *, mask, planes):
                 # Required by _resample_to_qc_resolution once config.qc_micrometers_per_pixel is
                 # set (it is, by default). Pinned EQUAL to that QC target so resampling is a
                 # deliberate no-op and these metric assertions stay about motion, not rescaling.
+                #
+                # Derived rather than written as the literal 15.0889 (which is what the default
+                # happens to be today): the assertions depend on this being the SAME value as the
+                # QC target, not on it being any particular number, so a change to the default
+                # must not silently turn the no-op into a real rescale.
                 "image_micrometers_per_pixel": resolve_config().qc_micrometers_per_pixel,
             }
         )
@@ -170,6 +175,7 @@ def test_batch_compute_loads_z_stack_rows_and_aligns_mask(tmp_path):
     assert row["n_valid_z_pairs"] == 2
     assert row["n_mask_pixels"] > 0
     assert row["motion_blur_flag"] == True  # noqa: E712
+    assert row["motion_blur_qc_applicability"] == "exclusion"
     validate_motion_blur_qc(out)
 
 
@@ -185,3 +191,34 @@ def test_missing_mask_fails_loud(tmp_path):
     masks = masks.iloc[0:0]
     with pytest.raises(ValueError, match="not found in frame_masks"):
         compute_motion_blur_qc(inv, masks, fi, config=resolve_config())
+
+
+def test_single_z_is_not_applicable_without_z_stack(tmp_path):
+    inv, masks, _ = _snip_rows(
+        tmp_path, mask=_mask(), planes=[_gradient(), _gradient()]
+    )
+    image_id = inv.iloc[0]["image_id"]
+    fi = pd.DataFrame(
+        [
+            {
+                "well_id": WELL,
+                "channel_id": CHANNEL,
+                "time_index": 0,
+                "z_index": pd.NA,
+                "image_id": image_id,
+                "image_product_type": "projection",
+                "projection_method": "focus_stack",
+                "image_path": "not-read-for-single-z.jpg",
+                "source_scope": "seahub",
+                "image_kind": "single_z",
+                "z_position": pd.NA,
+                "calibration_status": "placeholder",
+            }
+        ]
+    )
+    out = compute_motion_blur_qc(inv, masks, fi, config=resolve_config())
+    row = out.iloc[0]
+    assert not bool(row["motion_blur_flag"])
+    assert row["motion_blur_qc_applicability"] == "not_applicable"
+    assert pd.isna(row["mask_pixel_ncc_mean"])
+    validate_motion_blur_qc(out)

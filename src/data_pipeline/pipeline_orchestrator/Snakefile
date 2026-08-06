@@ -205,9 +205,15 @@ if FRONT_END_MODE not in ("native", "dropin"):
 _DROPIN_CONFIG = config.get("dropin", {})
 DROPIN_MANIFEST_CSV = str(_DROPIN_CONFIG.get("frame_inventory_csv", ""))
 DROPIN_IMAGE_ROOT = str(_DROPIN_CONFIG.get("image_root", ""))
+DROPIN_PLATE_METADATA_CSV = str(_DROPIN_CONFIG.get("plate_metadata_csv", ""))
 if FRONT_END_MODE == "dropin" and not DROPIN_MANIFEST_CSV:
     raise ValueError(
         "front_end.mode='dropin' requires dropin.frame_inventory_csv (the ingress manifest path)."
+    )
+if FRONT_END_MODE == "dropin" and not DROPIN_PLATE_METADATA_CSV:
+    raise ValueError(
+        "front_end.mode='dropin' requires dropin.plate_metadata_csv "
+        "(one per-well biological metadata row)."
     )
 
 
@@ -221,6 +227,14 @@ SCOPE_TOKEN = _scope_token(MICROSCOPE)
 
 def _configured_image_product_keys() -> tuple[str, ...]:
     requested_plan = load_image_materialization_plan(config)
+    if FRONT_END_MODE == "dropin":
+        # External producers already committed to their product rows. Product-key
+        # grammar is global; do not pretend the source is YX1/Keyence merely to
+        # run a native scope resolver that will never materialize these frames.
+        return tuple(
+            image_product_key_for_resolved_product(product)
+            for product in requested_plan.products
+        )
     resolved_plan = resolve_materialization_plan(
         scope_name=SCOPE_TOKEN,
         requested_plan=requested_plan,
@@ -416,28 +430,46 @@ def _selected_wells_csv(experiment: str) -> str:
 # ============================================================================
 
 
-rule ingest_plate_metadata:
-    """
-    Normalize and validate plate layout metadata.
-
-    Reads raw plate layout CSV/Excel, normalizes column names, adds
-    experiment_id and well_id, then validates against schema.
-    """
-    input:
-        plate_file = PLATE_METADATA_DIR / "{experiment}_well_metadata.xlsx"
-    output:
-        normalized_csv = PLATE_METADATA_CSV,
-        validated = PLATE_METADATA_VALIDATED,
-    params:
-        experiment_id = "{experiment}"
-    shell:
+if FRONT_END_MODE == "native":
+    rule ingest_plate_metadata:
         """
-        {RUN} -m data_pipeline.pipeline_orchestrator.tasks ingest-plate-metadata \
-          --input-file "{input.plate_file}" \
-          --experiment "{params.experiment_id}" \
-          --output-csv "{output.normalized_csv}" \
-          --output-flag "{output.validated}"
+        Normalize and validate native plate layout metadata.
         """
+        input:
+            plate_file = PLATE_METADATA_DIR / "{experiment}_well_metadata.xlsx"
+        output:
+            normalized_csv = PLATE_METADATA_CSV,
+            validated = PLATE_METADATA_VALIDATED,
+        params:
+            experiment_id = "{experiment}"
+        shell:
+            """
+            {RUN} -m data_pipeline.pipeline_orchestrator.tasks ingest-plate-metadata \
+              --input-file "{input.plate_file}" \
+              --experiment "{params.experiment_id}" \
+              --output-csv "{output.normalized_csv}" \
+              --output-flag "{output.validated}"
+            """
+elif FRONT_END_MODE == "dropin":
+    rule ingest_plate_metadata:
+        """
+        Validate and land the drop-in dataset's per-well biological metadata.
+        """
+        input:
+            plate_file = DROPIN_PLATE_METADATA_CSV
+        output:
+            normalized_csv = PLATE_METADATA_CSV,
+            validated = PLATE_METADATA_VALIDATED,
+        params:
+            experiment_id = "{experiment}"
+        shell:
+            """
+            {RUN} -m data_pipeline.pipeline_orchestrator.tasks ingest-dropin-plate-metadata \
+              --input-csv "{input.plate_file}" \
+              --experiment "{params.experiment_id}" \
+              --output-csv "{output.normalized_csv}" \
+              --output-flag "{output.validated}"
+            """
 
 
 

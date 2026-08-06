@@ -1,0 +1,990 @@
+---
+title: "Interpretable cilia gene-module scores"
+output: html_document
+params:
+  mode: "prepare_modules"
+---
+
+This notebook asks:
+
+> Which cell types express curated cilia programs, and where do those programs
+> appear on the reference and GENE14 UMAPs?
+
+The analysis keeps the biology visible. First we build and inspect the human
+gene lists. Then we map them to zebrafish genes. Only after that audit do we
+load the large single-cell objects and calculate scores.
+
+The default mode is `prepare_modules`, which does not load a CDS.
+
+```{r setup, message=FALSE, warning=FALSE}
+library(monocle3)
+library(Matrix)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(readr)
+library(readxl)
+library(stringr)
+library(ggplot2)
+library(jsonlite)
+
+PROJECT_DIR <- paste0(
+  "/net/trapnell/vol1/home/mdcolon/proj/morphseq/results/",
+  "mcolon/20260727_gene14_clean"
+)
+MODULE_DIR <- file.path(PROJECT_DIR, "cilia_gene_module")
+REPOSITORY_DIR <- normalizePath(file.path(PROJECT_DIR, "..", "..", ".."))
+
+PROJECT_CONFIG <- jsonlite::read_json(
+  file.path(PROJECT_DIR, "project_config.json"),
+  simplifyVector = TRUE
+)
+
+resolve_project_path <- function(path) {
+  if (grepl("^/", path)) {
+    return(path)
+  }
+  normalizePath(file.path(PROJECT_DIR, path), mustWork = FALSE)
+}
+
+REFERENCE_CDS <- resolve_project_path(PROJECT_CONFIG$reference_cds)
+GENE14_CDS <- resolve_project_path(PROJECT_CONFIG$mcclintock_cds)
+REFERENCE_EXPRESSION <- resolve_project_path(
+  PROJECT_CONFIG$reference_expression
+)
+ZFIN_ORTHOLOGS <- resolve_project_path(PROJECT_CONFIG$zfin_human_orthologs)
+
+SCGS_V1_FILE <- file.path(
+  REPOSITORY_DIR,
+  "software",
+  "SysCilia",
+  "source",
+  "scgs.v1.tsv"
+)
+CILIOGENICS_SOURCE <- file.path(
+  REPOSITORY_DIR,
+  "software",
+  "CilioGenics_Analysis",
+  "source"
+)
+CILIOGENICS_GOLD <- file.path(
+  CILIOGENICS_SOURCE,
+  "Table_S3_Gold_standard.xlsx"
+)
+CILIOGENICS_MOTILE <- file.path(
+  CILIOGENICS_SOURCE,
+  "motile_genes.csv"
+)
+HGNC_NAMES <- file.path(CILIOGENICS_SOURCE, "hgnc_names.txt")
+
+DATA_DIR <- file.path(MODULE_DIR, "data")
+OUTPUT_DIR <- file.path(MODULE_DIR, "output")
+FIGURE_DIR <- file.path(MODULE_DIR, "figures")
+
+HUMAN_MODULE_FILE <- file.path(DATA_DIR, "human_cilia_modules.tsv")
+ORTHOLOGY_FILE <- file.path(DATA_DIR, "human_to_zebrafish_cilia_map.tsv")
+ZEBRAFISH_MODULE_FILE <- file.path(DATA_DIR, "zebrafish_cilia_modules.tsv")
+MODULE_COVERAGE_FILE <- file.path(DATA_DIR, "cilia_module_mapping_coverage.tsv")
+
+REFERENCE_SCORE_FILE <- file.path(OUTPUT_DIR, "reference_cell_cilia_scores.rds")
+GENE14_SCORE_FILE <- file.path(OUTPUT_DIR, "gene14_cell_cilia_scores.rds")
+CELLTYPE_SUMMARY_FILE <- file.path(OUTPUT_DIR, "cell_type_cilia_scores.tsv")
+
+source(file.path(MODULE_DIR, "cilia_gene_module_policy.R"))
+
+allowed_modes <- c(
+  "prepare_modules",
+  "score_reference",
+  "score_gene14",
+  "assemble",
+  "all"
+)
+if (!params$mode %in% allowed_modes) {
+  stop("mode must be one of: ", paste(allowed_modes, collapse = ", "))
+}
+
+dir.create(DATA_DIR, recursive = TRUE, showWarnings = FALSE)
+dir.create(OUTPUT_DIR, recursive = TRUE, showWarnings = FALSE)
+dir.create(FIGURE_DIR, recursive = TRUE, showWarnings = FALSE)
+```
+
+## Step 1: Read the annotated SysCilia v1 genes
+
+SysCilia v1 is our interpretable foundation. Its table records why each gene
+was included, supporting publications, ciliome studies, and protein location.
+
+The file contains 303 rows but 302 unique human genes because `DCDC2` occurs
+twice. We retain one row per stable human Ensembl ID and symbol.
+
+```{r load-scgs-v1, eval=params$mode %in% c("prepare_modules", "all")}
+scgs_v1_columns <- c(
+  "human_ensembl_id_v1",
+  "human_symbol_v1",
+  "human_gene_description",
+  "scgs_note",
+  "scgs_pubmed",
+  "scgs_ciliomes",
+  "scgs_localisation"
+)
+
+scgs_v1_raw <- readr::read_tsv(
+  SCGS_V1_FILE,
+  comment = "#",
+  col_names = scgs_v1_columns,
+  show_col_types = FALSE,
+  trim_ws = TRUE
+)
+
+if (nrow(scgs_v1_raw) != 303L) {
+  stop("Expected 303 SysCilia v1 rows; found ", nrow(scgs_v1_raw), ".")
+}
+if (dplyr::n_distinct(scgs_v1_raw$human_symbol_v1) != 302L) {
+  stop("Expected 302 unique SysCilia v1 symbols.")
+}
+
+duplicated_v1_symbols <- scgs_v1_raw |>
+  dplyr::count(.data$human_symbol_v1) |>
+  dplyr::filter(.data$n > 1)
+
+print(duplicated_v1_symbols)
+
+scgs_v1 <- scgs_v1_raw |>
+  dplyr::distinct(
+    .data$human_ensembl_id_v1,
+    .data$human_symbol_v1,
+    .keep_all = TRUE
+  )
+```
+
+### Update historical human symbols without losing them
+
+The v1 table used Ensembl release 71. We use its stable Ensembl ID to attach
+the approved human symbol distributed with CilioGenics. The old symbol remains
+in the audit table, so changes such as `AZI1` to `CEP131` are explicit.
+
+```{r update-human-symbols, eval=params$mode %in% c("prepare_modules", "all")}
+hgnc_symbol_map <- readr::read_tsv(
+  HGNC_NAMES,
+  show_col_types = FALSE,
+  progress = FALSE
+) |>
+  dplyr::transmute(
+    human_ensembl_id_v1 = .data$`Ensembl gene ID`,
+    approved_human_symbol = .data$`Approved symbol`
+  ) |>
+  dplyr::filter(
+    !is.na(.data$human_ensembl_id_v1),
+    .data$human_ensembl_id_v1 != "",
+    !is.na(.data$approved_human_symbol),
+    .data$approved_human_symbol != ""
+  ) |>
+  dplyr::distinct(.data$human_ensembl_id_v1, .keep_all = TRUE)
+
+scgs_v1 <- scgs_v1 |>
+  dplyr::left_join(hgnc_symbol_map, by = "human_ensembl_id_v1") |>
+  dplyr::mutate(
+    current_human_symbol = dplyr::coalesce(
+      .data$approved_human_symbol,
+      .data$human_symbol_v1
+    ),
+    symbol_was_updated =
+      .data$current_human_symbol != .data$human_symbol_v1
+  ) |>
+  dplyr::select(-.data$approved_human_symbol)
+
+cat(sum(scgs_v1$symbol_was_updated), "v1 symbols were updated.\n")
+
+scgs_v1 |>
+  dplyr::filter(.data$symbol_was_updated) |>
+  dplyr::select(
+    human_ensembl_id_v1,
+    human_symbol_v1,
+    current_human_symbol,
+    scgs_localisation
+  )
+```
+
+## Step 2: Reconstruct the gold-standard motile list
+
+CilioGenics defines its motile evidence list from five human lung or tracheal
+single-cell sources: Reyfman, Carraro, Habermann, Murthy, and Trachea.
+
+For interpretability, we keep only genes that are also in the CilioGenics gold
+standard. We calculate that intersection directly instead of relying on the
+precomputed Venn table, which separates pair-only and triple-overlap genes.
+
+```{r build-gold-motile, eval=params$mode %in% c("prepare_modules", "all")}
+ciliogenics_gold_source <- readxl::read_excel(
+  CILIOGENICS_GOLD,
+  sheet = "o_gold_standard_list"
+)
+
+ciliogenics_gold_rows <- tibble::tibble(
+  current_human_symbol = as.character(ciliogenics_gold_source[[1]])
+) |>
+  dplyr::filter(
+    !is.na(.data$current_human_symbol),
+    .data$current_human_symbol != "Gene_name",
+    .data$current_human_symbol != ""
+  )
+
+if (nrow(ciliogenics_gold_rows) != 688L) {
+  stop("Expected 688 CilioGenics gold rows.")
+}
+
+duplicated_gold_symbols <- ciliogenics_gold_rows |>
+  dplyr::count(.data$current_human_symbol) |>
+  dplyr::filter(.data$n > 1)
+print(duplicated_gold_symbols)
+
+ciliogenics_gold <- ciliogenics_gold_rows |>
+  dplyr::distinct(.data$current_human_symbol)
+
+if (nrow(ciliogenics_gold) != 687L) {
+  stop("Expected 687 unique CilioGenics gold genes.")
+}
+
+ciliogenics_motile <- readr::read_delim(
+  CILIOGENICS_MOTILE,
+  delim = ";",
+  show_col_types = FALSE
+) |>
+  dplyr::transmute(
+    current_human_symbol = .data$Gene_name,
+    Reyfman = .data$Reyfman,
+    Carraro = .data$Carraro,
+    Habermann = .data$Habermann,
+    Murthy = .data$Murthy,
+    Trachea = .data$Trachea
+  ) |>
+  dplyr::distinct(.data$current_human_symbol, .keep_all = TRUE)
+
+if (nrow(ciliogenics_motile) != 356L) {
+  stop("Expected 356 genes in the CilioGenics motile evidence list.")
+}
+
+gold_motile_genes <- ciliogenics_gold |>
+  dplyr::inner_join(ciliogenics_motile, by = "current_human_symbol")
+
+if (nrow(gold_motile_genes) != 142L) {
+  stop(
+    "Expected 142 gold-standard motile genes; found ",
+    nrow(gold_motile_genes),
+    "."
+  )
+}
+
+cat(
+  nrow(ciliogenics_gold), "unique CilioGenics gold genes\n",
+  nrow(ciliogenics_motile), "five-study motile genes\n",
+  nrow(gold_motile_genes), "gold-standard motile genes\n"
+)
+```
+
+## Step 3: Build the interpretable human modules
+
+The broad score is the union of SysCilia v1 and the gold-standard motile list.
+The smaller v1 modules come directly from its curated localization column. A
+multi-localized protein can—and should—appear in more than one module.
+
+```{r build-human-modules, eval=params$mode %in% c("prepare_modules", "all")}
+v1_all_membership <- scgs_v1 |>
+  dplyr::transmute(
+    module_id = "v1_all",
+    current_human_symbol = .data$current_human_symbol,
+    module_provenance = "SysCilia v1 curated gold standard (2013)"
+  )
+
+gold_motile_membership <- gold_motile_genes |>
+  dplyr::transmute(
+    module_id = "gold_motile_cilia",
+    current_human_symbol = .data$current_human_symbol,
+    module_provenance = paste(
+      "CilioGenics gold standard intersected with five-study",
+      "human lung/tracheal motile evidence"
+    )
+  )
+
+combined_membership <- dplyr::bind_rows(
+  v1_all_membership,
+  gold_motile_membership
+) |>
+  dplyr::distinct(.data$current_human_symbol) |>
+  dplyr::mutate(
+    module_id = "combined_cilia",
+    module_provenance = paste(
+      "Union of annotated SysCilia v1 and CilioGenics",
+      "gold-standard motile genes"
+    ),
+    .before = 1
+  )
+
+v1_location_membership <- build_v1_location_membership(scgs_v1)
+
+human_module_membership <- dplyr::bind_rows(
+  combined_membership,
+  gold_motile_membership,
+  v1_all_membership,
+  v1_location_membership
+) |>
+  dplyr::distinct(
+    .data$module_id,
+    .data$current_human_symbol,
+    .keep_all = TRUE
+  )
+
+human_module_sizes <- human_module_membership |>
+  dplyr::count(.data$module_id, name = "n_human_genes") |>
+  dplyr::arrange(dplyr::desc(.data$n_human_genes))
+
+human_module_sizes
+```
+
+Keep the full v1 evidence beside module membership for auditing.
+
+```{r write-human-modules, eval=params$mode %in% c("prepare_modules", "all")}
+human_cilia_modules <- human_module_membership |>
+  dplyr::left_join(
+    scgs_v1 |>
+      dplyr::select(
+        current_human_symbol,
+        human_ensembl_id_v1,
+        human_symbol_v1,
+        symbol_was_updated,
+        human_gene_description,
+        scgs_note,
+        scgs_pubmed,
+        scgs_ciliomes,
+        scgs_localisation
+      ),
+    by = "current_human_symbol"
+  ) |>
+  dplyr::arrange(.data$module_id, .data$current_human_symbol)
+
+readr::write_tsv(human_cilia_modules, HUMAN_MODULE_FILE)
+cat("Wrote", HUMAN_MODULE_FILE, "\n")
+```
+
+## Step 4: Map human module genes to zebrafish Ensembl IDs
+
+ZFIN is the source of human–zebrafish orthology. Its download contains one row
+per supporting assertion, so several rows can describe the same gene pair. We
+first keep unique human-symbol/ZFIN-gene pairs.
+
+The reference-expression table then connects the ZFIN zebrafish symbol to the
+Ensembl gene ID used as the row name of both v3.1.0 CDS objects.
+
+```{r map-to-zebrafish, eval=params$mode %in% c("prepare_modules", "all")}
+zfin_columns <- c(
+  "zfin_gene_id",
+  "zebrafish_symbol",
+  "zebrafish_gene_name",
+  "current_human_symbol",
+  "human_gene_name",
+  "human_omim_id",
+  "human_ncbi_gene_id",
+  "human_hgnc_id",
+  "orthology_evidence_code",
+  "zfin_publication_id",
+  "orthology_evidence_name",
+  "eco_id",
+  "eco_name"
+)
+
+module_human_genes <- human_module_membership |>
+  dplyr::distinct(.data$current_human_symbol)
+
+zfin_orthologs <- readr::read_tsv(
+  ZFIN_ORTHOLOGS,
+  col_names = zfin_columns,
+  show_col_types = FALSE,
+  progress = FALSE
+) |>
+  dplyr::filter(
+    .data$current_human_symbol %in%
+      module_human_genes$current_human_symbol
+  ) |>
+  dplyr::distinct(
+    .data$current_human_symbol,
+    .data$zfin_gene_id,
+    .data$zebrafish_symbol,
+    .data$zebrafish_gene_name
+  )
+
+reference_gene_map <- readr::read_tsv(
+  REFERENCE_EXPRESSION,
+  col_select = c(gene_id, gene_short_name),
+  show_col_types = FALSE,
+  progress = FALSE
+) |>
+  dplyr::filter(
+    !is.na(.data$gene_id),
+    !is.na(.data$gene_short_name)
+  ) |>
+  dplyr::distinct(
+    zebrafish_gene_id = .data$gene_id,
+    zebrafish_symbol = .data$gene_short_name
+  )
+
+human_to_zebrafish <- module_human_genes |>
+  dplyr::left_join(zfin_orthologs, by = "current_human_symbol") |>
+  dplyr::left_join(reference_gene_map, by = "zebrafish_symbol") |>
+  dplyr::group_by(.data$current_human_symbol) |>
+  dplyr::mutate(
+    n_zebrafish_orthologs = dplyr::n_distinct(
+      .data$zfin_gene_id,
+      na.rm = TRUE
+    ),
+    mapping_status = dplyr::case_when(
+      is.na(.data$zfin_gene_id) ~ "no_zfin_ortholog",
+      is.na(.data$zebrafish_gene_id) ~ "not_in_reference_gene_map",
+      .data$n_zebrafish_orthologs == 1L ~ "one_zebrafish_ortholog",
+      TRUE ~ "multiple_zebrafish_orthologs"
+    )
+  ) |>
+  dplyr::ungroup() |>
+  dplyr::arrange(.data$current_human_symbol, .data$zebrafish_symbol)
+
+zebrafish_module_membership <- human_module_membership |>
+  dplyr::left_join(human_to_zebrafish, by = "current_human_symbol") |>
+  dplyr::filter(!is.na(.data$zebrafish_gene_id)) |>
+  dplyr::distinct(
+    .data$module_id,
+    .data$current_human_symbol,
+    .data$zfin_gene_id,
+    .data$zebrafish_symbol,
+    .data$zebrafish_gene_id,
+    .keep_all = TRUE
+  )
+
+module_mapping_coverage <- human_module_membership |>
+  dplyr::distinct(.data$module_id, .data$current_human_symbol) |>
+  dplyr::left_join(
+    human_to_zebrafish |>
+      dplyr::group_by(.data$current_human_symbol) |>
+      dplyr::summarise(
+        has_zfin_ortholog = any(!is.na(.data$zfin_gene_id)),
+        has_zebrafish_gene_id = any(!is.na(.data$zebrafish_gene_id)),
+        n_zebrafish_orthologs = max(.data$n_zebrafish_orthologs),
+        .groups = "drop"
+      ),
+    by = "current_human_symbol"
+  ) |>
+  dplyr::group_by(.data$module_id) |>
+  dplyr::summarise(
+    n_human_genes = dplyr::n(),
+    n_with_zfin_ortholog = sum(.data$has_zfin_ortholog %in% TRUE),
+    n_mapped_human_genes = sum(.data$has_zebrafish_gene_id %in% TRUE),
+    n_one_to_many = sum(.data$n_zebrafish_orthologs > 1, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  dplyr::mutate(
+    mapping_fraction = .data$n_mapped_human_genes / .data$n_human_genes,
+    will_be_scored =
+      .data$n_mapped_human_genes >= MINIMUM_MAPPED_HUMAN_GENES
+  ) |>
+  dplyr::arrange(dplyr::desc(.data$n_human_genes))
+
+readr::write_tsv(human_to_zebrafish, ORTHOLOGY_FILE)
+readr::write_tsv(zebrafish_module_membership, ZEBRAFISH_MODULE_FILE)
+readr::write_tsv(module_mapping_coverage, MODULE_COVERAGE_FILE)
+
+module_mapping_coverage
+```
+
+Check our experiment’s cilia perturbations explicitly.
+
+```{r audit-target-genes, eval=params$mode %in% c("prepare_modules", "all")}
+target_gene_audit <- tibble::tibble(
+  perturbation_gene = c("cep290", "b9d2", "ift88", "foxj1a"),
+  current_human_symbol = c("CEP290", "B9D2", "IFT88", "FOXJ1")
+) |>
+  dplyr::left_join(human_to_zebrafish, by = "current_human_symbol") |>
+  dplyr::left_join(
+    human_module_membership |>
+      dplyr::group_by(.data$current_human_symbol) |>
+      dplyr::summarise(
+        modules = paste(sort(.data$module_id), collapse = "; "),
+        .groups = "drop"
+      ),
+    by = "current_human_symbol"
+  )
+
+target_gene_audit
+```
+
+When `mode = "prepare_modules"`, the notebook stops here.
+
+## Step 5: Score one loaded CDS
+
+This is the only large-data helper. It is defined here because it is used
+immediately below.
+
+For each human cilia gene, zebrafish paralogs are summed before scoring. Each
+human ortholog therefore receives one equal module weight.
+
+```{r define-score-dataset, eval=params$mode %in% c("score_reference", "score_gene14", "all")}
+if (!file.exists(ORTHOLOGY_FILE) || !file.exists(HUMAN_MODULE_FILE)) {
+  stop("Run prepare_modules before scoring a CDS.")
+}
+
+human_to_zebrafish <- readr::read_tsv(
+  ORTHOLOGY_FILE,
+  show_col_types = FALSE
+)
+human_module_membership <- readr::read_tsv(
+  HUMAN_MODULE_FILE,
+  show_col_types = FALSE
+) |>
+  dplyr::select(
+    module_id,
+    current_human_symbol,
+    module_provenance
+  ) |>
+  dplyr::distinct()
+
+score_one_dataset <- function(dataset_name, cds_path, score_file) {
+  message("Loading ", dataset_name, " CDS...")
+  cds <- monocle3::load_monocle_objects(cds_path)
+
+  if (!"UMAP" %in% SingleCellExperiment::reducedDimNames(cds)) {
+    stop(dataset_name, " CDS does not contain a UMAP embedding.")
+  }
+
+  scored <- score_cilia_modules(
+    cds = cds,
+    human_to_zebrafish = human_to_zebrafish,
+    human_module_membership = human_module_membership
+  )
+
+  umap <- SingleCellExperiment::reducedDim(cds, "UMAP")
+  umap <- tibble::tibble(
+    cell = colnames(cds),
+    UMAP_1 = umap[, 1],
+    UMAP_2 = umap[, 2]
+  )
+
+  cell_metadata <- as.data.frame(SummarizedExperiment::colData(cds))
+
+  # The CDS row names are the authoritative cell IDs. Some CDS objects also
+  # contain a column named `cell`, so assign this column explicitly instead of
+  # trying to add a second column with the same name.
+  cell_metadata$cell <- rownames(cell_metadata)
+  cell_metadata <- tibble::as_tibble(cell_metadata)
+
+  metadata_to_keep <- intersect(
+    c(
+      "cell",
+      "cell_type",
+      "projection_group",
+      "embryo_ID",
+      "perturbation",
+      "timepoint"
+    ),
+    names(cell_metadata)
+  )
+
+  cell_scores <- cell_metadata |>
+    dplyr::select(dplyr::all_of(metadata_to_keep)) |>
+    dplyr::left_join(umap, by = "cell") |>
+    dplyr::left_join(scored$scores, by = "cell") |>
+    dplyr::mutate(dataset = dataset_name, .after = "cell")
+
+  if (nrow(cell_scores) != ncol(cds)) {
+    stop(dataset_name, " score rows do not match the CDS cells.")
+  }
+  if (anyNA(cell_scores$UMAP_1) || anyNA(cell_scores$UMAP_2)) {
+    stop(dataset_name, " has cells without UMAP coordinates.")
+  }
+
+  score_columns <- setdiff(
+    names(scored$scores),
+    "cell"
+  )
+  finite_scores <- vapply(
+    cell_scores[score_columns],
+    function(values) all(is.finite(values)),
+    logical(1)
+  )
+  constant_scores <- vapply(
+    cell_scores[score_columns],
+    function(values) dplyr::n_distinct(values) <= 1L,
+    logical(1)
+  )
+  if (!all(finite_scores)) {
+    stop(dataset_name, " contains a non-finite cilia score.")
+  }
+  if (any(constant_scores)) {
+    stop(
+      dataset_name,
+      " contains constant scores: ",
+      paste(names(constant_scores)[constant_scores], collapse = ", ")
+    )
+  }
+
+  saveRDS(cell_scores, score_file)
+  readr::write_tsv(
+    scored$mapped_module_sizes |>
+      dplyr::mutate(dataset = dataset_name, .before = 1),
+    file.path(
+      OUTPUT_DIR,
+      paste0(dataset_name, "_mapped_module_sizes.tsv")
+    )
+  )
+
+  message("Wrote ", score_file, ": ", nrow(cell_scores), " cells")
+
+  rm(cds)
+  invisible(gc())
+  invisible(cell_scores)
+}
+```
+
+### Step 5A: Score the reference atlas
+
+```{r score-reference, eval=params$mode %in% c("score_reference", "all")}
+reference_scores <- score_one_dataset(
+  dataset_name = "reference",
+  cds_path = REFERENCE_CDS,
+  score_file = REFERENCE_SCORE_FILE
+)
+rm(reference_scores)
+invisible(gc())
+```
+
+### Step 5B: Score GENE14
+
+```{r score-gene14, eval=params$mode %in% c("score_gene14", "all")}
+gene14_scores <- score_one_dataset(
+  dataset_name = "gene14",
+  cds_path = GENE14_CDS,
+  score_file = GENE14_SCORE_FILE
+)
+rm(gene14_scores)
+invisible(gc())
+```
+
+## Step 6: Summarize cell types and draw the maps
+
+This step reads the compact score checkpoints, not the large CDS objects.
+
+Every cell contributes to the cell-type summaries. UMAP rendering uses a
+deterministic sample of at most 200 cells per cell type so the PDFs remain
+responsive while every annotated cell type stays represented.
+
+```{r assemble-results, eval=params$mode %in% c("assemble", "all"), fig.width=13, fig.height=10}
+missing_score_files <- c(
+  REFERENCE_SCORE_FILE,
+  GENE14_SCORE_FILE
+)[!file.exists(c(REFERENCE_SCORE_FILE, GENE14_SCORE_FILE))]
+
+if (length(missing_score_files) > 0L) {
+  stop(
+    "Cannot assemble; missing score checkpoints: ",
+    paste(basename(missing_score_files), collapse = ", ")
+  )
+}
+
+all_cell_scores <- dplyr::bind_rows(
+  readRDS(REFERENCE_SCORE_FILE),
+  readRDS(GENE14_SCORE_FILE)
+)
+
+metadata_columns <- c(
+  "cell",
+  "dataset",
+  "cell_type",
+  "projection_group",
+  "embryo_ID",
+  "perturbation",
+  "timepoint",
+  "UMAP_1",
+  "UMAP_2"
+)
+score_columns <- setdiff(names(all_cell_scores), metadata_columns)
+
+cell_type_cilia_scores <- all_cell_scores |>
+  dplyr::mutate(
+    cell_type = dplyr::coalesce(
+      as.character(.data$cell_type),
+      "unannotated"
+    )
+  ) |>
+  tidyr::pivot_longer(
+    cols = dplyr::all_of(score_columns),
+    names_to = "module_id",
+    values_to = "score"
+  ) |>
+  dplyr::group_by(.data$dataset, .data$cell_type, .data$module_id) |>
+  dplyr::summarise(
+    n_cells = dplyr::n(),
+    mean_score = mean(.data$score),
+    median_score = stats::median(.data$score),
+    fraction_nonzero = mean(.data$score > 0),
+    .groups = "drop"
+  )
+
+readr::write_tsv(cell_type_cilia_scores, CELLTYPE_SUMMARY_FILE)
+
+set.seed(1)
+umap_cells <- all_cell_scores |>
+  dplyr::mutate(random_order = stats::runif(dplyr::n())) |>
+  dplyr::group_by(.data$dataset, .data$cell_type) |>
+  dplyr::arrange(.data$random_order, .by_group = TRUE) |>
+  dplyr::slice_head(n = 200L) |>
+  dplyr::ungroup() |>
+  dplyr::select(-.data$random_order) |>
+  tidyr::pivot_longer(
+    cols = dplyr::all_of(score_columns),
+    names_to = "module_id",
+    values_to = "score"
+  )
+
+display_limits <- all_cell_scores |>
+  tidyr::pivot_longer(
+    cols = dplyr::all_of(score_columns),
+    names_to = "module_id",
+    values_to = "score"
+  ) |>
+  dplyr::group_by(.data$module_id) |>
+  dplyr::summarise(
+    display_max = stats::quantile(.data$score, 0.99, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+umap_cells <- umap_cells |>
+  dplyr::left_join(display_limits, by = "module_id") |>
+  dplyr::mutate(
+    display_score = pmin(.data$score, .data$display_max),
+    display_fraction = dplyr::if_else(
+      .data$display_max > 0,
+      .data$display_score / .data$display_max,
+      0
+    )
+  )
+
+for (dataset_name in unique(umap_cells$dataset)) {
+  dataset_umap <- umap_cells |>
+    dplyr::filter(.data$dataset == .env$dataset_name)
+
+  all_module_plot <- ggplot(
+    dataset_umap,
+    aes(
+      x = .data$UMAP_1,
+      y = .data$UMAP_2,
+      color = .data$display_fraction
+    )
+  ) +
+    geom_point(size = 0.08, alpha = 0.7) +
+    # Every facet is the same UMAP, so all modules must use the same axes.
+    facet_wrap(vars(.data$module_id)) +
+    scale_color_viridis_c(option = "magma") +
+    coord_equal() +
+    theme_void(base_size = 10) +
+    theme(
+      strip.text = element_text(size = 9),
+      legend.position = "bottom"
+    ) +
+    labs(
+      title = paste(dataset_name, "cilia gene-module scores"),
+      color = "fraction of\nmodule 99th %ile"
+    )
+
+  ggsave(
+    file.path(FIGURE_DIR, paste0(dataset_name, "_all_cilia_module_umaps.pdf")),
+    all_module_plot,
+    width = 13,
+    height = 10,
+    limitsize = FALSE
+  )
+  ggsave(
+    file.path(FIGURE_DIR, paste0(dataset_name, "_all_cilia_module_umaps.png")),
+    all_module_plot,
+    width = 13,
+    height = 10,
+    dpi = 200,
+    bg = "white",
+    limitsize = FALSE
+  )
+
+  focused_plot <- dataset_umap |>
+    dplyr::filter(
+      .data$module_id %in% c("combined_cilia", "gold_motile_cilia")
+    ) |>
+    ggplot(
+      aes(
+        x = .data$UMAP_1,
+        y = .data$UMAP_2,
+        color = .data$display_fraction
+      )
+    ) +
+    geom_point(size = 0.1, alpha = 0.75) +
+    facet_wrap(vars(.data$module_id)) +
+    scale_color_viridis_c(option = "magma") +
+    coord_equal() +
+    theme_void(base_size = 11) +
+    theme(legend.position = "bottom") +
+    labs(
+      title = paste(dataset_name, "combined and motile cilia scores"),
+      color = "fraction of\nmodule 99th %ile"
+    )
+
+  ggsave(
+    file.path(FIGURE_DIR, paste0(dataset_name, "_main_cilia_module_umaps.pdf")),
+    focused_plot,
+    width = 10,
+    height = 5.5,
+    limitsize = FALSE
+  )
+  ggsave(
+    file.path(FIGURE_DIR, paste0(dataset_name, "_main_cilia_module_umaps.png")),
+    focused_plot,
+    width = 10,
+    height = 5.5,
+    dpi = 200,
+    bg = "white",
+    limitsize = FALSE
+  )
+}
+```
+
+The cell-type heatmap keeps every cell type and is deliberately tall so its
+labels remain readable when opened as a PDF.
+
+```{r cell-type-heatmap, eval=params$mode %in% c("assemble", "all"), fig.width=12, fig.height=16}
+cell_type_order <- cell_type_cilia_scores |>
+  dplyr::filter(
+    .data$dataset == "reference",
+    .data$module_id == "combined_cilia"
+  ) |>
+  dplyr::arrange(dplyr::desc(.data$median_score)) |>
+  dplyr::pull("cell_type")
+
+# Append any GENE14-only annotation instead of silently dropping it from the
+# shared ordering.
+cell_type_order <- c(
+  cell_type_order,
+  setdiff(unique(cell_type_cilia_scores$cell_type), cell_type_order)
+)
+
+heatmap_data <- cell_type_cilia_scores |>
+  dplyr::group_by(.data$module_id) |>
+  dplyr::mutate(
+    module_display_max = stats::quantile(
+      .data$median_score,
+      0.99,
+      na.rm = TRUE
+    ),
+    relative_median_score = dplyr::if_else(
+      .data$module_display_max > 0,
+      pmin(.data$median_score, .data$module_display_max) /
+        .data$module_display_max,
+      0
+    )
+  ) |>
+  dplyr::ungroup() |>
+  dplyr::mutate(
+    cell_type = factor(.data$cell_type, levels = rev(cell_type_order)),
+    module_id = factor(.data$module_id, levels = score_columns)
+  )
+
+heatmap_plot <- ggplot(
+  heatmap_data,
+  aes(
+    x = .data$module_id,
+    y = .data$cell_type,
+    fill = .data$relative_median_score
+  )
+) +
+  geom_tile(color = "white", linewidth = 0.05) +
+  facet_wrap(vars(.data$dataset), nrow = 1) +
+  scale_fill_viridis_c(option = "magma") +
+  theme_minimal(base_size = 8) +
+  theme(
+    axis.title = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid = element_blank()
+  ) +
+  labs(
+    title = "Median cilia gene-module score by cell type",
+    fill = "relative median\nwithin module"
+  )
+
+heatmap_height <- max(14, length(cell_type_order) * 0.13)
+ggsave(
+  file.path(FIGURE_DIR, "cell_type_cilia_module_heatmap.pdf"),
+  heatmap_plot,
+  width = 14,
+  height = heatmap_height,
+  limitsize = FALSE
+)
+ggsave(
+  file.path(FIGURE_DIR, "cell_type_cilia_module_heatmap.png"),
+  heatmap_plot,
+  width = 14,
+  height = heatmap_height,
+  dpi = 200,
+  bg = "white",
+  limitsize = FALSE
+)
+
+main_module_cell_types <- cell_type_cilia_scores |>
+  dplyr::filter(
+    .data$module_id %in% c("combined_cilia", "gold_motile_cilia")
+  ) |>
+  dplyr::mutate(
+    cell_type = factor(.data$cell_type, levels = rev(cell_type_order))
+  )
+
+ranked_plot <- ggplot(
+  main_module_cell_types,
+  aes(x = .data$median_score, y = .data$cell_type)
+) +
+  geom_point(aes(size = .data$n_cells), alpha = 0.8) +
+  facet_grid(
+    rows = vars(.data$dataset),
+    cols = vars(.data$module_id),
+    scales = "free_x"
+  ) +
+  scale_size_area(max_size = 3) +
+  theme_minimal(base_size = 8) +
+  theme(
+    axis.title.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.position = "bottom"
+  ) +
+  labs(
+    title = "Cell types ranked by the reference combined-cilia score",
+    x = "median score",
+    size = "cells"
+  )
+
+ggsave(
+  file.path(FIGURE_DIR, "ranked_main_cilia_cell_types.pdf"),
+  ranked_plot,
+  width = 12,
+  height = heatmap_height,
+  limitsize = FALSE
+)
+ggsave(
+  file.path(FIGURE_DIR, "ranked_main_cilia_cell_types.png"),
+  ranked_plot,
+  width = 12,
+  height = heatmap_height,
+  dpi = 200,
+  bg = "white",
+  limitsize = FALSE
+)
+
+cell_type_cilia_scores |>
+  dplyr::filter(
+    .data$module_id %in% c("combined_cilia", "gold_motile_cilia")
+  ) |>
+  dplyr::arrange(
+    .data$dataset,
+    .data$module_id,
+    dplyr::desc(.data$median_score)
+  ) |>
+  dplyr::group_by(.data$dataset, .data$module_id) |>
+  dplyr::slice_head(n = 20L)
+```

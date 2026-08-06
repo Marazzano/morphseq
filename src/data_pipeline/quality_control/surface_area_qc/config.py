@@ -26,7 +26,9 @@ SURFACE_AREA_QC_DEFAULTS: dict = {
     "k_lower": 0.9,  # flag when area_um2 < k_lower * p5  (too small)
     "missing_reference_policy": "fail",  # fail | (future) documented fallback
     "missing_area_policy": "fail",       # fail | (future) documented flag behavior
-    "missing_stage_policy": "fail",      # fail loud — no stage-free band in MVP
+    # Reconciliation may intentionally pass an unresolved stage through. The
+    # surface-area band cannot judge it, so preserve the row without excluding it.
+    "missing_stage_policy": "not_applicable",
 }
 
 

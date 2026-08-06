@@ -30,6 +30,7 @@ from data_pipeline.quality_control.focus_qc.contract import FOCUS_QC_PAYLOAD_COL
 from data_pipeline.quality_control.mask_quality_qc.contract import MASK_QUALITY_QC_PAYLOAD_COLUMNS
 from data_pipeline.quality_control.motion_blur_qc.contract import MOTION_BLUR_QC_PAYLOAD_COLUMNS
 from data_pipeline.quality_control.surface_area_qc.contract import SURFACE_AREA_QC_PAYLOAD_COLUMNS
+from data_pipeline.quality_control.applicability import applicability_column_for_flag
 
 # Explicit eligible source universe — snip_qc's decision about which upstream QC products
 # may contribute exclusion flags. Adding a new source requires:
@@ -45,13 +46,6 @@ _SOURCE_PAYLOADS: dict[str, tuple[str, ...]] = {
     "motion_blur_qc":     MOTION_BLUR_QC_PAYLOAD_COLUMNS,
 }
 
-# Cross-product requirements that cannot be expressed by paths.py alone. These are checked against
-# the same resolved materialization product keys used to build the DAG.
-_FLAG_PRODUCT_REQUIREMENTS: dict[str, str] = {
-    "motion_blur_flag": "BF__z_stack",
-}
-
-
 @dataclass(frozen=True)
 class ResolvedFlagSource:
     """One resolved source: a step, its per-well CSV artifact key, the flag columns to read, and the path."""
@@ -60,12 +54,14 @@ class ResolvedFlagSource:
     artifact_key: str
     flag_columns: tuple[str, ...]
     path: Path
+    applicability_columns: tuple[str, ...] = ()
 
     def to_dict(self) -> dict:
         return {
             "step": self.step,
             "artifact_key": self.artifact_key,
             "flag_columns": list(self.flag_columns),
+            "applicability_columns": list(self.applicability_columns),
             "path": str(self.path),
         }
 
@@ -76,6 +72,7 @@ class ResolvedFlagSource:
             artifact_key=d["artifact_key"],
             flag_columns=tuple(d["flag_columns"]),
             path=Path(d["path"]),
+            applicability_columns=tuple(d.get("applicability_columns", ())),
         )
 
 
@@ -100,6 +97,18 @@ def resolve_snip_qc_flag_sources(
     resolved = []
     for step, flags in sorted(step_to_flags.items()):
         artifact_key = _find_per_well_csv_artifact_key(step)
+        applicability_columns = tuple(
+            column
+            for column in (applicability_column_for_flag(flag) for flag in flags)
+            if column is not None
+        )
+        payload_columns = set(_SOURCE_PAYLOADS[step])
+        missing_applicability = sorted(set(applicability_columns) - payload_columns)
+        if missing_applicability:
+            raise ValueError(
+                f"snip_qc resolver: source {step!r} does not declare applicability "
+                f"column(s) {missing_applicability} in its payload contract."
+            )
         path = Path(str(artifact_path(
             output_root, step, artifact_key, experiment_id,
             path_mode=PATH_MODE_PER_WELL, well_id=well_id,
@@ -109,6 +118,7 @@ def resolve_snip_qc_flag_sources(
             artifact_key=artifact_key,
             flag_columns=tuple(sorted(flags)),
             path=path,
+            applicability_columns=tuple(sorted(applicability_columns)),
         ))
     return tuple(resolved)
 
@@ -118,28 +128,14 @@ def validate_snip_qc_product_requirements(
     *,
     available_product_keys: tuple[str, ...],
 ) -> None:
-    """Fail at DAG planning when a requested QC flag lacks its required image product."""
-    available = set(available_product_keys)
-    missing = [
-        (flag, _FLAG_PRODUCT_REQUIREMENTS[flag])
-        for flag in exclusion_flags
-        if flag in _FLAG_PRODUCT_REQUIREMENTS
-        and _FLAG_PRODUCT_REQUIREMENTS[flag] not in available
-    ]
-    if not missing:
-        return
+    """Validate product-dependent flag planning.
 
-    details = "\n".join(
-        f"  - {flag} requires image product {product_key}"
-        for flag, product_key in missing
-    )
-    raise ValueError(
-        "snip_qc product requirements are not satisfied:\n"
-        f"{details}\n"
-        f"Configured image products: {sorted(available)}.\n"
-        "Add the required product under image_materialization.products, or remove the "
-        "corresponding flag from snip_qc.exclusion_flags. No QC flag is removed automatically."
-    )
+    Motion blur is now modality-aware: a declared single-z frame emits a
+    not-applicable row without requiring a z-stack product.  Native projection
+    frames still fail at runtime if they claim applicability but lack their stack.
+    The arguments remain for API compatibility with the orchestrator.
+    """
+    del exclusion_flags, available_product_keys
 
 
 def _build_flag_column_index(exclusion_flags: tuple[str, ...]) -> dict[str, str]:

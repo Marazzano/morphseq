@@ -19,6 +19,7 @@ from pathlib import Path
 import pandas as pd
 
 from .flag_input_resolver import ResolvedFlagSource
+from data_pipeline.quality_control.applicability import ALLOWED_QC_APPLICABILITY
 
 # Accepted string representations of boolean values (after strip + lowercase).
 _BOOL_MAP: dict[str, bool] = {"true": True, "false": False, "1": True, "0": False}
@@ -64,7 +65,8 @@ def _load_and_verify_source(source: ResolvedFlagSource) -> pd.DataFrame:
             f"snip_qc inputs: source {source.step!r} has duplicate snip_id(s) {dupes[:5]}."
         )
 
-    missing_cols = [c for c in source.flag_columns if c not in df.columns]
+    promised_columns = (*source.flag_columns, *source.applicability_columns)
+    missing_cols = [c for c in promised_columns if c not in df.columns]
     if missing_cols:
         raise ValueError(
             f"snip_qc inputs: source {source.step!r} is missing promised flag column(s) "
@@ -72,10 +74,18 @@ def _load_and_verify_source(source: ResolvedFlagSource) -> pd.DataFrame:
             f"Columns present: {sorted(df.columns)}."
         )
 
-    cols = ["snip_id", *source.flag_columns]
+    cols = ["snip_id", *promised_columns]
     piece = df[cols].copy()
     for col in source.flag_columns:
         piece[col] = _coerce_boolean_flag(piece[col], step=source.step, col=col)
+    for col in source.applicability_columns:
+        values = piece[col].astype(str)
+        unknown = sorted(set(values) - ALLOWED_QC_APPLICABILITY)
+        if unknown:
+            raise ValueError(
+                f"snip_qc inputs: source {source.step!r} applicability column {col!r} "
+                f"has unknown value(s) {unknown}; allowed={sorted(ALLOWED_QC_APPLICABILITY)}."
+            )
 
     return piece
 

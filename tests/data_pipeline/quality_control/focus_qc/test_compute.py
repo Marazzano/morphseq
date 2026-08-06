@@ -140,6 +140,7 @@ def test_textured_snip_passes(tmp_path):
     out = _run(tmp_path, [(1, 0, _embryo_mask(), _textured_image())])
     row = out.iloc[0]
     assert row["focus_flag"] == False  # noqa: E712
+    assert row["focus_qc_applicability"] == "exclusion"
     validate_focus_qc(out)
 
 
@@ -174,4 +175,18 @@ def test_output_validates_full_spine(tmp_path):
     )
     for col in ("experiment_id", "well_id", "physical_embryo_id", "embryo_id", "snip_id"):
         assert col in out.columns
+    validate_focus_qc(out)
+
+
+def test_single_z_focus_is_diagnostic_only(tmp_path):
+    inv, masks, fi = _snip_rows(
+        tmp_path, [(1, 0, _embryo_mask(), _flat_image())]
+    )
+    fi["source_scope"] = "seahub"
+    fi["image_kind"] = "single_z"
+    fi["z_position"] = pd.NA
+    fi["calibration_status"] = "placeholder"
+    out = compute_focus_qc(inv, masks, fi, config=resolve_config())
+    assert bool(out.iloc[0]["focus_flag"])
+    assert out.iloc[0]["focus_qc_applicability"] == "diagnostic_only"
     validate_focus_qc(out)

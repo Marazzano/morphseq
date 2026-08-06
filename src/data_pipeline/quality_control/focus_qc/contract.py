@@ -19,6 +19,7 @@ FOCUS_QC_PAYLOAD_COLUMNS: tuple[str, ...] = (
     "interior_strong_edge_fraction",
     "interior_n_px",
     "focus_flag",
+    "focus_qc_applicability",
 )
 
 FOCUS_QC_TABLE_COLUMNS: list[str] = list(SNIP_ID_SPINE_COLUMNS + FOCUS_QC_PAYLOAD_COLUMNS)
@@ -62,6 +63,24 @@ def validate_focus_qc(
     if df["focus_flag"].dtype != bool:
         raise ValueError(
             f"{scope_label}: focus_flag must be boolean dtype, got {df['focus_flag'].dtype}."
+        )
+
+    from data_pipeline.quality_control.applicability import (
+        ALLOWED_QC_APPLICABILITY,
+        QC_APPLICABILITY_NOT_APPLICABLE,
+    )
+
+    applicability = df["focus_qc_applicability"].astype(str)
+    unknown = sorted(set(applicability) - ALLOWED_QC_APPLICABILITY)
+    if unknown:
+        raise ValueError(
+            f"{scope_label}: focus_qc_applicability has unknown value(s) {unknown}; "
+            f"allowed={sorted(ALLOWED_QC_APPLICABILITY)}."
+        )
+    if applicability.eq(QC_APPLICABILITY_NOT_APPLICABLE).any():
+        raise ValueError(
+            f"{scope_label}: focus_qc is computable on a single image; use "
+            "'diagnostic_only' when it must not exclude a snip."
         )
 
     for col in ("interior_strong_edge_fraction", "interior_n_px"):

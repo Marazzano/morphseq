@@ -13,7 +13,8 @@ experiment_wells: # pass with runtime_config
 #    - A01
 #    - C01
 
-# Microscope selection.
+# Source scope selection. Native mode accepts YX1/Keyence; a drop-in producer may
+# use its own provenance token because no native scope resolver is invoked.
 # If you need per-experiment microscope selection, add:
 # microscope_by_experiment:
 #   20250912: "YX1"
@@ -29,8 +30,8 @@ front_end:
 # Drop-in ingress (used ONLY when front_end.mode == dropin). These are config/CLI INPUT paths, NOT
 # pipeline artifacts — the canonical pipeline begins at the per-well frame_inventory shards.
 # dropin:
-#   enabled: true
 #   frame_inventory_csv: /abs/path/to/dropin_frame_inventory.csv
+#   plate_metadata_csv: /abs/path/to/plate_metadata.csv
 #   image_root: /abs/path/to/images        # resolves relative image_path
 
 # Plate metadata is optional for build/segment/snips, but kept for later biology/QC/analysis.

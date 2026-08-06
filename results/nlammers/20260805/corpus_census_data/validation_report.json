@@ -1,0 +1,24 @@
+{
+  "status": "PASS",
+  "dataset_counts": {
+    "Keyence": 97,
+    "SeaHub": 20,
+    "YX1": 65
+  },
+  "expected_traditional_dataset_counts": {
+    "Keyence": 97,
+    "YX1": 65
+  },
+  "seahub_gross_embryo_timepoints": 8152,
+  "expected_seahub_gross_embryo_timepoints": 8152,
+  "inequality_violations": {
+    "observed_snip_timepoints_gt_gross_embryo_timepoints": 0,
+    "qc_evaluated_timepoints_gt_gross_embryo_timepoints": 0,
+    "confirmed_usable_timepoints_gt_qc_evaluated_timepoints": 0,
+    "projected_usable_timepoints_gt_gross_embryo_timepoints": 0
+  },
+  "suspicious_control_atoms": [],
+  "classification_review_row_count": 1391,
+  "estimated_or_unavailable_well_rows": 810,
+  "failures": []
+}

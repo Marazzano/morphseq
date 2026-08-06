@@ -491,6 +491,14 @@ def validate_frame_inventory_identity_contract(
     """
     assert_product_columns_consistent(df, scope_label=scope_label)
 
+    # Optional first-class physical acquisition context. Import locally to avoid a
+    # module cycle: frame_modality composes the identity helpers owned above.
+    from data_pipeline.acquisition.image_materialization.frame_modality import (
+        validate_frame_modality_block,
+    )
+
+    validate_frame_modality_block(df, scope_label=scope_label)
+
     frame_keys = frame_inventory_product_aware_keys(df, scope_label=scope_label)
     duplicate_mask = frame_keys.duplicated(keep=False)
     if duplicate_mask.any():

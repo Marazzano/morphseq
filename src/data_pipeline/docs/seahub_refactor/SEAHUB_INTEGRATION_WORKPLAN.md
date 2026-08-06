@@ -1,7 +1,7 @@
 # SeaHub → morphseq pipeline: WORKPLAN (executable)
 
-**Read `SEAHUB_INTEGRATION_DESIGN.md` first.** It holds the frozen decisions and contracts this plan
-executes. Where this plan and the design doc disagree, the design doc wins (or stop and flag it).
+**Read `SEAHUB_IMPLEMENTATION_CONTRACT.md` first.** It records the owner-reviewed decisions and
+supersedes conflicts in this earlier workplan and the original design document.
 
 **Guiding constraints (from the repo owner — do not violate):**
 - Work on `main`; do NOT create branches; do NOT push (the owner pushes).
@@ -9,8 +9,8 @@ executes. Where this plan and the design doc disagree, the design doc wins (or s
   `results/nlammers/20260723_seahub/` and the pipeline `acquisition/` output tree.
 - Do NOT touch mdcolon-owned files/dirs.
 - Do NOT run materialization on a login node (OOM risk) — submit to the cluster (see Phase 5).
-- The back half must remain **unmodified** (Scheme A). If you find yourself editing back-half code,
-  stop — that means a contract was misread.
+- Keep one shared back half. Surgical modality/QC contract changes are authorized for first-class
+  `single_z` support; do not create a SeaHub-specific segmentation or feature fork.
 
 **Architecture in one line:** build a standalone front-half materializer that turns each SeaHub FOV
 into 8 single-frame synthetic wells (detect → pad → write + per-well plate-map + scaffolded

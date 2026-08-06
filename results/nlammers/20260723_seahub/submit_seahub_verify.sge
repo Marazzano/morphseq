@@ -1,0 +1,26 @@
+#!/bin/bash
+# Verify the terminal analysis_ready products after the SeaHub back-half array.
+
+#$ -N seahub_verify
+#$ -cwd
+#$ -q trapnell-short.q
+#$ -l mfree=8G
+#$ -l h_rt=3600
+#$ -pe serial 1
+#$ -o /net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/logs/seahub_verify.$JOB_ID.out
+#$ -e /net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/logs/seahub_verify.$JOB_ID.err
+
+set -euo pipefail
+
+REPO_ROOT="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq"
+WORK_DIR="${REPO_ROOT}/results/nlammers/20260723_seahub"
+BUNDLE_ROOT="/net/trapnell/vol1/home/nlammers/projects/data/morphseq/seahub/derived/20260724/bundle"
+PIPELINE_OUTPUT_ROOT="/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline/output"
+CONDA="/net/trapnell/vol1/home/nlammers/micromamba/bin/conda"
+
+cd "${REPO_ROOT}"
+"${CONDA}" run -n morphseq-env --no-capture-output \
+    python "${WORK_DIR}/verify_seahub_analysis_ready.py" \
+    --experiment-manifest "${BUNDLE_ROOT}/integration/experiment_manifest.csv" \
+    --pipeline-output-root "${PIPELINE_OUTPUT_ROOT}" \
+    --report-csv "${BUNDLE_ROOT}/integration/analysis_ready_verification.csv"

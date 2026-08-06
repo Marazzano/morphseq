@@ -5,8 +5,9 @@ Pure logic, explicit inputs, no global config, fail loud. The flag is::
     sa_outlier_flag = area_um2 > k_upper * p95(stage)  OR  area_um2 < k_lower * p5(stage)
 
 where ``(p5, p95)`` are interpolated per snip at ``predicted_stage_hpf`` from the validated
-reference curve. There is no stage-free path: a snip missing its stage fails loud
-(``missing_stage_policy``). The output carries the FULL snip spine taken from the universe.
+reference curve. A snip whose upstream stage is intentionally unresolved emits
+``sa_outlier_flag=False`` with ``surface_area_qc_applicability=not_applicable``.
+The output carries the FULL snip spine taken from the universe.
 """
 
 from __future__ import annotations
@@ -20,6 +21,10 @@ from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_
 
 from .config import SurfaceAreaQCConfig
 from .reference import interpolate_reference_band
+from data_pipeline.quality_control.applicability import (
+    QC_APPLICABILITY_EXCLUSION,
+    QC_APPLICABILITY_NOT_APPLICABLE,
+)
 
 
 def compute_surface_area_flag(
@@ -57,6 +62,7 @@ def compute_surface_area_qc_flags(
 
     out = universe[list(SNIP_ID_SPINE_COLUMNS)].copy()
     flags: list[bool] = []
+    applicability: list[str] = []
     for snip_id in out["snip_id"].astype(str):
         if snip_id not in area_lookup.index:
             raise ValueError(
@@ -69,14 +75,26 @@ def compute_surface_area_qc_flags(
                 f"({stage_col!r}). surface_area_qc is stage-binned; there is no stage-free band in MVP."
             )
         area = float(area_lookup.loc[snip_id])
-        stage = float(stage_lookup.loc[snip_id])
+        stage_value = stage_lookup.loc[snip_id]
+        if pd.isna(stage_value):
+            if config.missing_stage_policy != "not_applicable":
+                raise ValueError(
+                    f"surface_area_qc: snip_id {snip_id!r} has no resolved stage "
+                    f"(missing_stage_policy={config.missing_stage_policy!r})."
+                )
+            flags.append(False)
+            applicability.append(QC_APPLICABILITY_NOT_APPLICABLE)
+            continue
+        stage = float(stage_value)
         flags.append(
             compute_surface_area_flag(
                 area, stage, surface_area_reference_df, k_upper=config.k_upper, k_lower=config.k_lower
             )
         )
+        applicability.append(QC_APPLICABILITY_EXCLUSION)
 
     out["sa_outlier_flag"] = pd.array(flags, dtype=bool)
+    out["surface_area_qc_applicability"] = applicability
     return out
 
 

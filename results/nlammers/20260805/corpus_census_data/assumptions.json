@@ -1,0 +1,10 @@
+{
+  "generated_at": "2026-07-26T18:22:17.182484-07:00",
+  "reference_temperature_c": 28.5,
+  "environmental_delta_c": 1.0,
+  "channel_policy": "BF when present, otherwise first channel; channels collapsed",
+  "seahub_gross_policy": "8 embryos per include_for_seahub FOV",
+  "projection_policy": "confirmed usable + scope retention x unevaluated gross remainder; SeaHub retention is detection completion only until downstream QC exists",
+  "traditional_dataset_count": 162,
+  "seahub_bundle_shard_count": 92
+}

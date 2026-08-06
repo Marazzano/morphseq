@@ -7,6 +7,9 @@ import yaml
 from pathlib import Path
 
 from data_pipeline.acquisition.metadata_ingest.experiment_identity import resolve_experiment_id
+from data_pipeline.acquisition.metadata_ingest.plate.dropin_plate_metadata import (
+    ingest_dropin_plate_metadata,
+)
 from data_pipeline.acquisition.metadata_ingest.plate.plate_processing import process_plate_layout
 from data_pipeline.acquisition.metadata_ingest.plate.validate_plate_metadata import validate_plate_metadata_csv
 from data_pipeline.acquisition.metadata_ingest.scope.keyence.extract_scope_metadata import extract_keyence_scope_metadata
@@ -156,6 +159,15 @@ def cmd_build_collection_provenance(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_ingest_dropin_plate(args: argparse.Namespace) -> None:
+    ingest_dropin_plate_metadata(
+        input_csv=args.input_csv,
+        experiment_id=args.experiment,
+        output_csv=args.output_csv,
+        output_flag=args.output_flag,
+    )
+
+
 def cmd_extract_scope(args: argparse.Namespace) -> None:
     # The inventory stores full absolute source paths; readers re-anchor them under input_root at
     # consume time, so ingest needs no input_root.
@@ -267,6 +279,7 @@ def cmd_split_dropin_inventory(args: argparse.Namespace) -> None:
         manifest_csv=Path(args.manifest_csv),
         well_id=str(args.well_id),
         output_csv=Path(args.output_csv),
+        image_root=Path(args.image_root),
     )
 
 
@@ -1437,6 +1450,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_norm.add_argument("--output-flag", type=Path, required=True)
     p_norm.set_defaults(func=cmd_normalize_plate)
 
+    p_dropin_plate = sub.add_parser("ingest-dropin-plate-metadata")
+    p_dropin_plate.add_argument("--input-csv", type=Path, required=True)
+    p_dropin_plate.add_argument("--experiment", required=True)
+    p_dropin_plate.add_argument("--output-csv", type=Path, required=True)
+    p_dropin_plate.add_argument("--output-flag", type=Path, required=True)
+    p_dropin_plate.set_defaults(func=cmd_ingest_dropin_plate)
+
     p_scope = sub.add_parser("ingest-scope-metadata", aliases=["extract-scope"])
     p_scope.add_argument("--raw-images-dir", type=Path, required=True)
     p_scope.add_argument("--experiment", required=True)
@@ -1516,6 +1536,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_split.add_argument("--manifest-csv", type=Path, required=True)
     p_split.add_argument("--well-id", required=True)
     p_split.add_argument("--output-csv", type=Path, required=True)
+    p_split.add_argument("--image-root", type=Path, required=True)
     p_split.set_defaults(func=cmd_split_dropin_inventory)
 
     p_scaffold = sub.add_parser("scaffold-dropin-inventory")

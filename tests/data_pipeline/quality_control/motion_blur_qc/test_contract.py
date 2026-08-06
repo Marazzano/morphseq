@@ -47,6 +47,7 @@ def _valid_df(n=2):
                 "n_flat_z_pairs": 0,
                 "n_mask_pixels": 100,
                 "motion_blur_flag": False,
+                "motion_blur_qc_applicability": "exclusion",
             }
         )
     df = pd.DataFrame(rows, columns=MOTION_BLUR_QC_TABLE_COLUMNS)
@@ -93,4 +94,19 @@ def test_non_numeric_metric_fails():
     df = _valid_df()
     df["n_valid_z_pairs"] = ["a", "b"]
     with pytest.raises(ValueError, match="must be numeric"):
+        validate_motion_blur_qc(df)
+
+
+def test_not_applicable_allows_null_metrics_but_not_a_true_flag():
+    df = _valid_df()
+    metric_columns = [
+        column
+        for column in MOTION_BLUR_QC_TABLE_COLUMNS
+        if column.startswith("mask_pixel_") or column.startswith("n_")
+    ]
+    df[metric_columns] = None
+    df["motion_blur_qc_applicability"] = "not_applicable"
+    validate_motion_blur_qc(df)
+    df.loc[0, "motion_blur_flag"] = True
+    with pytest.raises(ValueError, match="must carry motion_blur_flag=False"):
         validate_motion_blur_qc(df)

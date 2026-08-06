@@ -19,6 +19,13 @@
 #$ -e hotchem_smoke3.$JOB_ID.err
 
 set -euo pipefail
+
+# Group-writable output on the shared pipeline tree — see sge_job_submissions/
+# submit_snakemake_TEMPLATE.sge for the full incident writeup (2026-07-26 permission
+# regression). mkdir(parents=True) honours the launching user's umask, not the parent
+# dir's mode, so the default 022 strips group-write and locks other lab members out of
+# whatever this job creates. 002 keeps group-write on.
+umask 002
 trap 'status=$?; echo "=== hotchem_smoke3 FINISHED $(date) on $(hostname) - exit ${status} ==="; exit "${status}"' EXIT
 
 CONDA_BASE="/net/trapnell/vol1/home/mdcolon/software/miniconda3"

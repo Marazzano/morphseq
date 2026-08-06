@@ -1,0 +1,125 @@
+#!/bin/bash
+#$ -N qc_cleanup_20250612
+#$ -cwd
+#$ -q trapnell-long.q
+#$ -l mfree=8G
+#$ -l h_rt=INFINITY
+#$ -pe serial 1
+#$ -o /net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/logs/qc_cleanup_20250612.$JOB_ID.out
+#$ -e /net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/logs/qc_cleanup_20250612.$JOB_ID.err
+
+set -euo pipefail
+
+REPO_ROOT="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq"
+PYTHON="/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/bin/python"
+CLEANER="${REPO_ROOT}/results/nlammers/20260726_pipeline_failure_audit/clean_stale_pipeline_artifacts.py"
+CLEANUP_REPORT="${REPO_ROOT}/results/nlammers/20260726_pipeline_failure_audit/stale_artifact_cleanup_report.csv"
+BACK_HALF_SCRIPT="${REPO_ROOT}/src/data_pipeline/pipeline_orchestrator/sge_job_submissions/submit_back_half_archive.sge"
+MAIN_JOB_ID="22807862"
+MAIN_ACTIVE_TASKS_RE='^(34|35|36|37)$'
+MAIN_HELD_RANGE="${MAIN_JOB_ID}.38-86"
+RETRY_TASKS="11-16"
+RETRY_ID_FILE="${REPO_ROOT}/results/nlammers/20260726_pipeline_failure_audit/priority_20250612_retry_job_id.txt"
+RETRY_MARKER="${REPO_ROOT}/results/nlammers/20260726_pipeline_failure_audit/priority_20250612_retry_submitted.marker"
+OUTPUT_ROOT="/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline/output"
+
+EXPERIMENTS=(
+  "20250612_24hpf_ctrl_atf6"
+  "20250612_24hpf_wfs1_ctcf"
+  "20250612_30hpf_ctrl_atf6"
+  "20250612_30hpf_wfs1_ctcf"
+  "20250612_36hpf_ctrl_atf6"
+  "20250612_36hpf_wfs1_ctcf"
+)
+
+cd "${REPO_ROOT}"
+
+echo "monitor started: $(date)"
+while qstat -u "${USER}" 2>/dev/null \
+  | awk -v job="${MAIN_JOB_ID}" -v tasks="${MAIN_ACTIVE_TASKS_RE}" \
+      '$1 == job && $NF ~ tasks { found=1 } END { exit !found }'
+do
+  echo "waiting for main tasks 34-37: $(date)"
+  sleep 60
+done
+
+echo "main tasks 34-37 have exited: $(date)"
+for task in 34 35 36 37; do
+  exit_status="$(
+    qacct -j "${MAIN_JOB_ID}" -t "${task}" 2>/dev/null \
+      | awk '/^exit_status/{print $2; exit}' || true
+  )"
+  echo "main task ${task} exit_status=${exit_status:-unavailable}"
+done
+
+echo "applying current-contract cleanup: $(date)"
+PYTHONPATH="${REPO_ROOT}/src" "${PYTHON}" "${CLEANER}" \
+  --apply \
+  --report "${CLEANUP_REPORT}"
+echo "cleanup finished: $(date)"
+
+touch "${RETRY_MARKER}"
+retry_submission="$(
+  qsub -terse \
+    -t "${RETRY_TASKS}" \
+    -tc 4 \
+    -l gpgpu=TRUE,cuda=1 \
+    -v BACK_HALF_MANIFEST=back_half_keyence.txt \
+    "${BACK_HALF_SCRIPT}"
+)"
+retry_job_id="${retry_submission%%.*}"
+if [[ ! "${retry_job_id}" =~ ^[0-9]+$ ]]; then
+  echo "could not parse retry job id from qsub response: ${retry_submission}" >&2
+  exit 3
+fi
+printf '%s\n' "${retry_job_id}" > "${RETRY_ID_FILE}"
+echo "submitted priority retry job ${retry_job_id}, tasks ${RETRY_TASKS}: $(date)"
+
+while qstat -j "${retry_job_id}" >/dev/null 2>&1; do
+  echo "priority retry ${retry_job_id} still active: $(date)"
+  sleep 60
+done
+echo "priority retry ${retry_job_id} left qstat: $(date)"
+
+# Accounting can lag job disappearance briefly.
+for _attempt in $(seq 1 10); do
+  accounted=0
+  for task in 11 12 13 14 15 16; do
+    if qacct -j "${retry_job_id}" -t "${task}" 2>/dev/null \
+      | grep -q '^exit_status'; then
+      accounted=$((accounted + 1))
+    fi
+  done
+  [[ "${accounted}" -eq 6 ]] && break
+  sleep 30
+done
+
+all_success=true
+for task in 11 12 13 14 15 16; do
+  exit_status="$(
+    qacct -j "${retry_job_id}" -t "${task}" 2>/dev/null \
+      | awk '/^exit_status/{print $2; exit}' || true
+  )"
+  echo "priority task ${task} exit_status=${exit_status:-unavailable}"
+  if [[ "${exit_status:-}" != "0" ]]; then
+    all_success=false
+  fi
+done
+
+for experiment in "${EXPERIMENTS[@]}"; do
+  terminal="${OUTPUT_ROOT}/analysis_ready/${experiment}/analysis_ready/${experiment}_analysis_ready.parquet"
+  if [[ ! -s "${terminal}" || ! "${terminal}" -nt "${RETRY_MARKER}" ]]; then
+    echo "priority terminal missing or not regenerated: ${terminal}" >&2
+    all_success=false
+  else
+    echo "priority terminal regenerated: ${terminal}"
+  fi
+done
+
+if [[ "${all_success}" != "true" ]]; then
+  echo "one or more priority datasets failed; leaving ${MAIN_HELD_RANGE} held" >&2
+  exit 4
+fi
+
+qrls -h u "${MAIN_HELD_RANGE}"
+echo "all six priority datasets completed; released ${MAIN_HELD_RANGE}: $(date)"

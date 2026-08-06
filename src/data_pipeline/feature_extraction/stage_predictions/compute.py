@@ -162,35 +162,60 @@ def compute_stage_prediction_features(
                 "Every snip's well must have a plate_metadata row with start_age_hpf + temperature."
             )
         plate = plate_by_well.loc[well_id]
-        # temperature is always a per-well plate_metadata fact. start_age_hpf is per-well ONLY for a
-        # single experiment; for a collection it comes from the provenance artifact, so
-        # a collection well legitimately need not carry start_age_hpf here.
-        if "temperature" not in plate.index or pd.isna(plate["temperature"]):
-            raise ValueError(
-                f"stage_predictions: plate_metadata for well {well_id!r} is missing 'temperature'."
-            )
-        if not (collection_provenance and collection_provenance.get("is_collection")):
-            if "start_age_hpf" not in plate.index or pd.isna(plate["start_age_hpf"]):
-                raise ValueError(
-                    f"stage_predictions: plate_metadata for well {well_id!r} is missing 'start_age_hpf'."
-                )
-
-        # A frame belongs to ONE source; the acquisition inventory owns that mapping.
-        source_ordinal = source_ordinal_by_frame.get((well_id, int(snip["time_index"])))
-        start_age_hpf = _start_age_hpf_for_snip(
-            collection_provenance=collection_provenance,
-            plate=plate,
-            source_ordinal=source_ordinal,
-            well_id=well_id,
-            snip_id=snip_id,
-        )
-
+        # MERGE NOTE. Two designs met here and only one of them is right per field.
+        #
+        # An unresolvable stage is a DATA condition, not a bug: the run must produce a row saying so
+        # rather than aborting the job, which is why `stage_prediction_status` (and its validator in
+        # contract.py) wins over the raise-on-missing branch this branch had.
+        #
+        # But `start_age_hpf` is no longer a plate_metadata-only fact. For a COLLECTION it lives in
+        # the provenance artifact keyed by source_ordinal, so testing `plate["start_age_hpf"]`
+        # would flag every collection snip as `missing_start_age_hpf` while the age sat available
+        # one lookup away. Resolution goes through _start_age_hpf_for_snip; only a genuinely
+        # unresolvable age produces the status.
+        #
+        # temperature stays a per-well plate_metadata fact in both worlds.
         elapsed = _elapsed_time_s(frame_inventory_by_image, image_id, snip_id)
-        predicted = predict_stage_hpf(start_age_hpf, elapsed, float(plate["temperature"]))
+        is_collection = bool(collection_provenance and collection_provenance.get("is_collection"))
+
+        if is_collection:
+            # A COLLECTION RESOLVES ITS AGE OR FAILS — it does NOT degrade to a status flag.
+            # The nullable-status path exists for a plate that simply never declared an age. A
+            # collection always declares one; failing to find it means the provenance artifact or
+            # the source_ordinal mapping is broken, i.e. a structural fault that would otherwise
+            # mis-stage every frame of that source by hours. Those raises are asserted by
+            # test_collection_missing_age_for_source_fails_loud and
+            # test_collection_without_the_acquisition_inventory_fails_loud.
+            #
+            # A frame belongs to ONE source; the acquisition inventory owns that mapping.
+            source_ordinal = source_ordinal_by_frame.get((well_id, int(snip["time_index"])))
+            start_age_hpf = _start_age_hpf_for_snip(
+                collection_provenance=collection_provenance,
+                plate=plate,
+                source_ordinal=source_ordinal,
+                well_id=well_id,
+                snip_id=snip_id,
+            )
+        else:
+            # SINGLE experiment: an absent or null start_age_hpf is a data condition, reported as
+            # `missing_start_age_hpf` rather than aborting the run.
+            raw_age = plate["start_age_hpf"] if "start_age_hpf" in plate.index else None
+            start_age_hpf = None if raw_age is None or pd.isna(raw_age) else float(raw_age)
+
+        if start_age_hpf is None or pd.isna(start_age_hpf):
+            predicted = None
+            status = "missing_start_age_hpf"
+        elif "temperature" not in plate.index or pd.isna(plate["temperature"]):
+            predicted = None
+            status = "missing_temperature"
+        else:
+            predicted = predict_stage_hpf(start_age_hpf, elapsed, float(plate["temperature"]))
+            status = "predicted"
 
         row = {col: snip[col] for col in SNIP_FEATURE_TABLE_SPINE_COLUMNS}
         row["predicted_stage_hpf"] = predicted
         row["model_version"] = model_version
+        row["stage_prediction_status"] = status
         rows.append(row)
 
     return pd.DataFrame(rows, columns=STAGE_PREDICTION_TABLE_COLUMNS)

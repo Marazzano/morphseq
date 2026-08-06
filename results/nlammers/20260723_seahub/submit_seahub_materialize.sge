@@ -1,0 +1,47 @@
+#!/bin/bash
+# Materialize one planned SeaHub operational shard per SGE array task.
+
+#$ -N seahub_mat
+#$ -cwd
+#$ -q trapnell-short.q
+#$ -l mfree=8G
+#$ -l h_rt=14400
+#$ -pe serial 2
+#$ -o /net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/logs/seahub_mat.$JOB_ID.$TASK_ID.out
+#$ -e /net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/logs/seahub_mat.$JOB_ID.$TASK_ID.err
+
+set -euo pipefail
+
+REPO_ROOT="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq"
+SRC_ROOT="${REPO_ROOT}/src"
+BUNDLE_ROOT="/net/trapnell/vol1/home/nlammers/projects/data/morphseq/seahub/derived/20260724/bundle"
+EXPERIMENTS="${BUNDLE_ROOT}/integration/experiments.txt"
+CONDA="/net/trapnell/vol1/home/nlammers/micromamba/bin/conda"
+
+if [[ -z "${SGE_TASK_ID:-}" || "${SGE_TASK_ID}" == "undefined" ]]; then
+    echo "ERROR: submit this script as an SGE array job." >&2
+    exit 2
+fi
+if [[ ! -f "${EXPERIMENTS}" ]]; then
+    echo "ERROR: planned experiment list does not exist: ${EXPERIMENTS}" >&2
+    exit 2
+fi
+
+EXPERIMENT_ID="$(sed -n "${SGE_TASK_ID}p" "${EXPERIMENTS}")"
+if [[ -z "${EXPERIMENT_ID}" ]]; then
+    echo "ERROR: no experiment at task index ${SGE_TASK_ID}." >&2
+    exit 2
+fi
+
+cd "${REPO_ROOT}"
+echo "=== SeaHub materialization START $(date) ==="
+echo "host=$(hostname) job=${JOB_ID:-unknown} task=${SGE_TASK_ID}"
+echo "experiment=${EXPERIMENT_ID}"
+
+"${CONDA}" run -n morphseq-env --no-capture-output \
+    env PYTHONPATH="${SRC_ROOT}" \
+    python -m data_pipeline.acquisition.seahub materialize-shard \
+    --bundle-root "${BUNDLE_ROOT}" \
+    --experiment-id "${EXPERIMENT_ID}"
+
+echo "=== SeaHub materialization FINISHED ${EXPERIMENT_ID} $(date) ==="

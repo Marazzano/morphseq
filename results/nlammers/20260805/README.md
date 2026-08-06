@@ -34,3 +34,24 @@ is kept everywhere and figures write to `figures/with_19C/` instead of `figures/
 
 ## Figure output
 `figures/no_19C/` or `figures/with_19C/` (next to the notebook), each figure as `.png` + `.pdf`.
+
+## Training-corpus census
+
+`training_corpus_census.ipynb` is a refreshable first-pass census for Keyence, YX1, and
+SeaHub. It reports:
+
+- physical embryos × time, collapsed over z/channels;
+- physical embryos × time × z, collapsed over channels;
+- gross, pipeline-observed, QC-confirmed, and projected post-QC counts;
+- combined and atomic environmental, chemical, and genetic perturbations; and
+- collection/condition-level links to sequencing data.
+
+Refresh all CSV/Excel products, execute the notebook, and regenerate its PNG/PDF figures:
+
+```bash
+./refresh_training_corpus_census.sh
+```
+
+The scan reads canonical frame inventories and metadata, not raw TIFF/ND2 image planes.
+Current runtime on the shared filesystem is approximately four minutes. Edit
+`sequencing_pairing_overrides.csv` to curate Keyence/YX1 sequencing links, then refresh.

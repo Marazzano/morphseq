@@ -1,0 +1,687 @@
+scope,corpus_dataset_id,pairing_status,linked_well_or_embryo_count,total_well_or_embryo_count,linked_gross_embryo_timepoints,collection_name,sequencing_modality,sequencing_dataset_id,pairing_granularity,evidence_source,curator_notes
+Keyence,20230525,unknown,0,96,0.0,,,,,,
+Keyence,20230531,unknown,0,96,0.0,,,,,,
+Keyence,20230602,unknown,0,96,0.0,,,,,,
+Keyence,20230608,unknown,0,1,0.0,,,,,,
+Keyence,20230613,unknown,0,96,0.0,,,,,,
+Keyence,20230615,unknown,0,96,0.0,,,,,,
+Keyence,20230620,unknown,0,32,0.0,,,,,,
+Keyence,20230622,unknown,0,46,0.0,,,,,,
+Keyence,20230627,unknown,0,73,0.0,,,,,,
+Keyence,20230629,unknown,0,67,0.0,,,,,,
+Keyence,20230830,unknown,0,1,0.0,,,,,,
+Keyence,20230831,unknown,0,64,0.0,,,,,,
+Keyence,20231207,unknown,0,1,0.0,,,,,,
+Keyence,20231208,unknown,0,1,0.0,,,,,,
+Keyence,20240507,unknown,0,1,0.0,,,,,,
+Keyence,20240509_18ss,unknown,0,24,0.0,,,,,,
+Keyence,20240509_24hpf,unknown,0,32,0.0,,,,,,
+Keyence,20240510,unknown,0,10,0.0,,,,,,
+Keyence,20240717,unknown,0,34,0.0,,,,,,
+Keyence,20240718,unknown,0,65,0.0,,,,,,
+Keyence,20240724,unknown,0,28,0.0,,,,,,
+Keyence,20240725,unknown,0,30,0.0,,,,,,
+Keyence,20240726,unknown,0,31,0.0,,,,,,
+Keyence,20240813_24hpf,unknown,0,96,0.0,,,,,,
+Keyence,20240813_30hpf,unknown,0,96,0.0,,,,,,
+Keyence,20240813_36hpf,unknown,0,96,0.0,,,,,,
+Keyence,20240813_extras,unknown,0,96,0.0,,,,,,
+Keyence,20250529_24hpf_ctrl_atf6,unknown,0,1,0.0,,,,,,
+Keyence,20250529_24hpf_wfs1_ctcf,unknown,0,1,0.0,,,,,,
+Keyence,20250529_30hpf_ctrl_atf6,unknown,0,1,0.0,,,,,,
+Keyence,20250529_30hpf_wfs1_ctcf,unknown,0,1,0.0,,,,,,
+Keyence,20250529_36hpf_ctrl_atf6,unknown,0,1,0.0,,,,,,
+Keyence,20250529_36hpf_wfs1_ctcf,unknown,0,1,0.0,,,,,,
+Keyence,20250612_24hpf_ctrl_atf6,unknown,0,96,0.0,,,,,,
+Keyence,20250612_24hpf_wfs1_ctcf,unknown,0,96,0.0,,,,,,
+Keyence,20250612_30hpf_ctrl_atf6,unknown,0,96,0.0,,,,,,
+Keyence,20250612_30hpf_wfs1_ctcf,unknown,0,96,0.0,,,,,,
+Keyence,20250612_36hpf_ctrl_atf6,unknown,0,96,0.0,,,,,,
+Keyence,20250612_36hpf_wfs1_ctcf,unknown,0,96,0.0,,,,,,
+Keyence,20250622_chem_28C_T00_1425,unknown,0,82,0.0,,,,,,
+Keyence,20250622_chem_28C_T01_1658,unknown,0,89,0.0,,,,,,
+Keyence,20250622_chem_34C_T00_1256,unknown,0,90,0.0,,,,,,
+Keyence,20250622_chem_34C_T01_1632,unknown,0,87,0.0,,,,,,
+Keyence,20250622_chem_35C_T00_1223_check,unknown,0,82,0.0,,,,,,
+Keyence,20250622_chem_35C_T01_1605,unknown,0,81,0.0,,,,,,
+Keyence,20250623_chem_28C_T02_1259,unknown,0,84,0.0,,,,,,
+Keyence,20250623_chem_34C_T02_1231,unknown,0,83,0.0,,,,,,
+Keyence,20250623_chem_35C_T02_1204,unknown,0,81,0.0,,,,,,
+Keyence,20250624_chem02_28C_T00_1356,unknown,0,87,0.0,,,,,,
+Keyence,20250624_chem02_28C_T01_1808,unknown,0,89,0.0,,,,,,
+Keyence,20250624_chem02_34C_T00_1243,unknown,0,80,0.0,,,,,,
+Keyence,20250624_chem02_34C_T01_1739,unknown,0,81,0.0,,,,,,
+Keyence,20250624_chem02_35C_T00_1216,unknown,0,80,0.0,,,,,,
+Keyence,20250624_chem02_35C_T01_1711,unknown,0,81,0.0,,,,,,
+Keyence,20250625_chem02_28C_T02_1332,unknown,0,91,0.0,,,,,,
+Keyence,20250625_chem02_34C_T02_1301,unknown,0,83,0.0,,,,,,
+Keyence,20250625_chem02_35C_T02_1228,unknown,0,80,0.0,,,,,,
+Keyence,20250703_chem3_28C_T00_1325,unknown,0,56,0.0,,,,,,
+Keyence,20250703_chem3_34C_T00_1131,unknown,0,56,0.0,,,,,,
+Keyence,20250703_chem3_34C_T01_1457,unknown,0,56,0.0,,,,,,
+Keyence,20250703_chem3_35C_T00_1101,unknown,0,56,0.0,,,,,,
+Keyence,20250703_chem3_35C_T01_1437,unknown,0,56,0.0,,,,,,
+Keyence,20250716_chem4_28C_T00_1158,unknown,0,84,0.0,,,,,,
+Keyence,20250716_chem4_28C_T01_1400,unknown,0,83,0.0,,,,,,
+Keyence,20250716_chem4_34C_T00_1014,unknown,0,89,0.0,,,,,,
+Keyence,20250716_chem4_35C_T00_1045,unknown,0,83,0.0,,,,,,
+Keyence,20250721_chem5_28C_T00_1257,unknown,0,95,0.0,,,,,,
+Keyence,20250721_chem5_28C_T01_1401,unknown,0,95,0.0,,,,,,
+Keyence,20250721_chem5_35C_T00_1023,unknown,0,92,0.0,,,,,,
+Keyence,20260319_cilia_crispant_18hpf,unknown,0,89,0.0,,,,,,
+Keyence,20260319_cilia_crispant_24hpf,unknown,0,94,0.0,,,,,,
+Keyence,20260319_cilia_crispant_30hpf,unknown,0,96,0.0,,,,,,
+Keyence,20260320_cilia_crispant_48hpf,unknown,0,96,0.0,,,,,,
+Keyence,20260324_cep290_18hpf_24hpf_plate02,unknown,0,96,0.0,,,,,,
+Keyence,20260324_cep290_18hpf_plate01,unknown,0,96,0.0,,,,,,
+Keyence,20260324_cep290_24hpf_plate01,unknown,0,96,0.0,,,,,,
+Keyence,20260324_cep290_24hpf_plate02,unknown,0,96,0.0,,,,,,
+Keyence,20260324_cep290_30hpf_plate01,unknown,0,96,0.0,,,,,,
+Keyence,20260324_cep290_30hpf_plate02,unknown,0,96,0.0,,,,,,
+Keyence,20260331_b9d2_18hpf_plate01,unknown,0,96,0.0,,,,,,
+Keyence,20260331_b9d2_18hpf_plate02,unknown,0,96,0.0,,,,,,
+Keyence,20260414_b9d2_14hpf_plate01,unknown,0,96,0.0,,,,,,
+Keyence,20260414_b9d2_14hpf_plate02,unknown,0,96,0.0,,,,,,
+Keyence,20260414_b9d2_30hpf_plate01,unknown,0,96,0.0,,,,,,
+Keyence,20260414_b9d2_30hpf_plate02,unknown,0,96,0.0,,,,,,
+Keyence,20260415_b9d2_30to48hpf_plate01_t02,unknown,0,96,0.0,,,,,,
+Keyence,20260415_b9d2_30to48hpf_plate02_t02,unknown,0,96,0.0,,,,,,
+Keyence,20260415_cep290_18hpf_plate03,unknown,0,96,0.0,,,,,,
+Keyence,20260415_cep290_30to48hpf_plate02_t01,unknown,0,96,0.0,,,,,,
+Keyence,20260416_cep290_30to48hpf_plate01_t02,unknown,0,96,0.0,,,,,,
+Keyence,20260416_cep290_30to48hpf_plate02_t02,unknown,0,62,0.0,,,,,,
+Keyence,20260702_hotchem_24hpf_plate01,unknown,0,96,0.0,,,,,,
+Keyence,20260702_hotchem_24hpf_plate02,unknown,0,96,0.0,,,,,,
+Keyence,20260702_hotchem_30hpf_plate01,unknown,0,96,0.0,,,,,,
+Keyence,20260702_hotchem_30hpf_plate02,unknown,0,96,0.0,,,,,,
+Keyence,20260702_hotchem_36hpf_plate01,unknown,0,96,0.0,,,,,,
+Keyence,20260702_hotchem_36hpf_plate02,unknown,0,96,0.0,,,,,,
+SeaHub,CHEM13,linked,160,200,160.0,"CHEM13_
+DMH1_
+48hpf_
+72hpf; CHEM13_
+DMH1_
+48hpf_
+96hpf; CHEM13_
+DMH1_
+60hpf_
+72hpf; CHEM13_
+DMH1_
+60hpf_
+96hpf; CHEM13_
+DMH1_
+84hpf_
+96hpf; CHEM13_
+LY411575_
+48hpf_
+72hpf; CHEM13_
+LY411575_
+48hpf_
+96hpf; CHEM13_
+LY411575_
+60hpf_
+72hpf; CHEM13_
+LY411575_
+60hpf_
+96hpf; CHEM13_
+LY411575_
+84hpf_
+96hpf; CHEM13_
+SB505124_
+48hpf_
+72hpf; CHEM13_
+SB505124_
+48hpf_
+96hpf; CHEM13_
+SB505124_
+60hpf_
+72hpf; CHEM13_
+SB505124_
+60hpf_
+96hpf; CHEM13_
+SB505124_
+84hpf_
+96hpf; CHEM13_
+SU5402_
+48hpf_
+72hpf; CHEM13_
+SU5402_
+48hpf_
+96hpf; CHEM13_
+SU5402_
+60hpf_
+72hpf; CHEM13_
+SU5402_
+60hpf_
+96hpf; CHEM13_
+SU5402_
+84hpf_
+96hpf",,,collection/condition,SeaHub collection metadata,
+SeaHub,CHEM15,linked,224,432,224.0,CHEM15_2-DG_6hpf-treatment_18s; CHEM15_2-DG_6hpf-treatment_24hpf; CHEM15_2-DG_6hpf-treatment_48hpf; CHEM15_GNE-7883_6hpf-treatment_24hpf; CHEM15_GNE-7883_6hpf-treatment_48hpf; CHEM15_GNE-7883_6hpf-treatment_72hpf; CHEM15_GNE-7883_6hpf-treatment_96hpf; CHEM15_LY294002_6hpf-treatment_24hpf; CHEM15_LY294002_6hpf-treatment_48hpf; CHEM15_LY294002_6hpf-treatment_72hpf; CHEM15_SU6656_6hpf-treatment_24hpf; CHEM15_SU6656_6hpf-treatment_48hpf; CHEM15_SU6656_6hpf-treatment_72hpf; CHEM15_SU6656_6hpf-treatment_96hpf; CHEM15_leflunomide_6hpf-treatment_18s; CHEM15_leflunomide_6hpf-treatment_24hpf; CHEM15_leflunomide_6hpf-treatment_48hpf; CHEM15_oligomycin_6hpf-treatment_18s; CHEM15_oligomycin_6hpf-treatment_24hpf; CHEM15_oligomycin_6hpf-treatment_48hpf; CHEM15_rapamycin_6hpf-treatment_48hpf; CHEM15_rapamycin_6hpf-treatment_72hpf; CHEM15_ruxolitinib_6hpf-treatment_24hpf; CHEM15_ruxolitinib_6hpf-treatment_48hpf; CHEM15_ruxolitinib_6hpf-treatment_72hpf; CHEM15_simvastatin_6hpf-treatment_18s; CHEM15_simvastatin_6hpf-treatment_24hpf; CHEM15_simvastatin_6hpf-treatment_48hpf,,,collection/condition,SeaHub collection metadata,
+SeaHub,CHEM16,not_linked,0,624,0.0,,,,,SeaHub collection metadata,
+SeaHub,CHEM17,linked,128,224,128.0,CHEM17_AG1478_6hpf_18s; CHEM17_AG1478_6hpf_24hpf; CHEM17_AG1478_6hpf_36hpf; CHEM17_AG1478_6hpf_48hpf; CHEM17_AG1478_6hpf_72hpf; CHEM17_BGJ398_6hpf_24hpf; CHEM17_BGJ398_6hpf_36hpf; CHEM17_BGJ398_6hpf_48hpf; CHEM17_BGJ398_6hpf_72hpf; CHEM17_DMSO_28C_6hpf_24hpf; CHEM17_DMSO_28C_6hpf_36hpf; CHEM17_VRI_6hpf_18s; CHEM17_VRI_6hpf_24hpf; CHEM17_VRI_6hpf_36hpf; CHEM17_VRI_6hpf_48hpf; CHEM17_VRI_6hpf_72hpf,,,collection/condition,SeaHub collection metadata,
+SeaHub,GENE1,linked,24,24,24.0,"GENE1_
+gata2a;gata3_
+72hpf; GENE1_
+gata2a_
+72hpf; GENE1_
+gata3_
+72hpf",,,collection/condition,SeaHub collection metadata,
+SeaHub,GENE10,linked,488,720,488.0,GENE10_her1;her7_18s; GENE10_her1;her7_24hpf; GENE10_her1;her7_48hpf; GENE10_her1_18s; GENE10_her1_24hpf; GENE10_her1_48hpf; GENE10_her7_18s; GENE10_her7_24hpf; GENE10_her7_48hpf; GENE10_meis1a;meis1b_24hpf; GENE10_meis1a;meis1b_48hpf; GENE10_meis1a;meis1b_72hpf; GENE10_meis1a_24hpf; GENE10_meis1a_48hpf; GENE10_meis1a_72hpf; GENE10_meis1b_24hpf; GENE10_meis1b_48hpf; GENE10_meis1b_72hpf; GENE10_meis2a;meis2b_24hpf; GENE10_meis2a;meis2b_48hpf; GENE10_meis2a;meis2b_72hpf; GENE10_meis2a_24hpf; GENE10_meis2a_48hpf; GENE10_meis2a_72hpf; GENE10_meis2b_24hpf; GENE10_meis2b_48hpf; GENE10_meis2b_72hpf; GENE10_meis3_24hpf; GENE10_meis3_48hpf; GENE10_meis3_72hpf; GENE10_prdm1a_18s; GENE10_prdm1a_24hpf; GENE10_prdm1a_48hpf; GENE10_prdm1a_72hpf; GENE10_wt1a;wt1b_24hpf; GENE10_wt1a;wt1b_48hpf; GENE10_wt1a;wt1b_72hpf; GENE10_wt1a_24hpf; GENE10_wt1a_48hpf; GENE10_wt1a_72hpf; GENE10_wt1b_24hpf; GENE10_wt1b_48hpf; GENE10_wt1b_72hpf; GENE10_zeb1a;zeb1b_18s; GENE10_zeb1a;zeb1b_24hpf; GENE10_zeb1a;zeb1b_48hpf; GENE10_zeb1a_18s; GENE10_zeb1a_24hpf; GENE10_zeb1a_48hpf; GENE10_zeb1b_18s; GENE10_zeb1b_24hpf; GENE10_zeb1b_48hpf; GENE10_zeb2a;zeb2b_18s; GENE10_zeb2a;zeb2b_24hpf; GENE10_zeb2a;zeb2b_48hpf; GENE10_zeb2a_18s; GENE10_zeb2a_24hpf; GENE10_zeb2a_48hpf; GENE10_zeb2b_18s; GENE10_zeb2b_24hpf; GENE10_zeb2b_48hpf,,,collection/condition,SeaHub collection metadata,
+SeaHub,GENE11,linked,72,176,72.0,GENE11_acvr1l;bmpr1aa;bmpr1ab_36hpf; GENE11_acvr1l;bmpr1aa;bmpr1ab_48hpf; GENE11_acvr1l;bmpr1aa;bmpr1ab_72hpf; GENE11_fgfr1a;fgfr1b_36hpf; GENE11_fgfr1a;fgfr1b_48hpf; GENE11_fgfr1a;fgfr1b_72hpf; GENE11_smo_36hpf; GENE11_smo_48hpf; GENE11_smo_72hpf,,,collection/condition,SeaHub collection metadata,
+SeaHub,GENE12,linked,456,704,456.0,GENE12_aldh1a2_18-somite; GENE12_aldh1a2_24hpf; GENE12_aldh1a2_48hpf; GENE12_foxh1;mixl1_18-somite; GENE12_foxh1;mixl1_24hpf; GENE12_foxh1;mixl1_48hpf; GENE12_foxh1_18-somite; GENE12_foxh1_24hpf; GENE12_foxh1_48hpf; GENE12_gbx1;gbx2_18-somite; GENE12_gbx1;gbx2_24hpf; GENE12_gbx1;gbx2_48hpf; GENE12_gbx1_18-somite; GENE12_gbx1_24hpf; GENE12_gbx1_48hpf; GENE12_gbx2_18-somite; GENE12_gbx2_24hpf; GENE12_gbx2_48hpf; GENE12_grhl3_18-somite; GENE12_grhl3_24hpf; GENE12_grhl3_48hpf; GENE12_mixl1_18-somite; GENE12_mixl1_24hpf; GENE12_mixl1_48hpf; GENE12_mnx1_18-somite; GENE12_mnx1_24hpf; GENE12_mnx1_48hpf; GENE12_tbx16;tbx16l_18-somite; GENE12_tbx16;tbx16l_24hpf; GENE12_tbx16;tbx16l_48hpf; GENE12_tbx16_18-somite; GENE12_tbx16_24hpf; GENE12_tbx16_48hpf; GENE12_tbx16l_18-somite; GENE12_tbx16l_24hpf; GENE12_tbx16l_48hpf; GENE12_tbxta;tbxtb_18-somite; GENE12_tbxta;tbxtb_24hpf; GENE12_tbxta;tbxtb_48hpf; GENE12_tbxta_18-somite; GENE12_tbxta_24hpf; GENE12_tbxta_48hpf; GENE12_tbxtb_18-somite; GENE12_tbxtb_24hpf; GENE12_tbxtb_48hpf; GENE12_zic2a;zic2b_18-somite; GENE12_zic2a;zic2b_24hpf; GENE12_zic2a;zic2b_48hpf; GENE12_zic2a;zic2b_72hpf; GENE12_zic2a_18-somite; GENE12_zic2a_24hpf; GENE12_zic2a_48hpf; GENE12_zic2a_72hpf; GENE12_zic2b_18-somite; GENE12_zic2b_24hpf; GENE12_zic2b_48hpf; GENE12_zic2b_72hpf,,,collection/condition,SeaHub collection metadata,
+SeaHub,GENE13,linked,480,576,480.0,"GENE13_lhx1a,lhx1b,lhx5_24hpf; GENE13_lhx1a,lhx1b,lhx5_48hpf; GENE13_lhx1a,lhx1b,lhx5_72hpf; GENE13_lhx1a,lhx1b,lhx5_96hpf; GENE13_lhx1a,lhx1b_24hpf; GENE13_lhx1a,lhx1b_48hpf; GENE13_lhx1a,lhx1b_72hpf; GENE13_lhx1a,lhx1b_96hpf; GENE13_lhx1a,lhx5_24hpf; GENE13_lhx1a,lhx5_48hpf; GENE13_lhx1a,lhx5_72hpf; GENE13_lhx1a,lhx5_96hpf; GENE13_lhx1a_24hpf; GENE13_lhx1a_48hpf; GENE13_lhx1a_72hpf; GENE13_lhx1a_96hpf; GENE13_lhx1b_24hpf; GENE13_lhx1b_48hpf; GENE13_lhx1b_72hpf; GENE13_lhx1b_96hpf; GENE13_lhx2a,lhx2b,lhx9_24hpf; GENE13_lhx2a,lhx2b,lhx9_48hpf; GENE13_lhx2a,lhx2b,lhx9_72hpf; GENE13_lhx2a,lhx2b,lhx9_96hpf; GENE13_lhx2a,lhx2b_24hpf; GENE13_lhx2a,lhx2b_48hpf; GENE13_lhx2a,lhx2b_72hpf; GENE13_lhx2a,lhx2b_96hpf; GENE13_lhx2a_24hpf; GENE13_lhx2a_48hpf; GENE13_lhx2a_72hpf; GENE13_lhx2a_96hpf; GENE13_lhx2b,lhx9_24hpf; GENE13_lhx2b,lhx9_48hpf; GENE13_lhx2b,lhx9_72hpf; GENE13_lhx2b,lhx9_96hpf; GENE13_lhx2b_24hpf; GENE13_lhx2b_48hpf; GENE13_lhx2b_72hpf; GENE13_lhx2b_96hpf; GENE13_lhx3;lhx4_24hpf; GENE13_lhx3;lhx4_48hpf; GENE13_lhx3;lhx4_72hpf; GENE13_lhx3;lhx4_96hpf; GENE13_lhx3_24hpf; GENE13_lhx3_48hpf; GENE13_lhx3_72hpf; GENE13_lhx3_96hpf; GENE13_lhx4_24hpf; GENE13_lhx4_48hpf; GENE13_lhx4_72hpf; GENE13_lhx4_96hpf; GENE13_lhx5_24hpf; GENE13_lhx5_48hpf; GENE13_lhx5_72hpf; GENE13_lhx5_96hpf; GENE13_lhx9_24hpf; GENE13_lhx9_48hpf; GENE13_lhx9_72hpf; GENE13_lhx9_96hpf",,,collection/condition,SeaHub collection metadata,
+SeaHub,GENE15,linked,448,640,448.0,GENE15_dlx3b;dlx4b_24hpf; GENE15_dlx3b;dlx4b_48hpf; GENE15_dlx3b_24hpf; GENE15_dlx3b_48hpf; GENE15_dlx4b_24hpf; GENE15_dlx4b_48hpf; GENE15_emx1;emx2_24hpf; GENE15_emx1;emx2_48hpf; GENE15_emx1;emx2_72hpf; GENE15_emx1;emx3_24hpf; GENE15_emx1;emx3_48hpf; GENE15_emx1;emx3_72hpf; GENE15_emx1_24hpf; GENE15_emx1_48hpf; GENE15_emx1_72hpf; GENE15_emx2;emx3_24hpf; GENE15_emx2;emx3_48hpf; GENE15_emx2;emx3_72hpf; GENE15_emx2_24hpf; GENE15_emx2_48hpf; GENE15_emx2_72hpf; GENE15_emx3_24hpf; GENE15_emx3_48hpf; GENE15_emx3_72hpf; GENE15_erbb3a;erbb3b_48hpf; GENE15_erbb3a;erbb3b_72hpf; GENE15_erbb3a;erbb3b_96hpf; GENE15_erbb3a_48hpf; GENE15_erbb3a_72hpf; GENE15_erbb3a_96hpf; GENE15_erbb3b_48hpf; GENE15_erbb3b_72hpf; GENE15_erbb3b_96hpf; GENE15_foxi1_24hpf; GENE15_foxi1_48hpf; GENE15_foxi1_72hpf; GENE15_hmx2;hmx3a_24hpf; GENE15_hmx2;hmx3a_48hpf; GENE15_hmx2;hmx3a_72hpf; GENE15_hmx2;hmx3a_96hpf; GENE15_hmx2_24hpf; GENE15_hmx2_48hpf; GENE15_hmx2_72hpf; GENE15_hmx2_96hpf; GENE15_hmx3a_24hpf; GENE15_hmx3a_48hpf; GENE15_hmx3a_72hpf; GENE15_hmx3a_96hpf; GENE15_meis3;pbx1b;pbx4_24hpf; GENE15_meis3;pbx1b;pbx4_48hpf; GENE15_meis3;pbx1b;pbx4_72hpf; GENE15_pbx1b;pbx4_24hpf; GENE15_pbx1b;pbx4_48hpf; GENE15_pbx1b;pbx4_72hpf; GENE15_pitx3_24hpf; GENE15_pitx3_48hpf,,,collection/condition,SeaHub collection metadata,
+SeaHub,GENE16,linked,240,352,240.0,GENE16_foxc1a;foxc1b;klf2a_36hpf; GENE16_foxc1a;foxc1b;klf2a_48hpf; GENE16_foxc1a;foxc1b;klf2a_72hpf; GENE16_foxc1a;foxc1b_24hpf; GENE16_foxc1a;foxc1b_36hpf; GENE16_foxc1a_24hpf; GENE16_foxc1a_36hpf; GENE16_foxc1b_24hpf; GENE16_foxc1b_36hpf; GENE16_klf2a_36hpf; GENE16_klf2a_48hpf; GENE16_klf2a_72hpf; GENE16_tead1a;klf2a_24hpf; GENE16_tead1a;klf2a_48hpf; GENE16_tead1a;klf2a_72hpf; GENE16_tead1a;tead1b;tead3b_24hpf; GENE16_tead1a;tead1b;tead3b_48hpf; GENE16_tead1a;tead1b;tead3b_72hpf; GENE16_tead1a;tead1b_24hpf; GENE16_tead1a;tead1b_48hpf; GENE16_tead1a;tead1b_72hpf; GENE16_tead1a_24hpf; GENE16_tead1a_48hpf; GENE16_tead1a_72hpf; GENE16_tead1b_24hpf; GENE16_tead1b_48hpf; GENE16_tead1b_72hpf; GENE16_tead3b_24hpf; GENE16_tead3b_48hpf; GENE16_tead3b_72hpf,,,collection/condition,SeaHub collection metadata,
+SeaHub,GENE17,linked,8,104,8.0,GENE17_tbx3a;tbx3b_72hpf,,,collection/condition,SeaHub collection metadata,
+SeaHub,GENE2,linked,144,144,144.0,"GENE2_
+ebf1a;ebf1b;ebf2_
+24hpf; GENE2_
+ebf1a;ebf1b;ebf2_
+48hpf; GENE2_
+ebf1a;ebf1b;ebf2_
+72hpf; GENE2_
+ebf1a;ebf1b;ebf3a_
+24hpf; GENE2_
+ebf1a;ebf1b;ebf3a_
+48hpf; GENE2_
+ebf1a;ebf1b;ebf3a_
+72hpf; GENE2_
+ebf1a;ebf1b_
+24hpf; GENE2_
+ebf1a;ebf1b_
+48hpf; GENE2_
+ebf1a;ebf1b_
+72hpf; GENE2_
+ebf1a;ebf2;ebf3a_
+24hpf; GENE2_
+ebf1a;ebf2;ebf3a_
+48hpf; GENE2_
+ebf1a;ebf2;ebf3a_
+72hpf; GENE2_
+ebf2;ebf3a_
+24hpf; GENE2_
+ebf2;ebf3a_
+48hpf; GENE2_
+ebf2;ebf3a_
+72hpf; GENE2_
+ebf2_
+24hpf; GENE2_
+ebf2_
+48hpf; GENE2_
+ebf2_
+72hpf",,,collection/condition,SeaHub collection metadata,
+SeaHub,GENE3,linked,328,336,328.0,"GENE3_
+irx1a;irx2a;irx4a_
+24hpf; GENE3_
+irx1a;irx2a;irx4a_
+36hpf; GENE3_
+irx1a;irx2a;irx4a_
+48hpf; GENE3_
+irx1a;irx2a;irx4a_
+72hpf; GENE3_
+irx1a_
+24hpf; GENE3_
+irx1a_
+36hpf; GENE3_
+irx1a_
+48hpf; GENE3_
+irx1a_
+72hpf; GENE3_
+irx2a;irx4a_
+24hpf; GENE3_
+irx2a;irx4a_
+36hpf; GENE3_
+irx2a;irx4a_
+48hpf; GENE3_
+irx2a;irx4a_
+72hpf; GENE3_
+irx3a;irx5a;irx6a_
+36hpf; GENE3_
+irx3a;irx5a;irx6a_
+48hpf; GENE3_
+irx3a_
+36hpf; GENE3_
+irx3a_
+48hpf; GENE3_
+irx3a_
+72hpf; GENE3_
+irx5a;irx6a_
+36hpf; GENE3_
+irx5a;irx6a_
+48hpf; GENE3_
+irx5a;irx6a_
+72hpf; GENE3_
+otx1;otx2a;otx2b_
+24hpf; GENE3_
+otx1;otx2a;otx2b_
+48hpf; GENE3_
+otx1;otx2a;otx2b_
+72hpf; GENE3_
+otx1;otx2a_
+24hpf; GENE3_
+otx1;otx2a_
+48hpf; GENE3_
+otx1;otx2a_
+72hpf; GENE3_
+otx2b_
+24hpf; GENE3_
+otx2b_
+48hpf; GENE3_
+otx2b_
+72hpf; GENE3_
+rfx1a;rfx1b;rfx2_
+24hpf; GENE3_
+rfx1a;rfx1b;rfx2_
+48hpf; GENE3_
+rfx1a;rfx1b;rfx3_
+24hpf; GENE3_
+rfx1a;rfx1b;rfx3_
+48hpf; GENE3_
+rfx1a;rfx1b_
+24hpf; GENE3_
+rfx1a;rfx1b_
+48hpf; GENE3_
+rfx2;rfx3_
+24hpf; GENE3_
+rfx2;rfx3_
+48hpf; GENE3_
+rfx2_
+18s; GENE3_
+rfx2_
+24hpf; GENE3_
+rfx2_
+48hpf",,,collection/condition,SeaHub collection metadata,
+SeaHub,GENE4,linked,312,392,312.0,"GENE4_
+etv1;etv4_
+18s; GENE4_
+etv1;etv4_
+24hpf; GENE4_
+etv1;etv4_
+48hpf; GENE4_
+etv1;etv5a;etv5b_
+18s; GENE4_
+etv1;etv5a;etv5b_
+24hpf; GENE4_
+etv1;etv5a;etv5b_
+48hpf; GENE4_
+etv4;etv5a;etv5b_
+18s; GENE4_
+etv4;etv5a;etv5b_
+24hpf; GENE4_
+etv4;etv5a;etv5b_
+48hpf; GENE4_
+etv5a;etv5b_
+18s; GENE4_
+etv5a;etv5b_
+24hpf; GENE4_
+etv5a;etv5b_
+48hpf; GENE4_
+runx1;runx3_
+48hpf; GENE4_
+runx1;runx3_
+72hpf; GENE4_
+runx1;runx3_
+96hpf; GENE4_
+runx1_
+48hpf; GENE4_
+runx1_
+72hpf; GENE4_
+runx1_
+96hpf; GENE4_
+runx2b;runx3_
+48hpf; GENE4_
+runx2b;runx3_
+72hpf; GENE4_
+runx2b;runx3_
+96hpf; GENE4_
+runx3_
+48hpf; GENE4_
+runx3_
+72hpf; GENE4_
+runx3_
+96hpf; GENE4_
+shox2_
+48hpf; GENE4_
+shox2_
+72hpf; GENE4_
+shox2_
+96hpf; GENE4_
+shox;shox2_
+48hpf; GENE4_
+shox;shox2_
+72hpf; GENE4_
+shox;shox2_
+96hpf; GENE4_
+zfpm1;zfpm2a;zfpm2b_
+24hpf; GENE4_
+zfpm1;zfpm2a;zfpm2b_
+48hpf; GENE4_
+zfpm1;zfpm2a;zfpm2b_
+72hpf; GENE4_
+zfpm1_
+24hpf; GENE4_
+zfpm1_
+48hpf; GENE4_
+zfpm1_
+72hpf; GENE4_
+zfpm2a;zfpm2b_
+24hpf; GENE4_
+zfpm2a;zfpm2b_
+48hpf; GENE4_
+zfpm2a;zfpm2b_
+72hpf",,,collection/condition,SeaHub collection metadata,
+SeaHub,GENE5,linked,600,760,600.0,"GENE5_
+ascl1a;ascl1b_
+24hpf; GENE5_
+ascl1a;ascl1b_
+48hpf; GENE5_
+ascl1a;ascl1b_
+72hpf; GENE5_
+ascl1a;ascl1b_
+96hpf; GENE5_
+dlx1a;dlx2a_
+48hpf; GENE5_
+dlx1a;dlx2a_
+72hpf; GENE5_
+dlx1a;dlx2a_
+96hpf; GENE5_
+foxg1a_
+18s; GENE5_
+foxg1a_
+24hpf; GENE5_
+foxg1a_
+48hpf; GENE5_
+her9_
+24hpf; GENE5_
+her9_
+48hpf; GENE5_
+her9_
+72hpf; GENE5_
+her9_
+96hpf; GENE5_
+isl1a;isl2a_
+24hpf; GENE5_
+isl1a;isl2a_
+48hpf; GENE5_
+isl1a;isl2a_
+72hpf; GENE5_
+isl1a;isl2a_
+96hpf; GENE5_
+isl1a_
+24hpf; GENE5_
+isl1a_
+48hpf; GENE5_
+isl1a_
+72hpf; GENE5_
+isl1a_
+96hpf; GENE5_
+isl2a_
+24hpf; GENE5_
+isl2a_
+48hpf; GENE5_
+isl2a_
+72hpf; GENE5_
+isl2a_
+96hpf; GENE5_
+neurog1_
+24hpf; GENE5_
+neurog1_
+48hpf; GENE5_
+neurog1_
+72hpf; GENE5_
+neurog1_
+96hpf; GENE5_
+otpa;otpb_
+48hpf; GENE5_
+otpa;otpb_
+72hpf; GENE5_
+otpa;otpb_
+96hpf; GENE5_
+otpa_
+48hpf; GENE5_
+otpa_
+72hpf; GENE5_
+otpa_
+96hpf; GENE5_
+pax2a;pax8_
+18s; GENE5_
+pax2a;pax8_
+24hpf; GENE5_
+pax2a;pax8_
+48hpf; GENE5_
+pax2a_
+18s; GENE5_
+pax2a_
+24hpf; GENE5_
+pax2a_
+48hpf; GENE5_
+pax6a;pax6b_
+18s; GENE5_
+pax6a;pax6b_
+24hpf; GENE5_
+pax6a;pax6b_
+48hpf; GENE5_
+pax6a;pax6b_
+72hpf; GENE5_
+pax6a_
+18s; GENE5_
+pax6a_
+24hpf; GENE5_
+pax6a_
+48hpf; GENE5_
+pax6a_
+72hpf; GENE5_
+pax6b_
+24hpf; GENE5_
+pax6b_
+36hpf; GENE5_
+pax6b_
+48hpf; GENE5_
+pax6b_
+72hpf; GENE5_
+pax8;sox3_
+18s; GENE5_
+pax8;sox3_
+24hpf; GENE5_
+pax8;sox3_
+48hpf; GENE5_
+pax8_
+24hpf; GENE5_
+pax8_
+48hpf; GENE5_
+prox1a_
+24hpf; GENE5_
+prox1a_
+48hpf; GENE5_
+prox1a_
+72hpf; GENE5_
+ret_
+48hpf; GENE5_
+ret_
+72hpf; GENE5_
+ret_
+96hpf; GENE5_
+sox19a;sox19b_
+18s; GENE5_
+sox19a;sox19b_
+24hpf; GENE5_
+sox19a;sox19b_
+48hpf; GENE5_
+sox2;sox3_
+24hpf; GENE5_
+sox2;sox3_
+48hpf; GENE5_
+sox2;sox3_
+72hpf; GENE5_
+sox2_
+24hpf; GENE5_
+sox2_
+48hpf; GENE5_
+sox2_
+72hpf",,,collection/condition,SeaHub collection metadata,
+SeaHub,GENE6,linked,384,504,384.0,"GENE6_
+coro1a_
+48hpf; GENE6_
+coro1a_
+72hpf; GENE6_
+coro1a_
+96hpf; GENE6_
+csf3r_
+48hpf; GENE6_
+csf3r_
+72hpf; GENE6_
+csf3r_
+96hpf; GENE6_
+epas1a;epas1b_
+48hpf; GENE6_
+epas1a;epas1b_
+72hpf; GENE6_
+epas1a;epas1b_
+96hpf; GENE6_
+eya1;six1a;six1b_
+12s; GENE6_
+eya1;six1a;six1b_
+24hpf; GENE6_
+eya1;six1a;six1b_
+48hpf; GENE6_
+eya1_
+24hpf; GENE6_
+eya1_
+48hpf; GENE6_
+eya1_
+72hpf; GENE6_
+eya1_
+96hpf; GENE6_
+foxe1_
+48hpf; GENE6_
+foxe1_
+72hpf; GENE6_
+foxe1_
+96hpf; GENE6_
+myod1;six1a;six1b_
+12s; GENE6_
+myod1;six1a;six1b_
+24hpf; GENE6_
+myod1;six1a;six1b_
+48hpf; GENE6_
+myod1_
+12s; GENE6_
+myod1_
+24hpf; GENE6_
+myod1_
+48hpf; GENE6_
+pax3a;pax3b;pax7a;pax7b_
+12s; GENE6_
+pax3a;pax3b;pax7a;pax7b_
+24hpf; GENE6_
+pax3a;pax3b;pax7a;pax7b_
+48hpf; GENE6_
+pax3a;pax3b;pax7a;pax7b_
+72hpf; GENE6_
+pax3a;pax3b_
+12s; GENE6_
+pax3a;pax3b_
+24hpf; GENE6_
+pax3a;pax3b_
+48hpf; GENE6_
+pax3a;pax3b_
+72hpf; GENE6_
+pbx1b;pbx4_
+18s; GENE6_
+pbx1b;pbx4_
+24hpf; GENE6_
+pbx1b;pbx4_
+48hpf; GENE6_
+pbx1b_
+18s; GENE6_
+pbx1b_
+24hpf; GENE6_
+pbx1b_
+48hpf; GENE6_
+pbx4_
+18s; GENE6_
+pbx4_
+24hpf; GENE6_
+pbx4_
+48hpf; GENE6_
+six1a;six1b_
+12s; GENE6_
+six1a;six1b_
+24hpf; GENE6_
+six1a;six1b_
+48hpf; GENE6_
+spi1a;spi1b_
+48hpf; GENE6_
+spi1a;spi1b_
+72hpf; GENE6_
+spi1a;spi1b_
+96hpf",,,collection/condition,SeaHub collection metadata,
+SeaHub,GENE7,linked,48,96,48.0,GENE7_pax1a;pax1b;pax9_48hpf; GENE7_pax1a;pax1b;pax9_72hpf; GENE7_pax1a;pax1b_48hpf; GENE7_pax1a;pax1b_72hpf; GENE7_pax9_48hpf; GENE7_pax9_72hpf,,,collection/condition,SeaHub collection metadata,
+SeaHub,GENE8,linked,336,472,336.0,GENE8_foxa2;foxa3_18s; GENE8_foxa2;foxa3_24hpf; GENE8_foxa2;foxa3_48hpf; GENE8_foxa2_18s; GENE8_foxa2_24hpf; GENE8_foxa2_48hpf; GENE8_gata5;gata6_18s; GENE8_gata5;gata6_24hpf; GENE8_gata5;gata6_48hpf; GENE8_gata5_18s; GENE8_gata5_24hpf; GENE8_gata5_48hpf; GENE8_gata6_18s; GENE8_gata6_24hpf; GENE8_gata6_48hpf; GENE8_osr1;osr2_18s; GENE8_osr1;osr2_24hpf; GENE8_osr1;osr2_48hpf; GENE8_osr1_18s; GENE8_osr1_24hpf; GENE8_osr1_48hpf; GENE8_osr2_18s; GENE8_osr2_24hpf; GENE8_osr2_48hpf; GENE8_sox17_18s; GENE8_sox17_24hpf; GENE8_sox17_48hpf; GENE8_sox32;sox17_18s; GENE8_sox32;sox17_24hpf; GENE8_sox32;sox17_48hpf; GENE8_sox32_18s; GENE8_sox32_24hpf; GENE8_sox32_48hpf; GENE8_twist1a;twist1b;twist2_18s; GENE8_twist1a;twist1b;twist2_24hpf; GENE8_twist1a;twist1b;twist2_48hpf; GENE8_twist1a;twist1b_18s; GENE8_twist1a;twist1b_24hpf; GENE8_twist1a;twist1b_48hpf; GENE8_twist2_18s; GENE8_twist2_24hpf; GENE8_twist2_48hpf,,,collection/condition,SeaHub collection metadata,
+SeaHub,GENE9,linked,576,672,576.0,GENE9_foxd3_18s; GENE9_foxd3_24hpf; GENE9_foxd3_48hpf; GENE9_foxd3_72hpf; GENE9_msx1a;msx1b;msx3_18s; GENE9_msx1a;msx1b;msx3_24hpf; GENE9_msx1a;msx1b;msx3_48hpf; GENE9_msx1a;msx1b;msx3_72hpf; GENE9_msx1a;msx1b_18s; GENE9_msx1a;msx1b_24hpf; GENE9_msx1a;msx1b_48hpf; GENE9_msx1a;msx1b_72hpf; GENE9_msx1a_18s; GENE9_msx1a_24hpf; GENE9_msx1a_48hpf; GENE9_msx1a_72hpf; GENE9_msx1b_18s; GENE9_msx1b_24hpf; GENE9_msx1b_48hpf; GENE9_msx1b_72hpf; GENE9_msx3_18s; GENE9_msx3_24hpf; GENE9_msx3_48hpf; GENE9_msx3_72hpf; GENE9_snai1a;snai1b;snai2;snai3_18s; GENE9_snai1a;snai1b;snai2;snai3_24hpf; GENE9_snai1a;snai1b;snai2;snai3_48hpf; GENE9_snai1a;snai1b;snai2;snai3_72hpf; GENE9_snai1a;snai1b;snai2_18s; GENE9_snai1a;snai1b;snai2_24hpf; GENE9_snai1a;snai1b;snai2_48hpf; GENE9_snai1a;snai1b;snai2_72hpf; GENE9_snai1a;snai1b_18s; GENE9_snai1a;snai1b_24hpf; GENE9_snai1a;snai1b_48hpf; GENE9_snai1a;snai1b_72hpf; GENE9_snai1a_18s; GENE9_snai1a_24hpf; GENE9_snai1a_48hpf; GENE9_snai1a_72hpf; GENE9_snai1b_18s; GENE9_snai1b_24hpf; GENE9_snai1b_48hpf; GENE9_snai1b_72hpf; GENE9_snai2_18s; GENE9_snai2_24hpf; GENE9_snai2_48hpf; GENE9_snai2_72hpf; GENE9_snai3_18s; GENE9_snai3_24hpf; GENE9_snai3_48hpf; GENE9_snai3_72hpf; GENE9_sox10;tbx5a_18s_2; GENE9_sox10;tbx5a_24hpf_2; GENE9_sox10;tbx5a_48hpf_2; GENE9_sox10;tbx5a_72hpf_2; GENE9_sox10_18s_2; GENE9_sox10_24hpf_2; GENE9_sox10_48hpf_2; GENE9_sox10_72hpf_2; GENE9_tbx5a_18s_2; GENE9_tbx5a_24hpf_2; GENE9_tbx5a_48hpf_2; GENE9_tbx5a_72hpf_2; GENE9_tfap2a_18s; GENE9_tfap2a_24hpf; GENE9_tfap2a_48hpf; GENE9_tfap2a_72hpf; GENE9_tfap2b_18s; GENE9_tfap2b_24hpf; GENE9_tfap2b_48hpf; GENE9_tfap2b_72hpf,,,collection/condition,SeaHub collection metadata,
+YX1,20231110,unknown,0,96,0.0,,,,,,
+YX1,20231206,unknown,0,96,0.0,,,,,,
+YX1,20231218,unknown,0,96,0.0,,,,,,
+YX1,20240306,unknown,0,96,0.0,,,,,,
+YX1,20240307,unknown,0,96,0.0,,,,,,
+YX1,20240314,unknown,0,1,0.0,,,,,,
+YX1,20240404,unknown,0,96,0.0,,,,,,
+YX1,20240411,unknown,0,96,0.0,,,,,,
+YX1,20240418,unknown,0,96,0.0,,,,,,
+YX1,20240509,unknown,0,96,0.0,,,,,,
+YX1,20240522,unknown,0,96,0.0,,,,,,
+YX1,20240530,unknown,0,96,0.0,,,,,,
+YX1,20240626,unknown,0,96,0.0,,,,,,
+YX1,20240812,unknown,0,96,0.0,,,,,,
+YX1,20241022,unknown,0,96,0.0,,,,,,
+YX1,20241023,unknown,0,96,0.0,,,,,,
+YX1,20250126,unknown,0,96,0.0,,,,,,
+YX1,20250215,unknown,0,96,0.0,,,,,,
+YX1,20250305,unknown,0,96,0.0,,,,,,
+YX1,20250415,unknown,0,96,0.0,,,,,,
+YX1,20250416,unknown,0,96,0.0,,,,,,
+YX1,20250425,unknown,0,96,0.0,,,,,,
+YX1,20250501,unknown,0,96,0.0,,,,,,
+YX1,20250512,unknown,0,96,0.0,,,,,,
+YX1,20250515_part2,unknown,0,96,0.0,,,,,,
+YX1,20250519,unknown,0,96,0.0,,,,,,
+YX1,20250520,unknown,0,1,0.0,,,,,,
+YX1,20250711,unknown,0,96,0.0,,,,,,
+YX1,20250912,unknown,0,96,0.0,,,,,,
+YX1,20251017_part1,unknown,0,96,0.0,,,,,,
+YX1,20251017_part2,unknown,0,95,0.0,,,,,,
+YX1,20251020,unknown,0,92,0.0,,,,,,
+YX1,20251104,unknown,0,96,0.0,,,,,,
+YX1,20251106,unknown,0,96,0.0,,,,,,
+YX1,20251112,unknown,0,96,0.0,,,,,,
+YX1,20251113,unknown,0,96,0.0,,,,,,
+YX1,20251119,unknown,0,96,0.0,,,,,,
+YX1,20251121,unknown,0,96,0.0,,,,,,
+YX1,20251125,unknown,0,96,0.0,,,,,,
+YX1,20251205,unknown,0,96,0.0,,,,,,
+YX1,20251207_pbx,unknown,0,96,0.0,,,,,,
+YX1,20251212,unknown,0,96,0.0,,,,,,
+YX1,20260122,unknown,0,96,0.0,,,,,,
+YX1,20260124,unknown,0,1,0.0,,,,,,
+YX1,20260202,unknown,0,96,0.0,,,,,,
+YX1,20260206,unknown,0,96,0.0,,,,,,
+YX1,20260208,unknown,0,96,0.0,,,,,,
+YX1,20260210,unknown,0,96,0.0,,,,,,
+YX1,20260213,unknown,0,96,0.0,,,,,,
+YX1,20260219,unknown,0,96,0.0,,,,,,
+YX1,20260223,unknown,0,96,0.0,,,,,,
+YX1,20260224,unknown,0,96,0.0,,,,,,
+YX1,20260228,unknown,0,96,0.0,,,,,,
+YX1,20260304,unknown,0,96,0.0,,,,,,
+YX1,20260306,unknown,0,96,0.0,,,,,,
+YX1,20260319,unknown,0,96,0.0,,,,,,
+YX1,20260320,unknown,0,96,0.0,,,,,,
+YX1,20260326_wt_ref,unknown,0,96,0.0,,,,,,
+YX1,20260410_otx_pilot,unknown,0,96,0.0,,,,,,
+YX1,20260414_sci_b9d2_48hpf_plate01,unknown,0,96,0.0,,,,,,
+YX1,20260415_sci_cep290_48hpf_plate01,unknown,0,96,0.0,,,,,,
+YX1,20260417_irx_pilot,unknown,0,96,0.0,,,,,,
+YX1,20260418_irx_pilot,unknown,0,96,0.0,,,,,,
+YX1,20260501_zfpm_pilot,unknown,0,96,0.0,,,,,,
+YX1,20260502_zfpm_pilot,unknown,0,96,0.0,,,,,,

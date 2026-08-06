@@ -39,38 +39,20 @@ def _mbqc_registry_validated(experiment, *, well_id):
 def _mbqc_artifacts_for_run(wc):
     return run_well_shard_paths(DATA_ROOT, MOTION_BLUR_QC_STEP, "motion_blur_qc", wc.experiment, wells_for_experiment(wc))
 
-def _mbqc_z_stack_product_key():
-    return str(
-        config.get("motion_blur_qc", {}).get(
-            "z_stack_product_key",
-            "BF__z_stack",
-        )
-    )
-
-def _mbqc_z_stack_inventory(experiment, *, well_id):
-    return _frame_inventory_product_artifact(
-        experiment,
-        well_id=well_id,
-        product_key=_mbqc_z_stack_product_key(),
-    )
-
-def _mbqc_z_stack_inventory_validated(experiment, *, well_id):
-    return _frame_inventory_product_validated(
-        experiment,
-        well_id=well_id,
-        product_key=_mbqc_z_stack_product_key(),
-    )
-
 
 rule build_motion_blur_qc_for_well:
-    """Compute the per-well motion_blur_qc shard from snips + masks + z-stack frame_inventory."""
+    """Compute per-well motion blur from z planes, or emit not-applicable for single-z frames."""
     input:
         snip_inventory=str(_mbqc_snip_inventory("{experiment}", well_id="{well_id}")),
         snip_inventory_validated=str(_mbqc_snip_inventory_validated("{experiment}", well_id="{well_id}")),
         frame_masks=str(_mbqc_frame_masks("{experiment}", well_id="{well_id}")),
         frame_masks_validated=str(_mbqc_frame_masks_validated("{experiment}", well_id="{well_id}")),
-        frame_inventory=str(_mbqc_z_stack_inventory("{experiment}", well_id="{well_id}")),
-        frame_inventory_validated=str(_mbqc_z_stack_inventory_validated("{experiment}", well_id="{well_id}")),
+        frame_inventory=str(_frame_inventory_artifact(
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
+        )),
+        frame_inventory_validated=str(_frame_inventory_validated(
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
+        )),
         physical_embryo_registry=str(_mbqc_registry("{experiment}", well_id="{well_id}")),
         physical_embryo_registry_validated=str(_mbqc_registry_validated("{experiment}", well_id="{well_id}")),
     output:
