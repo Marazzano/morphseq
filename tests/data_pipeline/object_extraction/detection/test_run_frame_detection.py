@@ -136,6 +136,28 @@ def test_router_df_flag_not_drop(monkeypatch):
     validate_frame_detections(df, inv)
 
 
+def test_seahub_keeps_only_largest_detection(monkeypatch):
+    def fake_detect_embryos(**kw):
+        return [
+            {"box_xyxy": [0.2, 0.2, 0.8, 0.8], "confidence": 0.70, "phrase": "embryo"},
+            {"box_xyxy": [0.3, 0.3, 0.5, 0.5], "confidence": 0.95, "phrase": "embryo"},
+        ]
+
+    monkeypatch.setattr(gd, "detect_embryos", fake_detect_embryos)
+    monkeypatch.setattr(gd, "filter_detections", lambda dets, **kw: list(dets))
+    inv = _make_inventory(1)
+    inv["source_scope"] = "seahub"
+
+    df = run_frame_detection_df(
+        inv, backend="groundingdino", model=object(), detector_model_id="SwinT_OGC",
+    )
+
+    assert len(df) == 2
+    kept = df[df["is_kept"]]
+    assert len(kept) == 1
+    assert kept.iloc[0]["confidence"] == pytest.approx(0.70)
+
+
 def test_router_only_detects_bf_channel(monkeypatch):
     _stub_inference(monkeypatch)
     # Mix BF and GFP; GFP frames must not be detected on.

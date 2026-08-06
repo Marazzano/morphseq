@@ -1,10 +1,10 @@
 """death_detection entrypoint — the thin filesystem adapter for BOTH output grains.
 
 Loads fraction_alive (full snip spine + time_index + fraction_alive), frame timing (elapsed_time_s
-per experiment/well/time_index, from frame_inventory), stage_predictions (for death_event), the
-snip_inventory universe, and the per-well registry. Computes the two flags + the inflection list,
-builds the death_event table, reconciles both onto their grains, validates both (registry as
-verifier), then writes BOTH per-well shards. No domain logic here.
+per experiment/well/time_index, from frame_inventory), plate metadata (for well-level stage at
+death), the snip_inventory universe, and the per-well registry. Computes the two flags + the
+inflection list, builds the death_event table, reconciles both onto their grains, validates both
+(registry as verifier), then writes BOTH per-well shards. No domain logic here.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ def run_death_detection(
     *,
     fraction_alive_csv: Path,
     frame_inventory_csv: Path,
-    stage_predictions_csv: Path,
+    plate_metadata_csv: Path,
     snip_inventory_csv: Path,
     physical_embryo_registry_csv: Path,
     output_qc_csv: Path,
@@ -40,7 +40,7 @@ def run_death_detection(
 
     fraction_alive = pd.read_csv(fraction_alive_csv)
     frame_inventory = pd.read_csv(frame_inventory_csv)
-    stage_predictions = pd.read_csv(stage_predictions_csv)
+    plate_metadata = pd.read_csv(plate_metadata_csv)
     snip_inventory = pd.read_csv(snip_inventory_csv)
     registry = pd.read_csv(physical_embryo_registry_csv)
 
@@ -49,12 +49,14 @@ def run_death_detection(
     flags, inflections = compute_death_detection_flags(fraction_alive, frame_timing, config=config)
 
     # ── per-snip death flag table ──
-    qc_df = reconcile_death_flags_to_snip_grain(flags, snip_inventory)
+    qc_df = reconcile_death_flags_to_snip_grain(
+        flags, snip_inventory, frame_inventory_df=frame_inventory
+    )
     validate_death_detection_qc(qc_df, physical_embryo_registry_df=registry, check_sources=True)
     _write_csv(qc_df, output_qc_csv)
 
     # ── per-physical_embryo death_event table ──
-    death_events = compute_death_event(inflections, frame_timing, stage_predictions, config=config)
+    death_events = compute_death_event(inflections, frame_timing, plate_metadata, config=config)
     physical_embryo_universe = (
         snip_inventory[["experiment_id", "well_id", "physical_embryo_id"]]
         .drop_duplicates()

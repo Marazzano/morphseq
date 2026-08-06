@@ -1,0 +1,50 @@
+{
+  "experiment_id": "20250612_24hpf_ctrl_atf6",
+  "inventory_path": "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline/output/object_extraction/20250612_24hpf_ctrl_atf6/snips/20250612_24hpf_ctrl_atf6_snip_inventory.csv",
+  "inventory_mtime_ns": 1785540073280764195,
+  "n_inventory_rows": 97,
+  "n_valid_snips": 97,
+  "n_wells": 96,
+  "n_physical_embryos": 97,
+  "image_shapes": [
+    [
+      576,
+      256
+    ]
+  ],
+  "all_current_snips": {
+    "n_images": 97,
+    "n_foreground_pixels": 1750446,
+    "foreground_mean": 113.82365180074108,
+    "foreground_p95": 220.0,
+    "foreground_fraction_ge_250": 0.0013927878951992807
+  },
+  "saved_embryo_mask_area": {
+    "mean": 18503.845360824744,
+    "median": 17759.0,
+    "min": 11045,
+    "max": 147456
+  },
+  "paired_primary_count": 95,
+  "paired_current_primary": {
+    "n_images": 95,
+    "n_foreground_pixels": 1654564,
+    "foreground_mean": 115.96318848953561,
+    "foreground_p95": 221.0,
+    "foreground_fraction_ge_250": 0.0014559726912951087
+  },
+  "paired_legacy_primary": {
+    "n_images": 95,
+    "n_foreground_pixels": 1543822,
+    "foreground_mean": 121.97147857719348,
+    "foreground_p95": 224.0,
+    "foreground_fraction_ge_250": 0.0026965543955196907
+  },
+  "paired_current_to_legacy": {
+    "foreground_pixel_count_ratio": 1.0717323629278506,
+    "saturation_ratio": 0.5399381869374483
+  },
+  "missing_legacy_paths": [
+    "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/training_data/bf_embryo_snips/20250612_24hpf_ctrl_atf6/20250612_24hpf_ctrl_atf6_E07_e00_t0000.jpg"
+  ]
+}

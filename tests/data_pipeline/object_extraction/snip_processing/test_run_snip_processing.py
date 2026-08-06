@@ -7,6 +7,7 @@ No GPU or real SAM2 is invoked.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -24,6 +25,9 @@ from data_pipeline.object_extraction.segmentation.sam2_video.run_sam2_video impo
     Sam2WellInput,
     run_sam2_video_for_wells,
 )
+from data_pipeline.object_extraction.segmentation.masks.mask_rle import (
+    encode_binary_mask_rle,
+)
 from data_pipeline.object_extraction.segmentation.physical_embryo_registry.build_physical_embryo_registry import (
     build_physical_embryo_registry,
 )
@@ -32,13 +36,176 @@ from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_
     validate_snip_inventory_contract,
 )
 from data_pipeline.shared.identifiers import build_image_id, build_well_id
-from data_pipeline.object_extraction.snip_processing.entrypoints.run_snip_processing import run_snip_processing
+from data_pipeline.object_extraction.snip_processing.entrypoints.run_snip_processing import (
+    _clean_seahub_mask,
+    _estimate_background,
+    run_snip_processing,
+)
+from data_pipeline.object_extraction.snip_processing.augmentation import (
+    augment_snip,
+    blend_with_background_noise,
+    generate_background_noise,
+)
+from data_pipeline.object_extraction.snip_processing.defaults import DEFAULT_BLEND_RADIUS_UM
 
 
 WELL_ID = build_well_id("20250912", "B01")
 N_FRAMES = 3
 N_OBJECTS = 2
 IMG_W, IMG_H = 64, 64
+
+
+def test_generate_background_noise_accepts_zero_variance():
+    noise = generate_background_noise((4, 5), background_mean=0.0, background_std=0.0)
+    assert noise.shape == (4, 5)
+    assert np.all(noise == 0.0)
+
+
+def test_legacy_blend_default_attenuates_boundary_highlights():
+    image = np.full((128, 128), 255, dtype=np.uint8)
+    mask = np.zeros_like(image)
+    mask[32:96, 44:84] = 1
+
+    default_blend = blend_with_background_noise(
+        image,
+        mask,
+        background_mean=0.0,
+        background_std=0.0,
+        blend_radius_um=DEFAULT_BLEND_RADIUS_UM,
+        pixel_size_um=6.5,
+    )
+    narrow_blend = blend_with_background_noise(
+        image,
+        mask,
+        background_mean=0.0,
+        background_std=0.0,
+        blend_radius_um=20.0,
+        pixel_size_um=6.5,
+    )
+
+    assert DEFAULT_BLEND_RADIUS_UM == 75.0
+    assert default_blend.mean() < narrow_blend.mean()
+    assert np.count_nonzero(default_blend >= 250) < np.count_nonzero(narrow_blend >= 250)
+
+
+def test_augment_snip_omitted_blend_uses_checkpoint_compatible_default():
+    image = np.arange(128 * 128, dtype=np.uint8).reshape(128, 128)
+    mask = np.zeros_like(image)
+    mask[32:96, 44:84] = 1
+
+    implicit, implicit_clahe = augment_snip(
+        image,
+        mask,
+        background_mean=0.0,
+        background_std=0.0,
+    )
+    explicit, explicit_clahe = augment_snip(
+        image,
+        mask,
+        background_mean=0.0,
+        background_std=0.0,
+        blend_radius_um=75.0,
+    )
+
+    np.testing.assert_array_equal(implicit, explicit)
+    np.testing.assert_array_equal(implicit_clahe, explicit_clahe)
+
+
+def test_augment_snip_can_bypass_clahe_without_changing_default():
+    image = np.arange(32 * 32, dtype=np.uint8).reshape(32, 32)
+    mask = np.ones_like(image)
+
+    default_augmented, default_contrast = augment_snip(
+        image,
+        mask,
+        background_mean=0.0,
+        background_std=0.0,
+    )
+    bypassed, bypassed_contrast = augment_snip(
+        image,
+        mask,
+        background_mean=0.0,
+        background_std=0.0,
+        use_clahe=False,
+    )
+
+    np.testing.assert_array_equal(bypassed_contrast, image)
+    np.testing.assert_array_equal(bypassed, image)
+    assert not np.array_equal(default_contrast, image)
+    assert not np.array_equal(default_augmented, bypassed)
+
+
+def test_clean_seahub_mask_keeps_largest_component_and_fills_holes():
+    mask = np.zeros((20, 20), dtype=np.uint8)
+    mask[2:10, 3:11] = 1
+    mask[5:7, 6:8] = 0
+    mask[15:18, 15:18] = 1
+
+    cleaned = _clean_seahub_mask(mask)
+
+    assert cleaned.dtype == np.uint8
+    assert cleaned[5:7, 6:8].all()
+    assert not cleaned[15:18, 15:18].any()
+    assert int(cleaned.sum()) == 8 * 8
+
+
+def test_seahub_background_sampling_excludes_canvas_fill_and_is_deterministic(
+    tmp_path,
+):
+    image_id = "seahub_frame"
+    image_path = tmp_path / "seahub_frame.png"
+    image = np.zeros((100, 100), dtype=np.uint8)
+    image[10:90, 10:90] = 100
+    skio.imsave(str(image_path), image, check_contrast=False)
+
+    mask = np.zeros_like(image)
+    mask[40:60, 40:60] = 1
+    masks = pd.DataFrame(
+        [{"image_id": image_id, "mask_rle": json.dumps(encode_binary_mask_rle(mask))}]
+    )
+    inventory = pd.DataFrame(
+        [
+            {
+                "image_id": image_id,
+                "image_path": str(image_path),
+                "source_scope": "seahub",
+                "canvas_fill_value": 0,
+            }
+        ]
+    ).set_index("image_id")
+
+    first = _estimate_background(masks, inventory, seed=309)
+    first_rng_tail = np.random.random(4)
+    second = _estimate_background(masks, inventory, seed=309)
+    second_rng_tail = np.random.random(4)
+
+    assert first == second
+    assert first == (100.0, 0.0)
+    np.testing.assert_array_equal(first_rng_tail, second_rng_tail)
+
+
+def test_seahub_background_sampling_falls_back_to_canvas_fill(tmp_path):
+    image_id = "seahub_fill_only"
+    image_path = tmp_path / "seahub_fill_only.png"
+    image = np.full((20, 20), 7, dtype=np.uint8)
+    skio.imsave(str(image_path), image, check_contrast=False)
+
+    mask = np.zeros_like(image)
+    masks = pd.DataFrame(
+        [{"image_id": image_id, "mask_rle": json.dumps(encode_binary_mask_rle(mask))}]
+    )
+    inventory = pd.DataFrame(
+        [
+            {
+                "image_id": image_id,
+                "image_path": str(image_path),
+                "source_scope": "SeaHub",
+                "canvas_fill_value": 7,
+            }
+        ]
+    ).set_index("image_id")
+
+    assert _estimate_background(masks, inventory) == (7.0, 0.0)
 
 
 def _make_frame_inventory(tmp_images: Path) -> pd.DataFrame:
@@ -123,7 +290,7 @@ def test_run_snip_processing_produces_inventory(tmp_path):
         output_csv=output_csv,
         snips_dir=snips_dir,
         output_root=tmp_path,
-        target_pixel_size_um=2.17,
+        target_pixel_size_um=6.5,
         output_height_px=64,
         output_width_px=64,
     )
@@ -143,6 +310,8 @@ def test_run_snip_processing_produces_inventory(tmp_path):
     ]
     missing = [c for c in required if c not in df.columns]
     assert not missing, f"missing columns: {missing}"
+    assert set(df["source_micrometers_per_pixel"]) == {2.17}
+    assert set(df["snip_micrometers_per_pixel"]) == {6.5}
 
     # All snips should be valid.
     failures = df[~df["is_valid_snip"].astype(bool)]

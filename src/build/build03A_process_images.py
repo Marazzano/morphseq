@@ -1464,7 +1464,7 @@ def compile_embryo_stats(root: str,
 
 def extract_embryo_snips(root: str | Path,
                          stats_df: pd.DataFrame,
-                         outscale: float=7.8,
+                         outscale: float=6.5,
                          n_workers: int=1,
                          overwrite_flag: bool=False, outshape=None, dl_rad_um=75):
     """
@@ -1476,11 +1476,8 @@ def extract_embryo_snips(root: str | Path,
         Project root directory
     stats_df : pd.DataFrame
         Metadata dataframe with embryo information
-    outscale : float, default 7.8
-        Target resolution in μm/pixel. Default 7.8 μm/px provides 4.5mm × 2.0mm
-        capture window (576×256 px), ensuring large embryos (~3.5mm) fill max 75%
-        of frame with margin for rotation. Previous default (6.5 μm/px) caused
-        clipping for large embryos.
+    outscale : float, default 6.5
+        Canonical target resolution in μm/pixel used to train the morphology VAE.
     n_workers : int, default 1
         Number of parallel workers
     overwrite_flag : bool, default False
@@ -2122,4 +2119,4 @@ if __name__ == "__main__":
     stats_df = compile_embryo_stats(root, tracked_df)
 
     # print('Extracting embryo snips...')
-    extract_embryo_snips(root, stats_df=stats_df, outscale=6.5, dl_rad_um=50, overwrite_flag=False)
+    extract_embryo_snips(root, stats_df=stats_df, outscale=6.5, dl_rad_um=75, overwrite_flag=False)

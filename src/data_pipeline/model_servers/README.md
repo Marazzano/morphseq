@@ -10,6 +10,7 @@ few seconds/minutes of work -> exit, repeated once per well).
 | toggle | service |
 |---|---|
 | `frame_detections.use_model_server` | `service_grounding_dino` |
+| `frame_masks.use_model_server` | `service_sam2` |
 | `unet_snip.use_model_server` | `service_unet_aux_masks` |
 
 The DAG shape does not change — a served rule's `shell:` calls `client.py` instead

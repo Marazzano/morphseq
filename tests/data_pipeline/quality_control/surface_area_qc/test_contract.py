@@ -93,3 +93,9 @@ def test_not_applicable_requires_false_flag():
     df.loc[0, "sa_outlier_flag"] = True
     with pytest.raises(ValueError, match="must carry sa_outlier_flag=False"):
         validate_surface_area_qc(df)
+
+
+def test_diagnostic_only_retains_observed_flag():
+    df = _valid_df(flag=True)
+    df["surface_area_qc_applicability"] = "diagnostic_only"
+    validate_surface_area_qc(df)

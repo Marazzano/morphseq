@@ -16,6 +16,7 @@ YX1_CHANNEL_MAP = ScopeChannelMap(
         "EYES - Dia":  "BF",
         "BF":          "BF",
         "EYES - GFP":  "GFP",
+        "Celesta 473": "GFP",
         "EYES - RFP":  "RFP",
     },
 )

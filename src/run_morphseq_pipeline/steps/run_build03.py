@@ -77,7 +77,7 @@ def _parse_args() -> argparse.Namespace:
 def run_build03_pipeline(experiment_name, sam2_csv_path, output_file_path, root_dir=None, verbose=False,
                          export_snips: bool = True,
                          snip_outscale: float = 6.5,
-                         snip_dl_rad_um: float = 50,
+                         snip_dl_rad_um: float = 75,
                          snip_overwrite: bool = False,
                          snip_workers: int = 1):
     """
@@ -248,7 +248,7 @@ def main() -> int:
                     root=root,
                     stats_df=stats_df,
                     outscale=6.5,
-                    dl_rad_um=50,
+                    dl_rad_um=75,
                     overwrite_flag=args.overwrite,
                 )
                 print("   🖼️  Snips: training_data/bf_embryo_snips/<exp>/, bf_embryo_snips_uncropped/<exp>/, bf_embryo_masks/")

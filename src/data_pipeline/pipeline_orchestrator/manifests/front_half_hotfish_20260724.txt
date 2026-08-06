@@ -1,0 +1,10 @@
+# Front-half ONLY (materialization -> validated per-well frame_inventory; target=front_half) for the
+# 6 Keyence hotfish plates (20260724). One experiment per line: "<experiment> <microscope>".
+# Consumed by submit_front_half_hotfish_20260724.sge. CPU-only run (no GPU): Keyence focus-stacking
+# is light and front_half drives no segmentation, so a GPU slot would just sit idle.
+20260724_hotfish_24hpf_plate01 Keyence
+20260724_hotfish_24hpf_plate02 Keyence
+20260724_hotfish_30hpf_plate01 Keyence
+20260724_hotfish_30hpf_plate02 Keyence
+20260724_hotfish_36hpf_plate01 Keyence
+20260724_hotfish_36hpf_plate02 Keyence

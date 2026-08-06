@@ -81,6 +81,31 @@ def _identity_row_for(inv_row: pd.Series, image_id: str) -> dict:
     }
 
 
+def _enforce_seahub_single_embryo(rows: list[dict], inv_row: pd.Series) -> None:
+    """Keep only the largest accepted detection in a one-embryo SeaHub frame.
+
+    SeaHub materialization has already cropped exactly one reviewed embryo into each
+    canonical well. GroundingDINO can additionally detect nested embryo fragments in
+    that crop; retaining those fragments would mint multiple physical embryos for one
+    source embryo. Candidate rows remain in the flag-not-drop table for audit.
+    """
+    if str(inv_row.get("source_scope", "")).strip().casefold() != "seahub":
+        return
+    kept = [row for row in rows if bool(row["is_kept"])]
+    if len(kept) <= 1:
+        return
+    largest = max(
+        kept,
+        key=lambda row: (
+            (float(row["bbox_x_max_px"]) - float(row["bbox_x_min_px"]))
+            * (float(row["bbox_y_max_px"]) - float(row["bbox_y_min_px"])),
+            float(row["confidence"]),
+        ),
+    )
+    for row in kept:
+        row["is_kept"] = row is largest
+
+
 def run_frame_detection_df(
     reference_frame_inventory: pd.DataFrame,
     *,
@@ -117,6 +142,7 @@ def run_frame_detection_df(
             detector_model_id=detector_model_id,
             config=config,
         )
+        _enforce_seahub_single_embryo(det_rows, inv_row)
         for det in det_rows:
             rows.append({**identity, **det})
 

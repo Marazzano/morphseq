@@ -14,7 +14,11 @@ set -euo pipefail
 
 REPO_ROOT="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq"
 WORK_DIR="${REPO_ROOT}/results/nlammers/20260723_seahub"
-BUNDLE_ROOT="/net/trapnell/vol1/home/nlammers/projects/data/morphseq/seahub/derived/20260724/bundle"
+source "${WORK_DIR}/seahub_run_env.sh"
+seahub_configure_run \
+    "${WORK_DIR}" \
+    "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/seahub/derived"
+BUNDLE_ROOT="${SEAHUB_BUNDLE_ROOT}"
 PIPELINE_OUTPUT_ROOT="/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline/output"
 CONDA="/net/trapnell/vol1/home/nlammers/micromamba/bin/conda"
 

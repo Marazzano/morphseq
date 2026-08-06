@@ -4,7 +4,7 @@ A single build rule emits both per-well shards (the per-snip death_detection_qc 
 per-physical_embryo death_event table) because they share one compute pass over fraction_alive +
 frame timing. Each output then validates at its OWN grain and merges separately. Consumes
 fraction_alive (snip spine + time_index + fraction_alive), frame_inventory (elapsed_time_s for the
-hours-based lead-time), stage_predictions (death_event only), and the snip_inventory universe.
+hours-based lead-time and stage-at-death), plate_metadata, and the snip_inventory universe.
 """
 
 DEATH_DETECTION_QC_STEP = "death_detection_qc"
@@ -32,12 +32,6 @@ def _dd_fraction_alive_validated(experiment, *, well_id):
 def _dd_frame_inventory(experiment, *, well_id):
     return rule_artifact("frame_inventory", "inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
-def _dd_stage_predictions(experiment, *, well_id):
-    return rule_artifact("stage_predictions", "stage_predictions", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
-
-def _dd_stage_predictions_validated(experiment, *, well_id):
-    return rule_validated("stage_predictions", "stage_predictions", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
-
 def _dd_snip_inventory(experiment, *, well_id):
     return rule_artifact("snip_inventory", "snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
@@ -63,8 +57,7 @@ rule build_death_detection_for_well:
         fraction_alive=str(_dd_fraction_alive("{experiment}", well_id="{well_id}")),
         fraction_alive_validated=str(_dd_fraction_alive_validated("{experiment}", well_id="{well_id}")),
         frame_inventory=str(_dd_frame_inventory("{experiment}", well_id="{well_id}")),
-        stage_predictions=str(_dd_stage_predictions("{experiment}", well_id="{well_id}")),
-        stage_predictions_validated=str(_dd_stage_predictions_validated("{experiment}", well_id="{well_id}")),
+        plate_metadata=PLATE_METADATA_CSV,
         snip_inventory=str(_dd_snip_inventory("{experiment}", well_id="{well_id}")),
         snip_inventory_validated=str(_dd_snip_inventory_validated("{experiment}", well_id="{well_id}")),
         physical_embryo_registry=str(_dd_registry("{experiment}", well_id="{well_id}")),
@@ -77,7 +70,7 @@ rule build_death_detection_for_well:
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks death-detection \
           --fraction-alive-csv "{input.fraction_alive}" \
           --frame-inventory-csv "{input.frame_inventory}" \
-          --stage-predictions-csv "{input.stage_predictions}" \
+          --plate-metadata-csv "{input.plate_metadata}" \
           --snip-inventory-csv "{input.snip_inventory}" \
           --physical-embryo-registry-csv "{input.physical_embryo_registry}" \
           --output-qc-csv "{output.qc}" \

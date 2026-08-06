@@ -15,6 +15,11 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from data_pipeline.acquisition.image_materialization.frame_modality import (
+    FRAME_MODALITY_COLUMNS,
+    IMAGE_KIND_SINGLE_Z,
+    frame_modality_for_image,
+)
 from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_identity_contract import (
     SNIP_ID_SPINE_COLUMNS,
 )
@@ -22,6 +27,7 @@ from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_
 from .config import SurfaceAreaQCConfig
 from .reference import interpolate_reference_band
 from data_pipeline.quality_control.applicability import (
+    QC_APPLICABILITY_DIAGNOSTIC_ONLY,
     QC_APPLICABILITY_EXCLUSION,
     QC_APPLICABILITY_NOT_APPLICABLE,
 )
@@ -49,8 +55,16 @@ def compute_surface_area_qc_flags(
     surface_area_reference_df: pd.DataFrame,
     *,
     config: SurfaceAreaQCConfig,
+    frame_inventory_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Return one surface_area_qc row per snip in the universe (full spine + sa_outlier_flag)."""
+    """Return one surface_area_qc row per snip in the universe.
+
+    The outlier calculation is retained for ``single_z`` acquisitions, but its applicability is
+    ``diagnostic_only``: a single arbitrary focal plane does not provide sufficiently calibrated
+    physical evidence to exclude an otherwise usable snip. Legacy/native acquisitions retain the
+    historical exclusion behavior. ``frame_inventory_df=None`` exists for pure legacy callers and
+    likewise preserves that historical behavior.
+    """
     area_col = config.area_column
     stage_col = config.stage_column
 
@@ -59,6 +73,7 @@ def compute_surface_area_qc_flags(
 
     area_lookup = _one_to_one_lookup(mask_geometry_df, area_col, "mask_geometry", config.missing_area_policy)
     stage_lookup = _one_to_one_lookup(stage_df, stage_col, "stage_predictions", config.missing_stage_policy)
+    applicability_lookup = _resolved_stage_applicability(universe, frame_inventory_df)
 
     out = universe[list(SNIP_ID_SPINE_COLUMNS)].copy()
     flags: list[bool] = []
@@ -91,11 +106,42 @@ def compute_surface_area_qc_flags(
                 area, stage, surface_area_reference_df, k_upper=config.k_upper, k_lower=config.k_lower
             )
         )
-        applicability.append(QC_APPLICABILITY_EXCLUSION)
+        applicability.append(applicability_lookup[snip_id])
 
     out["sa_outlier_flag"] = pd.array(flags, dtype=bool)
     out["surface_area_qc_applicability"] = applicability
     return out
+
+
+def _resolved_stage_applicability(
+    snip_universe_df: pd.DataFrame,
+    frame_inventory_df: pd.DataFrame | None,
+) -> dict[str, str]:
+    """Return modality-aware applicability for snips whose stage is resolved."""
+    snip_ids = snip_universe_df["snip_id"].astype(str)
+    if frame_inventory_df is None or not all(
+        column in frame_inventory_df.columns for column in FRAME_MODALITY_COLUMNS
+    ):
+        return dict.fromkeys(snip_ids, QC_APPLICABILITY_EXCLUSION)
+    if "image_id" not in snip_universe_df.columns:
+        raise ValueError(
+            "surface_area_qc: modality-aware applicability requires image_id in the "
+            "snip_inventory universe."
+        )
+
+    modality_by_image: dict[str, str] = {}
+    result: dict[str, str] = {}
+    for _, snip in snip_universe_df.iterrows():
+        image_id = str(snip["image_id"])
+        if image_id not in modality_by_image:
+            modality = frame_modality_for_image(frame_inventory_df, image_id=image_id)
+            modality_by_image[image_id] = str(modality["image_kind"])
+        result[str(snip["snip_id"])] = (
+            QC_APPLICABILITY_DIAGNOSTIC_ONLY
+            if modality_by_image[image_id] == IMAGE_KIND_SINGLE_Z
+            else QC_APPLICABILITY_EXCLUSION
+        )
+    return result
 
 
 def _require_unique_snip_id(df: pd.DataFrame, label: str) -> None:

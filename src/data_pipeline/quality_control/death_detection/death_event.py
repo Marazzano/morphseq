@@ -4,14 +4,17 @@ The lead-time adjustment is HOURS-based (the spec's hard requirement): the raw i
 ``time_index`` is converted to elapsed hours via the frame-timing input, ``lead_time_hr`` is
 subtracted in hours, and the result maps back to the called-death frame ``D`` — the latest frame
 whose elapsed time is at or before the adjusted elapsed time (clamped to the animal's first frame).
-``death_event_stage_hpf`` is ``stage_predictions`` sampled at ``D`` — "stage at the inferred death
-event," not a raw stage-model death prediction.
+``death_event_stage_hpf`` is calculated at ``D`` from the well's plate metadata and frame timing.
+Stage is a well/time property, not a snip property: calculating it directly avoids requiring the
+dying embryo to retain a valid snip at the called-death frame.
 """
 
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+
+from data_pipeline.feature_extraction.stage_inference import predict_stage_hpf
 
 from .config import DeathDetectionConfig
 
@@ -52,7 +55,7 @@ def called_death_time_index(
 def compute_death_event(
     persistence_deaths_df: pd.DataFrame,
     frame_timing_df: pd.DataFrame,
-    stage_predictions_df: pd.DataFrame,
+    plate_metadata_df: pd.DataFrame,
     *,
     config: DeathDetectionConfig,
 ) -> pd.DataFrame:
@@ -60,8 +63,7 @@ def compute_death_event(
 
     ``persistence_deaths_df``: columns experiment_id, well_id, physical_embryo_id, inflection_time_index.
     ``frame_timing_df``: experiment_id, well_id, time_index, elapsed_time_s.
-    ``stage_predictions_df``: experiment_id, well_id, physical_embryo_id, time_index, predicted_stage_hpf
-      (stage carries the full snip spine upstream; we group it to the animal here).
+    ``plate_metadata_df``: one row per well with start_age_hpf and temperature.
     Output columns: experiment_id, well_id, physical_embryo_id, death_event_time_index,
     death_event_stage_hpf.
     """
@@ -77,7 +79,7 @@ def compute_death_event(
             & (frame_timing_df["well_id"] == well)
         ]
         death_d = called_death_time_index(animal_timing, inflection, lead_time_hr=config.lead_time_hr)
-        stage_hpf = _stage_at_frame(stage_predictions_df, exp, well, phys, death_d)
+        stage_hpf = _stage_at_frame(frame_timing_df, plate_metadata_df, exp, well, death_d)
         rows.append(
             {
                 "experiment_id": exp,
@@ -99,18 +101,45 @@ def compute_death_event(
     )
 
 
-def _stage_at_frame(stage_predictions_df, exp, well, phys, death_d) -> float:
-    """Sample predicted_stage_hpf for one animal at the called-death frame, failing loud if absent."""
-    match = stage_predictions_df[
-        (stage_predictions_df["experiment_id"] == exp)
-        & (stage_predictions_df["well_id"] == well)
-        & (stage_predictions_df["physical_embryo_id"] == phys)
-        & (stage_predictions_df[_TIME] == death_d)
+def _stage_at_frame(
+    frame_timing_df: pd.DataFrame,
+    plate_metadata_df: pd.DataFrame,
+    exp: str,
+    well: str,
+    death_d: int,
+) -> float:
+    """Calculate well-level developmental stage at the called-death frame.
+
+    Missing age or temperature is an unresolved annotation, not a pipeline failure, and therefore
+    returns NaN. Structural problems (missing/ambiguous well or timing rows) still fail loudly.
+    """
+    timing = frame_timing_df[
+        (frame_timing_df["experiment_id"] == exp)
+        & (frame_timing_df["well_id"] == well)
+        & (frame_timing_df[_TIME] == death_d)
     ]
-    if len(match) == 0:
+    if len(timing) != 1:
         raise ValueError(
-            f"death_event: no stage_predictions row for physical_embryo_id {phys!r} at "
-            f"time_index {death_d} (the called-death frame). stage_predictions is required for "
-            "death_event."
+            f"death_event: expected exactly one frame-timing row for well_id {well!r} at "
+            f"time_index {death_d}, found {len(timing)}."
         )
-    return float(match["predicted_stage_hpf"].iloc[0])
+
+    plate = plate_metadata_df[
+        (plate_metadata_df["experiment_id"] == exp)
+        & (plate_metadata_df["well_id"] == well)
+    ]
+    if len(plate) != 1:
+        raise ValueError(
+            f"death_event: expected exactly one plate_metadata row for well_id {well!r}, "
+            f"found {len(plate)}."
+        )
+    plate_row = plate.iloc[0]
+    if "start_age_hpf" not in plate_row.index or pd.isna(plate_row["start_age_hpf"]):
+        return float("nan")
+    if "temperature" not in plate_row.index or pd.isna(plate_row["temperature"]):
+        return float("nan")
+    return predict_stage_hpf(
+        float(plate_row["start_age_hpf"]),
+        float(timing["elapsed_time_s"].iloc[0]),
+        float(plate_row["temperature"]),
+    )

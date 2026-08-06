@@ -1,0 +1,4 @@
+comparison,n_pairs,mean_abs_cos,n_contrasts,p_vs_between,p_vs_random
+within target,49,0.429303583407864,16,0.540400805962983,0.07798316979326111
+between targets,71,0.43706934479387194,16,,0.03118995627481842
+random 5D floor,20000,0.37770255501409733,16,,

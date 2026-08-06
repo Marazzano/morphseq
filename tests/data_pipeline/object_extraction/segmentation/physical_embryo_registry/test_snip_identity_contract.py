@@ -177,6 +177,8 @@ def _snip_inventory_row(**kw):
         "crop_y_max_px": 575,
         "crop_width_px": 256,
         "crop_height_px": 576,
+        "source_micrometers_per_pixel": 7.8,
+        "snip_micrometers_per_pixel": 6.5,
         "is_valid_snip": True,
         "error_message": "",
     })

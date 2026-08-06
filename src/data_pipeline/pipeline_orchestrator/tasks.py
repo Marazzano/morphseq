@@ -27,6 +27,10 @@ from data_pipeline.acquisition.metadata_ingest.frame_inventory import (
     merge_frame_inventory_shards,
     validate_frame_inventory,
 )
+from data_pipeline.object_extraction.snip_processing.defaults import (
+    DEFAULT_BLEND_RADIUS_UM,
+    DEFAULT_TARGET_PIXEL_SIZE_UM,
+)
 
 
 def _parse_bool(value: str | bool) -> bool:
@@ -477,6 +481,7 @@ def cmd_snip_processing(args: argparse.Namespace) -> None:
         output_width_px=args.output_width_px,
         background_noise_scale=args.background_noise_scale,
         blend_radius_um=args.blend_radius_um,
+        apply_clahe=_parse_bool(args.apply_clahe),
     )
 
 
@@ -708,6 +713,7 @@ def cmd_surface_area_qc(args: argparse.Namespace) -> None:
         mask_geometry_csv=args.mask_geometry_csv,
         stage_predictions_csv=args.stage_predictions_csv,
         snip_inventory_csv=args.snip_inventory_csv,
+        frame_inventory_csv=args.frame_inventory_csv,
         physical_embryo_registry_csv=args.physical_embryo_registry_csv,
         output_csv=args.output_csv,
     )
@@ -864,7 +870,7 @@ def cmd_death_detection(args: argparse.Namespace) -> None:
     run_death_detection(
         fraction_alive_csv=args.fraction_alive_csv,
         frame_inventory_csv=args.frame_inventory_csv,
-        stage_predictions_csv=args.stage_predictions_csv,
+        plate_metadata_csv=args.plate_metadata_csv,
         snip_inventory_csv=args.snip_inventory_csv,
         physical_embryo_registry_csv=args.physical_embryo_registry_csv,
         output_qc_csv=args.output_qc_csv,
@@ -1134,6 +1140,24 @@ def cmd_frame_masks(args: argparse.Namespace) -> None:
     prompt_detections.to_csv(args.prompt_seeds_csv, index=False)
 
 
+def cmd_ingest_precomputed_frame_masks(args: argparse.Namespace) -> None:
+    """Materialize one authoritative precomputed frame-mask shard without model inference."""
+
+    from data_pipeline.object_extraction.segmentation.precomputed_frame_masks import (
+        write_precomputed_frame_masks_for_well,
+    )
+
+    write_precomputed_frame_masks_for_well(
+        precomputed_frame_masks_csv=args.precomputed_frame_masks_csv,
+        frame_inventory_csv=args.frame_inventory_csv,
+        frame_detections_csv=args.frame_detections_csv,
+        well_id=str(args.well_id),
+        output_csv=args.output_csv,
+        detection_audit_csv=args.prompt_seeds_csv,
+        require_detection_audit=_parse_bool(args.require_detection_audit),
+    )
+
+
 def cmd_build_physical_embryo_registry(args: argparse.Namespace) -> None:
     """Mint the per-well physical_embryo_registry shard from a per-well frame_masks shard.
 
@@ -1237,7 +1261,27 @@ def cmd_merge_latent_embeddings(args: argparse.Namespace) -> None:
         validate_latent_embeddings,
     )
 
-    merged = pd.concat([pd.read_parquet(p) for p in args.inputs], ignore_index=True)
+    inputs = list(args.inputs or [])
+    if not inputs:
+        if args.data_root is None or not args.experiment_id:
+            raise ValueError(
+                "merge-latent-embeddings requires either --inputs or both "
+                "--data-root and --experiment-id"
+            )
+        from data_pipeline.pipeline_orchestrator.orchestration.well_runner import (
+            collect_well_shard_paths,
+        )
+
+        inputs = collect_well_shard_paths(
+            args.data_root,
+            "latent_embeddings",
+            "latents",
+            args.experiment_id,
+        )
+    if not inputs:
+        raise ValueError("merge-latent-embeddings found no validated per-well shards")
+
+    merged = pd.concat([pd.read_parquet(p) for p in inputs], ignore_index=True)
     validate_latent_embeddings(merged, source=str(args.output_parquet))
     args.output_parquet.parent.mkdir(parents=True, exist_ok=True)
     merged.to_parquet(args.output_parquet, index=False)
@@ -1456,11 +1500,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_sp.add_argument("--output-csv", type=Path, required=True)
     p_sp.add_argument("--snips-dir", type=Path, required=True)
     p_sp.add_argument("--output-root", type=Path, required=True)
-    p_sp.add_argument("--target-pixel-size-um", type=float, default=7.8)
+    p_sp.add_argument(
+        "--target-pixel-size-um", type=float, default=DEFAULT_TARGET_PIXEL_SIZE_UM
+    )
     p_sp.add_argument("--output-height-px", type=int, default=576)
     p_sp.add_argument("--output-width-px", type=int, default=256)
     p_sp.add_argument("--background-noise-scale", type=float, default=0.1)
-    p_sp.add_argument("--blend-radius-um", type=float, default=20.0)
+    p_sp.add_argument("--blend-radius-um", type=float, default=DEFAULT_BLEND_RADIUS_UM)
+    p_sp.add_argument(
+        "--apply-clahe",
+        default="true",
+        help="Apply legacy CLAHE before background blending (true/false; default true).",
+    )
     p_sp.set_defaults(func=cmd_snip_processing)
 
     p_mg = sub.add_parser("mask-geometry")
@@ -1556,6 +1607,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_saqc.add_argument("--mask-geometry-csv", type=Path, required=True)
     p_saqc.add_argument("--stage-predictions-csv", type=Path, required=True)
     p_saqc.add_argument("--snip-inventory-csv", type=Path, required=True)
+    p_saqc.add_argument("--frame-inventory-csv", type=Path, required=True)
     p_saqc.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
     p_saqc.add_argument("--output-csv", type=Path, required=True)
     p_saqc.set_defaults(func=cmd_surface_area_qc)
@@ -1617,7 +1669,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_dd = sub.add_parser("death-detection")
     p_dd.add_argument("--fraction-alive-csv", type=Path, required=True)
     p_dd.add_argument("--frame-inventory-csv", type=Path, required=True)
-    p_dd.add_argument("--stage-predictions-csv", type=Path, required=True)
+    p_dd.add_argument("--plate-metadata-csv", type=Path, required=True)
     p_dd.add_argument("--snip-inventory-csv", type=Path, required=True)
     p_dd.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
     p_dd.add_argument("--output-qc-csv", type=Path, required=True)
@@ -1706,6 +1758,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_fm.add_argument("--device", default="cuda")
     p_fm.set_defaults(func=cmd_frame_masks)
 
+    p_fm_precomputed = sub.add_parser("ingest-precomputed-frame-masks")
+    p_fm_precomputed.add_argument(
+        "--precomputed-frame-masks-csv", type=Path, required=True
+    )
+    p_fm_precomputed.add_argument("--frame-inventory-csv", type=Path, required=True)
+    p_fm_precomputed.add_argument("--frame-detections-csv", type=Path)
+    p_fm_precomputed.add_argument("--well-id", required=True)
+    p_fm_precomputed.add_argument("--output-csv", type=Path, required=True)
+    p_fm_precomputed.add_argument("--prompt-seeds-csv", type=Path, required=True)
+    p_fm_precomputed.add_argument("--require-detection-audit", default="true")
+    p_fm_precomputed.set_defaults(func=cmd_ingest_precomputed_frame_masks)
+
     p_fm_validate = sub.add_parser("validate-frame-masks")
     p_fm_validate.add_argument("--input-csv", type=Path, required=True)
     p_fm_validate.add_argument("--frame-inventory-csv", type=Path, required=True)
@@ -1748,7 +1812,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_le_validate.set_defaults(func=cmd_validate_latent_embeddings)
 
     p_le_merge = sub.add_parser("merge-latent-embeddings")
-    p_le_merge.add_argument("--inputs", type=Path, nargs="+", required=True)
+    p_le_merge.add_argument("--inputs", type=Path, nargs="+")
+    p_le_merge.add_argument("--data-root", type=Path)
+    p_le_merge.add_argument("--experiment-id")
     p_le_merge.add_argument("--output-parquet", type=Path, required=True)
     p_le_merge.set_defaults(func=cmd_merge_latent_embeddings)
 

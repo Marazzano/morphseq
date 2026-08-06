@@ -1,0 +1,590 @@
+{
+  "experiment_id": "20250612_30hpf_ctrl_atf6",
+  "checkpoint": "20241107_ds_sweep01_optimum",
+  "n_shared_wells": 93,
+  "variant_definition": {
+    "render_6p5_r75": {
+      "target_pixel_size_um": 6.5,
+      "blend_radius_um": 75.0,
+      "all_other_inputs": "current source/current mask/current background/current code"
+    },
+    "render_7p8_r75": {
+      "target_pixel_size_um": 7.8,
+      "blend_radius_um": 75.0,
+      "all_other_inputs": "current source/current mask/current background/current code"
+    },
+    "render_6p5_r20": {
+      "target_pixel_size_um": 6.5,
+      "blend_radius_um": 20.0,
+      "all_other_inputs": "current source/current mask/current background/current code"
+    },
+    "render_7p8_r20": {
+      "target_pixel_size_um": 7.8,
+      "blend_radius_um": 20.0,
+      "all_other_inputs": "current source/current mask/current background/current code"
+    }
+  },
+  "column_mapping": {
+    "legacy_0_19": "z_mu_n_00..z_mu_n_19 -> z_mu_00..z_mu_19",
+    "legacy_20_99": "z_mu_b_20..z_mu_b_99 -> z_mu_20..z_mu_99",
+    "mapping_rule": "numeric suffix is the direct encoder-output index"
+  },
+  "controls": {
+    "legacy_stored_reencode_vs_legacy_csv": {
+      "rmse_raw_latent": 0.00012284110203854932,
+      "mae_raw_latent": 9.637358935896458e-05,
+      "max_abs_error_raw_latent": 0.000685315760580063,
+      "median_per_dimension_correlation": 0.9999996872998244,
+      "min_per_dimension_correlation": 0.9999949930765613,
+      "identity_is_argmax_count": 100
+    },
+    "current_stored_reencode_vs_analysis_ready": {
+      "rmse_raw_latent": 2.463782322572377e-07,
+      "mae_raw_latent": 1.949642763374917e-07,
+      "max_abs_error_raw_latent": 1.0728836059570312e-06,
+      "median_per_dimension_correlation": 0.9999999999981053,
+      "min_per_dimension_correlation": 0.999999999952355,
+      "identity_is_argmax_count": 100
+    },
+    "render_7p8_r20_vs_current_stored_reencode": {
+      "rmse_raw_latent": 0.0,
+      "mae_raw_latent": 0.0,
+      "max_abs_error_raw_latent": 0.0,
+      "median_per_dimension_correlation": 1.0,
+      "min_per_dimension_correlation": 0.999999999999999,
+      "identity_is_argmax_count": 100
+    }
+  },
+  "distance_to_legacy": {
+    "legacy_stored": {
+      "all_100": {
+        "standardized_rmse": 0.0014876943230571168,
+        "median_per_dimension_correlation": 0.9999996872998246,
+        "per_dimension_correlation_q05_q95": [
+          0.9999972620075879,
+          0.9999999210855566
+        ],
+        "n_dimensions_correlation_ge_0p9": 100,
+        "pairwise_distance_pearson": 0.9999997235216428,
+        "pairwise_distance_spearman": 0.9999993786408853,
+        "nearest_reference_self_match_fraction": 1.0,
+        "median_sample_cosine_similarity": 0.999998662841463,
+        "legacy_pc_score_correlations_first_10": [
+          0.9999999150500319,
+          0.9999999057437794,
+          0.9999996087356489,
+          0.999998787204148,
+          0.9999993238538255,
+          0.9999996038146884,
+          0.9999991998606842,
+          0.9999991723216451,
+          0.9999991224636149,
+          0.9999986947494387
+        ],
+        "temperature_r2": 0.5063787548701196
+      },
+      "biological_20_99": {
+        "standardized_rmse": 0.0011042801594088798,
+        "median_per_dimension_correlation": 0.9999997050664905,
+        "per_dimension_correlation_q05_q95": [
+          0.9999988783324373,
+          0.9999998901654473
+        ],
+        "n_dimensions_correlation_ge_0p9": 80,
+        "pairwise_distance_pearson": 0.9999997158367759,
+        "pairwise_distance_spearman": 0.9999993858446047,
+        "nearest_reference_self_match_fraction": 1.0,
+        "median_sample_cosine_similarity": 0.999999319843426,
+        "legacy_pc_score_correlations_first_10": [
+          0.9999999065704543,
+          0.9999998994484578,
+          0.9999995894166035,
+          0.9999986795932191,
+          0.9999992066702522,
+          0.99999969527201,
+          0.999998830263977,
+          0.9999982959520088,
+          0.999996784715554,
+          0.9999959226121184
+        ],
+        "temperature_r2": 0.582001555430696
+      },
+      "nuisance_0_19": {
+        "standardized_rmse": 0.0024876561885488636,
+        "median_per_dimension_correlation": 0.9999976662413105,
+        "per_dimension_correlation_q05_q95": [
+          0.9999951691297607,
+          0.9999999659664094
+        ],
+        "n_dimensions_correlation_ge_0p9": 20,
+        "pairwise_distance_pearson": 0.9999984445015974,
+        "pairwise_distance_spearman": 0.9999968682213144,
+        "nearest_reference_self_match_fraction": 1.0,
+        "median_sample_cosine_similarity": 0.999996632189279,
+        "legacy_pc_score_correlations_first_10": [
+          0.9999996540128704,
+          0.999999201473168,
+          0.9999991232899219,
+          0.9999990651696937,
+          0.9999988818652911,
+          0.9999987652887385,
+          0.9999975630993589,
+          0.999998154286438,
+          0.9999962645004828,
+          0.9999962805317255
+        ],
+        "temperature_r2": 0.20381674365212243
+      }
+    },
+    "render_6p5_r75": {
+      "all_100": {
+        "standardized_rmse": 1.0188065991326933,
+        "median_per_dimension_correlation": 0.7715399015104996,
+        "per_dimension_correlation_q05_q95": [
+          0.5346121524742016,
+          0.9018414373513471
+        ],
+        "n_dimensions_correlation_ge_0p9": 6,
+        "pairwise_distance_pearson": 0.7751815358644109,
+        "pairwise_distance_spearman": 0.7638230282063843,
+        "nearest_reference_self_match_fraction": 0.25806451612903225,
+        "median_sample_cosine_similarity": 0.6859212703824421,
+        "legacy_pc_score_correlations_first_10": [
+          0.8465418559971811,
+          0.7155103216247014,
+          0.8227856708841308,
+          0.8228882850217225,
+          0.8325132195766646,
+          0.7130622086150018,
+          0.8099799202311536,
+          0.5039633221340071,
+          0.8308500357101007,
+          0.6467996892874324
+        ],
+        "temperature_r2": 0.28533787250624676
+      },
+      "biological_20_99": {
+        "standardized_rmse": 0.9752928359233191,
+        "median_per_dimension_correlation": 0.7954426544607327,
+        "per_dimension_correlation_q05_q95": [
+          0.6491586247904448,
+          0.9018414373513471
+        ],
+        "n_dimensions_correlation_ge_0p9": 5,
+        "pairwise_distance_pearson": 0.7741177195353776,
+        "pairwise_distance_spearman": 0.7597619545458644,
+        "nearest_reference_self_match_fraction": 0.12903225806451613,
+        "median_sample_cosine_similarity": 0.7574903816994426,
+        "legacy_pc_score_correlations_first_10": [
+          0.848438634383498,
+          0.7040761287109711,
+          0.8161851746573455,
+          0.8075719600384139,
+          0.7573782889218933,
+          0.8503874218725437,
+          0.6602132687043184,
+          0.7491138044120362,
+          0.4959123138770103,
+          0.392801080705865
+        ],
+        "temperature_r2": 0.33057109173101945
+      },
+      "nuisance_0_19": {
+        "standardized_rmse": 1.1768814591827939,
+        "median_per_dimension_correlation": 0.6244386769354087,
+        "per_dimension_correlation_q05_q95": [
+          0.30021778102641644,
+          0.8844464095677865
+        ],
+        "n_dimensions_correlation_ge_0p9": 1,
+        "pairwise_distance_pearson": 0.6843835686489439,
+        "pairwise_distance_spearman": 0.599627222664864,
+        "nearest_reference_self_match_fraction": 0.3655913978494624,
+        "median_sample_cosine_similarity": 0.5306615280791114,
+        "legacy_pc_score_correlations_first_10": [
+          0.4530991244170876,
+          0.6556181939973559,
+          0.8249607881272691,
+          0.7962757520202051,
+          0.753344617895585,
+          0.7185950745998538,
+          0.7027785725982427,
+          0.5010130128571618,
+          0.6456126486270031,
+          0.4930936100804217
+        ],
+        "temperature_r2": 0.10508249875347828
+      }
+    },
+    "render_7p8_r75": {
+      "all_100": {
+        "standardized_rmse": 1.1544718528900038,
+        "median_per_dimension_correlation": 0.6297758667808403,
+        "per_dimension_correlation_q05_q95": [
+          0.08783187194285096,
+          0.8330743313262703
+        ],
+        "n_dimensions_correlation_ge_0p9": 2,
+        "pairwise_distance_pearson": 0.6163715188471941,
+        "pairwise_distance_spearman": 0.6217663204214604,
+        "nearest_reference_self_match_fraction": 0.0967741935483871,
+        "median_sample_cosine_similarity": 0.5389144680767691,
+        "legacy_pc_score_correlations_first_10": [
+          0.8509734863539905,
+          0.24704099437035612,
+          0.7875211366754326,
+          0.6283987230477206,
+          0.6879267677759379,
+          0.2968564453715188,
+          0.5770736715170807,
+          0.3210113997599338,
+          0.7243975518380437,
+          0.4490199022228325
+        ],
+        "temperature_r2": 0.29385438956008525
+      },
+      "biological_20_99": {
+        "standardized_rmse": 1.094315973147281,
+        "median_per_dimension_correlation": 0.6794802358707721,
+        "per_dimension_correlation_q05_q95": [
+          0.22288156297636774,
+          0.8330743313262703
+        ],
+        "n_dimensions_correlation_ge_0p9": 1,
+        "pairwise_distance_pearson": 0.5997578981635899,
+        "pairwise_distance_spearman": 0.6065591869491277,
+        "nearest_reference_self_match_fraction": 0.053763440860215055,
+        "median_sample_cosine_similarity": 0.6524823564163515,
+        "legacy_pc_score_correlations_first_10": [
+          0.8471515858208929,
+          0.24213049681766338,
+          0.7692149609932319,
+          0.5995617005194652,
+          0.6257014294045224,
+          0.6667135423222272,
+          0.4439746715080666,
+          0.5525635184314757,
+          -0.20041677197538443,
+          0.09895038937523623
+        ],
+        "temperature_r2": 0.3198668482068884
+      },
+      "nuisance_0_19": {
+        "standardized_rmse": 1.3689106980498296,
+        "median_per_dimension_correlation": 0.2575648719038204,
+        "per_dimension_correlation_q05_q95": [
+          -0.136227785283822,
+          0.7623562399911533
+        ],
+        "n_dimensions_correlation_ge_0p9": 1,
+        "pairwise_distance_pearson": 0.5138897675169312,
+        "pairwise_distance_spearman": 0.39556319117249084,
+        "nearest_reference_self_match_fraction": 0.053763440860215055,
+        "median_sample_cosine_similarity": 0.27660415867296095,
+        "legacy_pc_score_correlations_first_10": [
+          0.06325897184510221,
+          0.25102816164737873,
+          0.5215449314496142,
+          0.5582775064736055,
+          0.6142343449371981,
+          0.6296080963632746,
+          0.3873473815376843,
+          0.12614630959755724,
+          0.4167198332020106,
+          0.07262248671244173
+        ],
+        "temperature_r2": 0.17256418692476072
+      }
+    },
+    "render_6p5_r20": {
+      "all_100": {
+        "standardized_rmse": 0.8954887984341762,
+        "median_per_dimension_correlation": 0.8014415581915219,
+        "per_dimension_correlation_q05_q95": [
+          0.5722755540767157,
+          0.9110982601430557
+        ],
+        "n_dimensions_correlation_ge_0p9": 10,
+        "pairwise_distance_pearson": 0.756392641311542,
+        "pairwise_distance_spearman": 0.7790273697010074,
+        "nearest_reference_self_match_fraction": 0.5483870967741935,
+        "median_sample_cosine_similarity": 0.7598047895343663,
+        "legacy_pc_score_correlations_first_10": [
+          0.8605956555860391,
+          0.825829835497699,
+          0.7955450038335381,
+          0.8281952411513506,
+          0.7938875556552184,
+          0.7874965851890167,
+          0.8184654524061665,
+          0.49758445415790703,
+          0.8463766485609534,
+          0.5203683689119141
+        ],
+        "temperature_r2": 0.30639679526892477
+      },
+      "biological_20_99": {
+        "standardized_rmse": 0.7817501943499211,
+        "median_per_dimension_correlation": 0.816422489243861,
+        "per_dimension_correlation_q05_q95": [
+          0.7148795454595,
+          0.9073383035974818
+        ],
+        "n_dimensions_correlation_ge_0p9": 7,
+        "pairwise_distance_pearson": 0.7690069047527283,
+        "pairwise_distance_spearman": 0.7757129623212964,
+        "nearest_reference_self_match_fraction": 0.3548387096774194,
+        "median_sample_cosine_similarity": 0.8419381458756471,
+        "legacy_pc_score_correlations_first_10": [
+          0.856558804710218,
+          0.8185659122405766,
+          0.7784355793218147,
+          0.807896756419929,
+          0.744193837149632,
+          0.8260527790491539,
+          0.7631814092207734,
+          0.6984584554056916,
+          0.5929510380702905,
+          0.4489018953716669
+        ],
+        "temperature_r2": 0.358930773301062
+      },
+      "nuisance_0_19": {
+        "standardized_rmse": 1.2509866007039663,
+        "median_per_dimension_correlation": 0.6319594524672509,
+        "per_dimension_correlation_q05_q95": [
+          0.28754310089237456,
+          0.9282461146786606
+        ],
+        "n_dimensions_correlation_ge_0p9": 3,
+        "pairwise_distance_pearson": 0.6958385926590833,
+        "pairwise_distance_spearman": 0.624130225383131,
+        "nearest_reference_self_match_fraction": 0.5806451612903226,
+        "median_sample_cosine_similarity": 0.5693119912393126,
+        "legacy_pc_score_correlations_first_10": [
+          0.5794490629229182,
+          0.5814297216464241,
+          0.82859219646592,
+          0.8224903251911002,
+          0.6754978721126008,
+          0.7954818427493664,
+          0.7208721831717686,
+          0.6122355516359981,
+          0.5746723584145413,
+          0.6368285019444815
+        ],
+        "temperature_r2": 0.1609428576476643
+      }
+    },
+    "render_7p8_r20": {
+      "all_100": {
+        "standardized_rmse": 1.0092283106478552,
+        "median_per_dimension_correlation": 0.687460760162471,
+        "per_dimension_correlation_q05_q95": [
+          0.12774525694110261,
+          0.8512804056916882
+        ],
+        "n_dimensions_correlation_ge_0p9": 2,
+        "pairwise_distance_pearson": 0.659983934275464,
+        "pairwise_distance_spearman": 0.6613691159819934,
+        "nearest_reference_self_match_fraction": 0.1827956989247312,
+        "median_sample_cosine_similarity": 0.5992512298014504,
+        "legacy_pc_score_correlations_first_10": [
+          0.8780133224543143,
+          0.4748064455309316,
+          0.636293543094772,
+          0.7262807666978747,
+          0.7150064993277917,
+          0.4863808193424343,
+          0.6586758809426637,
+          0.35966121775712656,
+          0.7604973463959218,
+          0.33490033227205046
+        ],
+        "temperature_r2": 0.31313716941590797
+      },
+      "biological_20_99": {
+        "standardized_rmse": 0.9099252773444098,
+        "median_per_dimension_correlation": 0.715307619085662,
+        "per_dimension_correlation_q05_q95": [
+          0.42329977943094077,
+          0.8512804056916882
+        ],
+        "n_dimensions_correlation_ge_0p9": 1,
+        "pairwise_distance_pearson": 0.6457825651549338,
+        "pairwise_distance_spearman": 0.650691655204159,
+        "nearest_reference_self_match_fraction": 0.13978494623655913,
+        "median_sample_cosine_similarity": 0.7392962490793851,
+        "legacy_pc_score_correlations_first_10": [
+          0.871040111094094,
+          0.4783450568548606,
+          0.6047712434552199,
+          0.6856589334589385,
+          0.6926371510109637,
+          0.6934316506176975,
+          0.48916470083591107,
+          0.4764377968712679,
+          0.03350782616404282,
+          0.09257277542753478
+        ],
+        "temperature_r2": 0.35274358752438145
+      },
+      "nuisance_0_19": {
+        "standardized_rmse": 1.3344859960540667,
+        "median_per_dimension_correlation": 0.3486245362313408,
+        "per_dimension_correlation_q05_q95": [
+          -0.016215138996714694,
+          0.7853434269663574
+        ],
+        "n_dimensions_correlation_ge_0p9": 1,
+        "pairwise_distance_pearson": 0.5428323831633989,
+        "pairwise_distance_spearman": 0.4026606609096694,
+        "nearest_reference_self_match_fraction": 0.08602150537634409,
+        "median_sample_cosine_similarity": 0.32069333694428365,
+        "legacy_pc_score_correlations_first_10": [
+          0.28206883775035757,
+          0.25127659765242916,
+          0.6668884114356978,
+          0.719546850740818,
+          0.6041688089347307,
+          0.573853631524978,
+          0.44865629693151843,
+          0.27105895323836326,
+          0.36671788546870004,
+          0.05952027207100266
+        ],
+        "temperature_r2": 0.16792600478200084
+      }
+    },
+    "current_stored": {
+      "all_100": {
+        "standardized_rmse": 1.0092283106478552,
+        "median_per_dimension_correlation": 0.687460760162471,
+        "per_dimension_correlation_q05_q95": [
+          0.12774525694110261,
+          0.8512804056916882
+        ],
+        "n_dimensions_correlation_ge_0p9": 2,
+        "pairwise_distance_pearson": 0.659983934275464,
+        "pairwise_distance_spearman": 0.6613691159819934,
+        "nearest_reference_self_match_fraction": 0.1827956989247312,
+        "median_sample_cosine_similarity": 0.5992512298014504,
+        "legacy_pc_score_correlations_first_10": [
+          0.8780133224543143,
+          0.4748064455309316,
+          0.636293543094772,
+          0.7262807666978747,
+          0.7150064993277917,
+          0.4863808193424343,
+          0.6586758809426637,
+          0.35966121775712656,
+          0.7604973463959218,
+          0.33490033227205046
+        ],
+        "temperature_r2": 0.31313716941590797
+      },
+      "biological_20_99": {
+        "standardized_rmse": 0.9099252773444098,
+        "median_per_dimension_correlation": 0.715307619085662,
+        "per_dimension_correlation_q05_q95": [
+          0.42329977943094077,
+          0.8512804056916882
+        ],
+        "n_dimensions_correlation_ge_0p9": 1,
+        "pairwise_distance_pearson": 0.6457825651549338,
+        "pairwise_distance_spearman": 0.650691655204159,
+        "nearest_reference_self_match_fraction": 0.13978494623655913,
+        "median_sample_cosine_similarity": 0.7392962490793851,
+        "legacy_pc_score_correlations_first_10": [
+          0.871040111094094,
+          0.4783450568548606,
+          0.6047712434552199,
+          0.6856589334589385,
+          0.6926371510109637,
+          0.6934316506176975,
+          0.48916470083591107,
+          0.4764377968712679,
+          0.03350782616404282,
+          0.09257277542753478
+        ],
+        "temperature_r2": 0.35274358752438145
+      },
+      "nuisance_0_19": {
+        "standardized_rmse": 1.3344859960540667,
+        "median_per_dimension_correlation": 0.3486245362313408,
+        "per_dimension_correlation_q05_q95": [
+          -0.016215138996714694,
+          0.7853434269663574
+        ],
+        "n_dimensions_correlation_ge_0p9": 1,
+        "pairwise_distance_pearson": 0.5428323831633989,
+        "pairwise_distance_spearman": 0.4026606609096694,
+        "nearest_reference_self_match_fraction": 0.08602150537634409,
+        "median_sample_cosine_similarity": 0.32069333694428365,
+        "legacy_pc_score_correlations_first_10": [
+          0.28206883775035757,
+          0.25127659765242916,
+          0.6668884114356978,
+          0.719546850740818,
+          0.6041688089347307,
+          0.573853631524978,
+          0.44865629693151843,
+          0.27105895323836326,
+          0.36671788546870004,
+          0.05952027207100266
+        ],
+        "temperature_r2": 0.16792600478200084
+      }
+    }
+  },
+  "controlled_contrasts": {
+    "scale_at_legacy_radius__6p5r75_to_7p8r75": {
+      "standardized_rms_change": 0.7207508065122324,
+      "median_sample_rms_change": 0.6606024364159627,
+      "pairwise_distance_geometry_correlation": 0.7848052018424005,
+      "median_per_dimension_correlation": 0.8542500376506437
+    },
+    "radius_at_legacy_scale__6p5r75_to_6p5r20": {
+      "standardized_rms_change": 0.5675738194899158,
+      "median_sample_rms_change": 0.49454146386440795,
+      "pairwise_distance_geometry_correlation": 0.8972597669416524,
+      "median_per_dimension_correlation": 0.9238125476925592
+    },
+    "scale_at_current_radius__6p5r20_to_7p8r20": {
+      "standardized_rms_change": 0.7804120265371954,
+      "median_sample_rms_change": 0.7106720622290412,
+      "pairwise_distance_geometry_correlation": 0.8204140327072239,
+      "median_per_dimension_correlation": 0.838661824561473
+    },
+    "radius_at_current_scale__7p8r75_to_7p8r20": {
+      "standardized_rms_change": 0.5287096802847909,
+      "median_sample_rms_change": 0.4630787685389069,
+      "pairwise_distance_geometry_correlation": 0.9024058419510272,
+      "median_per_dimension_correlation": 0.9251496161096111
+    },
+    "both_knobs__6p5r75_to_7p8r20": {
+      "standardized_rms_change": 0.7900621774109349,
+      "median_sample_rms_change": 0.652747842151809,
+      "pairwise_distance_geometry_correlation": 0.80644015338252,
+      "median_per_dimension_correlation": 0.8387551515905785
+    }
+  },
+  "factorial_decomposition": {
+    "standardized_rms_effect": {
+      "scale_6p5_to_7p8_at_r75": 0.7207508065122324,
+      "radius_75_to_20_at_6p5": 0.5675738194899158,
+      "total_legacy_knobs_to_current_knobs": 0.7900621774109349,
+      "factorial_interaction": 0.41939342035617466
+    },
+    "effect_norm_ratio_to_total": {
+      "scale": 0.9122709922327398,
+      "radius": 0.7183913313631565,
+      "interaction": 0.5308359675317499
+    },
+    "effect_vector_cosine": {
+      "scale_vs_total": 0.7587710310345942,
+      "radius_vs_total": 0.37609428758560953,
+      "scale_vs_radius": -0.10815479363058576
+    }
+  }
+}

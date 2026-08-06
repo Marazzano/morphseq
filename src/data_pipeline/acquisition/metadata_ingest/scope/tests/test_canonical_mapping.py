@@ -20,6 +20,10 @@ def test_to_canonical_returns_expected_value():
     assert YX1_CHANNEL_MAP.to_canonical("EYES - Dia") == "BF"
 
 
+def test_yx1_celesta_473_maps_to_gfp():
+    assert YX1_CHANNEL_MAP.to_canonical("Celesta 473") == "GFP"
+
+
 def test_to_canonical_rejects_unmapped_raw_value():
     with pytest.raises(ValueError, match="No mapping for raw channel"):
         YX1_CHANNEL_MAP.to_canonical("EYES - Cy5")

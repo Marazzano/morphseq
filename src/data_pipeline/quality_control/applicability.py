@@ -15,6 +15,8 @@ ALLOWED_QC_APPLICABILITY: frozenset[str] = frozenset(
 )
 
 FLAG_APPLICABILITY_COLUMNS: dict[str, str] = {
+    "viability_dead_flag": "death_detection_qc_applicability",
+    "persistence_dead_flag": "death_detection_qc_applicability",
     "sa_outlier_flag": "surface_area_qc_applicability",
     "focus_flag": "focus_qc_applicability",
     "motion_blur_flag": "motion_blur_qc_applicability",

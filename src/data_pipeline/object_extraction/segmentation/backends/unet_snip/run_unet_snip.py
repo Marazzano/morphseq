@@ -6,6 +6,7 @@ Step 2 will add FishModelSnipPredictor in model_loader.py.
 
 from __future__ import annotations
 
+import os
 import traceback
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -28,6 +29,15 @@ AuxiliaryMaskPredictor = Callable[[np.ndarray], np.ndarray]
 
 UNET_SNIP_BACKEND_LABEL = "unet_snip"
 AUXILIARY_MASK_FORMAT = "png"
+
+
+def _is_existing_path(value: object) -> bool:
+    """Return whether ``value`` is a nonblank, path-like existing path."""
+    if not isinstance(value, (str, os.PathLike)):
+        return False
+    if isinstance(value, str) and not value.strip():
+        return False
+    return Path(value).exists()
 
 
 def run_auxiliary_mask_predictors_for_snip(
@@ -89,8 +99,7 @@ def run_unet_for_snip_inventory(
 
     valid_snips = snip_inventory[
         snip_inventory["is_valid_snip"].astype(bool)
-        & snip_inventory["processed_snip_path"].notnull()
-        & snip_inventory["processed_snip_path"].apply(lambda p: Path(p).exists() if p else False)
+        & snip_inventory["processed_snip_path"].map(_is_existing_path)
     ]
 
     rows: list[dict] = []

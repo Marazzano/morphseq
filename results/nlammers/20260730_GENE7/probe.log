@@ -1,0 +1,40 @@
+Loading R/4.4.1
+  Loading requirement: hdf5/1.14.3-cxxenabled geos/3.13.0 gdal/3.9.2
+    flexiblas/3.4.4 proj/9.4.1
+covariates: 553 embryos across 48 cohorts
+loading CDS (8.4 GB -- expect this to dominate)...
+  [load_cds] 338.9 s
+  cds: 31551 genes x 1894242 cells
+  dropping 227 cells with NA cell_type
+  cds embryos 651 | covariates 553 | shared 535
+
+*** RUNTIME PROBE: 1 cohort(s) only ***
+fitting 1 cohort model(s): ~ cohort_PC1 + cohort_PC2
+  vhat_method=bootstrap  pln_num_penalties=1
+
+=== atf6 | 24C | 24hpf ===
+  10 embryos
+  [ccs_atf6 | 24C | 24hpf] 0.6 s
+  ccs: 226 cell groups x 10 samples
+[1] "fitting model with 4 threads"
+  [fit_atf6 | 24C | 24hpf] 1.7 s
+  wrote 678 coefficient rows
+Warning messages:
+1: In monocle3::new_cell_data_set(cell_counts_wide, cell_metadata = cds_covariates_df,  :
+  gene_metadata must contain a column verbatim named 'gene_short_name' for certain functions.
+2: In new_cell_data_set(empty_sparse_matrix(format = "C")) :
+  gene_metadata must contain a column verbatim named 'gene_short_name' for certain functions.
+
+wrote 678 coefficient rows
+status:
+
+ok 
+ 1 
+
+=== timings (s) ===
+                   stage    seconds
+1               load_cds 338.931854
+2 ccs_atf6 | 24C | 24hpf   0.601146
+3 fit_atf6 | 24C | 24hpf   1.662540
+
+outputs -> /net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/results/nlammers/20260730_GENE7/data/hooke

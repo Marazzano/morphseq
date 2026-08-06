@@ -12,13 +12,11 @@ that `output` exists and the command exited 0, not which process wrote it.
 
 WIRED (opt-in, default off), each behind a config toggle:
     frame_detections.use_model_server   -> service_grounding_dino
+    frame_masks.use_model_server        -> service_sam2
     unet_snip.use_model_server          -> service_unet_aux_masks
 
-NOT SERVED, deliberately: `latent_embeddings` (legacy VAE). It is the third step that reloads a
-model per well and it still carries EXECUTION_RUN_BATCH in the registry, but it runs on CPU, so
-there is no GPU init to amortize and no card being held idle -- the payoff is a fraction of the
-GPU cases above and does not justify a resident process. Its registry row is the stale one to fix,
-not its execution.
+NOT SERVED, deliberately: `latent_embeddings` (legacy VAE). It runs as one CPU batch per
+experiment under its Python-3.9 environment and writes the ordinary per-well shards.
 
 Socket paths come from `socket_paths.service_socket_pattern` -- read that module before touching
 one; a service/client path disagreement is a silent DAG failure and has bitten this code once.

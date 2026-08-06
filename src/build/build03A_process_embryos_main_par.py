@@ -1097,4 +1097,4 @@ if __name__ == "__main__":
     compile_embryo_stats(root, overwrite_flag=True)
 
     # print('Extracting embryo snips...')
-    extract_embryo_snips(root, par_flag=False, outscale=6.5, dl_rad_um=50, overwrite_flag=False)
+    extract_embryo_snips(root, par_flag=False, outscale=6.5, dl_rad_um=75, overwrite_flag=False)

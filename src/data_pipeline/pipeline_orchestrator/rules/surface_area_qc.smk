@@ -23,6 +23,9 @@ def _saqc_snip_inventory(experiment, *, well_id):
 def _saqc_snip_inventory_validated(experiment, *, well_id):
     return rule_validated("snip_inventory", "snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
+def _saqc_frame_inventory(experiment, *, well_id):
+    return rule_artifact("frame_inventory", "inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
+
 def _saqc_mask_geometry(experiment, *, well_id):
     return rule_artifact("mask_geometry", "mask_geometry", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
@@ -50,6 +53,7 @@ rule build_surface_area_qc_for_well:
     input:
         snip_inventory=str(_saqc_snip_inventory("{experiment}", well_id="{well_id}")),
         snip_inventory_validated=str(_saqc_snip_inventory_validated("{experiment}", well_id="{well_id}")),
+        frame_inventory=str(_saqc_frame_inventory("{experiment}", well_id="{well_id}")),
         mask_geometry=str(_saqc_mask_geometry("{experiment}", well_id="{well_id}")),
         mask_geometry_validated=str(_saqc_mask_geometry_validated("{experiment}", well_id="{well_id}")),
         stage_predictions=str(_saqc_stage_predictions("{experiment}", well_id="{well_id}")),
@@ -66,6 +70,7 @@ rule build_surface_area_qc_for_well:
           --mask-geometry-csv "{input.mask_geometry}" \
           --stage-predictions-csv "{input.stage_predictions}" \
           --snip-inventory-csv "{input.snip_inventory}" \
+          --frame-inventory-csv "{input.frame_inventory}" \
           --physical-embryo-registry-csv "{input.physical_embryo_registry}" \
           --output-csv "{output.surface_area_qc}"
         """

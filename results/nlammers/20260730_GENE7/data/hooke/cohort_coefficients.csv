@@ -1,0 +1,679 @@
+"cohort","n_embryos","cell_type","term","estimate"
+"atf6 | 24C | 24hpf",10,"(Intercept)","adaxial cell, presomitic mesoderm",2.1548026554285
+"atf6 | 24C | 24hpf",10,"cohort_PC1","adaxial cell, presomitic mesoderm",-0.226791866564809
+"atf6 | 24C | 24hpf",10,"cohort_PC2","adaxial cell, presomitic mesoderm",-0.302009342803011
+"atf6 | 24C | 24hpf",10,"(Intercept)","amacrine cell, inner nuclear layer of retina (precursor, includes horizontal precursor)",-8.24039391173186
+"atf6 | 24C | 24hpf",10,"cohort_PC1","amacrine cell, inner nuclear layer of retina (precursor, includes horizontal precursor)",-7.61075488107095
+"atf6 | 24C | 24hpf",10,"cohort_PC2","amacrine cell, inner nuclear layer of retina (precursor, includes horizontal precursor)",16.8863143699723
+"atf6 | 24C | 24hpf",10,"(Intercept)","auditory epithelial supporting cell, macula",-4.47183275521725
+"atf6 | 24C | 24hpf",10,"cohort_PC1","auditory epithelial supporting cell, macula",-6.32146539364928
+"atf6 | 24C | 24hpf",10,"cohort_PC2","auditory epithelial supporting cell, macula",4.07326058560758
+"atf6 | 24C | 24hpf",10,"(Intercept)","auditory epithelial supporting cell, semicircular canal",0.444689295308335
+"atf6 | 24C | 24hpf",10,"cohort_PC1","auditory epithelial supporting cell, semicircular canal",-0.79845412394439
+"atf6 | 24C | 24hpf",10,"cohort_PC2","auditory epithelial supporting cell, semicircular canal",0.43378566298708
+"atf6 | 24C | 24hpf",10,"(Intercept)","blastoderm cell, blastula (4-5.5 hpf)",-3.08863012726197
+"atf6 | 24C | 24hpf",10,"cohort_PC1","blastoderm cell, blastula (4-5.5 hpf)",2.06893625077859
+"atf6 | 24C | 24hpf",10,"cohort_PC2","blastoderm cell, blastula (4-5.5 hpf)",-3.48688109319628
+"atf6 | 24C | 24hpf",10,"(Intercept)","cardiac endothelial cell, endocardium",-1.62781951512926
+"atf6 | 24C | 24hpf",10,"cohort_PC1","cardiac endothelial cell, endocardium",-0.656188245085294
+"atf6 | 24C | 24hpf",10,"cohort_PC2","cardiac endothelial cell, endocardium",-4.19242206281564
+"atf6 | 24C | 24hpf",10,"(Intercept)","cardiac muscle cell, cardiac ventricle",-0.765883798990486
+"atf6 | 24C | 24hpf",10,"cohort_PC1","cardiac muscle cell, cardiac ventricle",-0.312500749197516
+"atf6 | 24C | 24hpf",10,"cohort_PC2","cardiac muscle cell, cardiac ventricle",0.665907299066267
+"atf6 | 24C | 24hpf",10,"(Intercept)","cardiac muscle cell, heart",1.58700497000247
+"atf6 | 24C | 24hpf",10,"cohort_PC1","cardiac muscle cell, heart",0.260781312979243
+"atf6 | 24C | 24hpf",10,"cohort_PC2","cardiac muscle cell, heart",0.0499087207868251
+"atf6 | 24C | 24hpf",10,"(Intercept)","cholinergic neuron, spinal cord (chgb+)",-4.47183275521725
+"atf6 | 24C | 24hpf",10,"cohort_PC1","cholinergic neuron, spinal cord (chgb+)",-6.32146539364928
+"atf6 | 24C | 24hpf",10,"cohort_PC2","cholinergic neuron, spinal cord (chgb+)",4.07326058560758
+"atf6 | 24C | 24hpf",10,"(Intercept)","cholinergic neuron, spinal cord (oprd1a+)",-0.282599381923344
+"atf6 | 24C | 24hpf",10,"cohort_PC1","cholinergic neuron, spinal cord (oprd1a+)",0.564488448033907
+"atf6 | 24C | 24hpf",10,"cohort_PC2","cholinergic neuron, spinal cord (oprd1a+)",-0.69687979988432
+"atf6 | 24C | 24hpf",10,"(Intercept)","chondrocyte, unknown (sclerotome-derived)",-2.48918972536991
+"atf6 | 24C | 24hpf",10,"cohort_PC1","chondrocyte, unknown (sclerotome-derived)",0.11259117527112
+"atf6 | 24C | 24hpf",10,"cohort_PC2","chondrocyte, unknown (sclerotome-derived)",1.67975213256363
+"atf6 | 24C | 24hpf",10,"(Intercept)","ciliated olfactory receptor neuron, olfactory organ",-1.93761420451748
+"atf6 | 24C | 24hpf",10,"cohort_PC1","ciliated olfactory receptor neuron, olfactory organ",-2.34888818010374
+"atf6 | 24C | 24hpf",10,"cohort_PC2","ciliated olfactory receptor neuron, olfactory organ",3.23661579722879
+"atf6 | 24C | 24hpf",10,"(Intercept)","cranial motor neuron, brain (differentiating)",0.0580994406422437
+"atf6 | 24C | 24hpf",10,"cohort_PC1","cranial motor neuron, brain (differentiating)",0.163804132195944
+"atf6 | 24C | 24hpf",10,"cohort_PC2","cranial motor neuron, brain (differentiating)",-1.09630066562708
+"atf6 | 24C | 24hpf",10,"(Intercept)","cranial motor neuron, hindbrain",-6.88660204064271
+"atf6 | 24C | 24hpf",10,"cohort_PC1","cranial motor neuron, hindbrain",9.49838164743736
+"atf6 | 24C | 24hpf",10,"cohort_PC2","cranial motor neuron, hindbrain",15.0405185972933
+"atf6 | 24C | 24hpf",10,"(Intercept)","cranial motor neuron, hindbrain (mX)",-4.64575176176363
+"atf6 | 24C | 24hpf",10,"cohort_PC1","cranial motor neuron, hindbrain (mX)",5.1228520120771
+"atf6 | 24C | 24hpf",10,"cohort_PC2","cranial motor neuron, hindbrain (mX)",12.4795355875485
+"atf6 | 24C | 24hpf",10,"(Intercept)","dopaminergic neuron, locus coeruleus",0.65510403457548
+"atf6 | 24C | 24hpf",10,"cohort_PC1","dopaminergic neuron, locus coeruleus",-0.112768781964085
+"atf6 | 24C | 24hpf",10,"cohort_PC2","dopaminergic neuron, locus coeruleus",0.244305141103396
+"atf6 | 24C | 24hpf",10,"(Intercept)","ecto-epithelial cell, non-neural ectoderm",4.27033992579078
+"atf6 | 24C | 24hpf",10,"cohort_PC1","ecto-epithelial cell, non-neural ectoderm",0.0669497142516433
+"atf6 | 24C | 24hpf",10,"cohort_PC2","ecto-epithelial cell, non-neural ectoderm",0.05632622622236
+"atf6 | 24C | 24hpf",10,"(Intercept)","ectodermal cell, adenohypophyseal placode",2.11724821185454
+"atf6 | 24C | 24hpf",10,"cohort_PC1","ectodermal cell, adenohypophyseal placode",0.0252437598238887
+"atf6 | 24C | 24hpf",10,"cohort_PC2","ectodermal cell, adenohypophyseal placode",0.133814107321088
+"atf6 | 24C | 24hpf",10,"(Intercept)","ectodermal cell, lateral line placode",2.35213006710054
+"atf6 | 24C | 24hpf",10,"cohort_PC1","ectodermal cell, lateral line placode",-0.507212082758804
+"atf6 | 24C | 24hpf",10,"cohort_PC2","ectodermal cell, lateral line placode",0.0338020245869141
+"atf6 | 24C | 24hpf",10,"(Intercept)","ectodermal cell, lens vesicle",2.00594021899296
+"atf6 | 24C | 24hpf",10,"cohort_PC1","ectodermal cell, lens vesicle",-0.19880230267908
+"atf6 | 24C | 24hpf",10,"cohort_PC2","ectodermal cell, lens vesicle",0.201920717719616
+"atf6 | 24C | 24hpf",10,"(Intercept)","ectodermal cell, otic placode",2.34880338052619
+"atf6 | 24C | 24hpf",10,"cohort_PC1","ectodermal cell, otic placode",-0.0946818443900479
+"atf6 | 24C | 24hpf",10,"cohort_PC2","ectodermal cell, otic placode",-0.116646523626376
+"atf6 | 24C | 24hpf",10,"(Intercept)","ectodermal cell, otic vesicle protrusion",-1.20254562634085
+"atf6 | 24C | 24hpf",10,"cohort_PC1","ectodermal cell, otic vesicle protrusion",-1.18135917028721
+"atf6 | 24C | 24hpf",10,"cohort_PC2","ectodermal cell, otic vesicle protrusion",3.08856656125852
+"atf6 | 24C | 24hpf",10,"(Intercept)","ectodermal cell, preplacodal ectoderm",3.03793424481507
+"atf6 | 24C | 24hpf",10,"cohort_PC1","ectodermal cell, preplacodal ectoderm",-0.0447511332357895
+"atf6 | 24C | 24hpf",10,"cohort_PC2","ectodermal cell, preplacodal ectoderm",-0.0694454614735986
+"atf6 | 24C | 24hpf",10,"(Intercept)","ectodermal cell, preplacodal ectoderm (10 hpf)",-8.24039391173186
+"atf6 | 24C | 24hpf",10,"cohort_PC1","ectodermal cell, preplacodal ectoderm (10 hpf)",-7.61075488107095
+"atf6 | 24C | 24hpf",10,"cohort_PC2","ectodermal cell, preplacodal ectoderm (10 hpf)",16.8863143699723
+"atf6 | 24C | 24hpf",10,"(Intercept)","ectodermal cell, spinal cord neural plate (neural plate border)",-1.94997325015712
+"atf6 | 24C | 24hpf",10,"cohort_PC1","ectodermal cell, spinal cord neural plate (neural plate border)",-1.4456824418096
+"atf6 | 24C | 24hpf",10,"cohort_PC2","ectodermal cell, spinal cord neural plate (neural plate border)",4.01409876100823
+"atf6 | 24C | 24hpf",10,"(Intercept)","endodermal cell, early pharyngeal endoderm",2.65231969172442
+"atf6 | 24C | 24hpf",10,"cohort_PC1","endodermal cell, early pharyngeal endoderm",-0.38166032269979
+"atf6 | 24C | 24hpf",10,"cohort_PC2","endodermal cell, early pharyngeal endoderm",-0.0208529055448133
+"atf6 | 24C | 24hpf",10,"(Intercept)","endodermal cell, endoderm (posterior)",1.20537365491625
+"atf6 | 24C | 24hpf",10,"cohort_PC1","endodermal cell, endoderm (posterior)",-0.373458761190222
+"atf6 | 24C | 24hpf",10,"cohort_PC2","endodermal cell, endoderm (posterior)",-0.490783253807516
+"atf6 | 24C | 24hpf",10,"(Intercept)","endodermal cell, intestinal bulb",-1.3515734950649
+"atf6 | 24C | 24hpf",10,"cohort_PC1","endodermal cell, intestinal bulb",-1.45636342130268
+"atf6 | 24C | 24hpf",10,"cohort_PC2","endodermal cell, intestinal bulb",2.49791465030346
+"atf6 | 24C | 24hpf",10,"(Intercept)","endodermal cell, liver",-0.902691670415569
+"atf6 | 24C | 24hpf",10,"cohort_PC1","endodermal cell, liver",-1.19969216836151
+"atf6 | 24C | 24hpf",10,"cohort_PC2","endodermal cell, liver",1.20738431206155
+"atf6 | 24C | 24hpf",10,"(Intercept)","endodermal cell, pancreatic epithelial bud",-1.43677068392536
+"atf6 | 24C | 24hpf",10,"cohort_PC1","endodermal cell, pancreatic epithelial bud",3.33373665338531
+"atf6 | 24C | 24hpf",10,"cohort_PC2","endodermal cell, pancreatic epithelial bud",-1.34934985088806
+"atf6 | 24C | 24hpf",10,"(Intercept)","endodermal cell, pharyngeal pouch",-0.3600113048853
+"atf6 | 24C | 24hpf",10,"cohort_PC1","endodermal cell, pharyngeal pouch",0.637762942773889
+"atf6 | 24C | 24hpf",10,"cohort_PC2","endodermal cell, pharyngeal pouch",1.96766984274149
+"atf6 | 24C | 24hpf",10,"(Intercept)","endodermal cell, pharynx",-2.58025334330856
+"atf6 | 24C | 24hpf",10,"cohort_PC1","endodermal cell, pharynx",-0.90713667062153
+"atf6 | 24C | 24hpf",10,"cohort_PC2","endodermal cell, pharynx",1.97676186550117
+"atf6 | 24C | 24hpf",10,"(Intercept)","endodermal cell, presumptive gut (posterior)",1.09410439522478
+"atf6 | 24C | 24hpf",10,"cohort_PC1","endodermal cell, presumptive gut (posterior)",0.621180745277625
+"atf6 | 24C | 24hpf",10,"cohort_PC2","endodermal cell, presumptive gut (posterior)",-0.0773063168013123
+"atf6 | 24C | 24hpf",10,"(Intercept)","endodermal cell, presumptive gut (trunk)",2.0756641602607
+"atf6 | 24C | 24hpf",10,"cohort_PC1","endodermal cell, presumptive gut (trunk)",-0.0667193190357225
+"atf6 | 24C | 24hpf",10,"cohort_PC2","endodermal cell, presumptive gut (trunk)",-0.238920834402742
+"atf6 | 24C | 24hpf",10,"(Intercept)","endothelial cell, blood island (anterior)",0.680988156164811
+"atf6 | 24C | 24hpf",10,"cohort_PC1","endothelial cell, blood island (anterior)",-1.03421156483947
+"atf6 | 24C | 24hpf",10,"cohort_PC2","endothelial cell, blood island (anterior)",0.317806244681386
+"atf6 | 24C | 24hpf",10,"(Intercept)","endothelial cell, blood island (posterior)",2.91149447211298
+"atf6 | 24C | 24hpf",10,"cohort_PC1","endothelial cell, blood island (posterior)",0.120272632444459
+"atf6 | 24C | 24hpf",10,"cohort_PC2","endothelial cell, blood island (posterior)",-0.288523808922661
+"atf6 | 24C | 24hpf",10,"(Intercept)","endothelial cell, blood vessel endothelium",1.55453971439458
+"atf6 | 24C | 24hpf",10,"cohort_PC1","endothelial cell, blood vessel endothelium",0.308561724413494
+"atf6 | 24C | 24hpf",10,"cohort_PC2","endothelial cell, blood vessel endothelium",-0.679823554189836
+"atf6 | 24C | 24hpf",10,"(Intercept)","endothelial cell, lymph vessel endothelium",0.244192543701356
+"atf6 | 24C | 24hpf",10,"cohort_PC1","endothelial cell, lymph vessel endothelium",0.0284447861476816
+"atf6 | 24C | 24hpf",10,"cohort_PC2","endothelial cell, lymph vessel endothelium",-0.556179460676782
+"atf6 | 24C | 24hpf",10,"(Intercept)","enteroendocrine cell, intestine",-1.74247417724043
+"atf6 | 24C | 24hpf",10,"cohort_PC1","enteroendocrine cell, intestine",-0.868470896367237
+"atf6 | 24C | 24hpf",10,"cohort_PC2","enteroendocrine cell, intestine",-1.71180146076067
+"atf6 | 24C | 24hpf",10,"(Intercept)","ependymal cell, roof plate",-8.24039391173186
+"atf6 | 24C | 24hpf",10,"cohort_PC1","ependymal cell, roof plate",-7.61075488107095
+"atf6 | 24C | 24hpf",10,"cohort_PC2","ependymal cell, roof plate",16.8863143699723
+"atf6 | 24C | 24hpf",10,"(Intercept)","ependymal cell, spinal cord",1.64434332632975
+"atf6 | 24C | 24hpf",10,"cohort_PC1","ependymal cell, spinal cord",-0.641852124887123
+"atf6 | 24C | 24hpf",10,"cohort_PC2","ependymal cell, spinal cord",-0.254358526032369
+"atf6 | 24C | 24hpf",10,"(Intercept)","ependymoglial cell, central nervous system",-8.3929228623088
+"atf6 | 24C | 24hpf",10,"cohort_PC1","ependymoglial cell, central nervous system",-10.3423042108474
+"atf6 | 24C | 24hpf",10,"cohort_PC2","ependymoglial cell, central nervous system",-4.59962778023089
+"atf6 | 24C | 24hpf",10,"(Intercept)","ependymoglial cell, floor plate",-0.43123642546837
+"atf6 | 24C | 24hpf",10,"cohort_PC1","ependymoglial cell, floor plate",1.10130035483272
+"atf6 | 24C | 24hpf",10,"cohort_PC2","ependymoglial cell, floor plate",3.36550703373911
+"atf6 | 24C | 24hpf",10,"(Intercept)","ependymoglial cell, spinal cord",-1.79583532287047
+"atf6 | 24C | 24hpf",10,"cohort_PC1","ependymoglial cell, spinal cord",0.112722899138194
+"atf6 | 24C | 24hpf",10,"cohort_PC2","ependymoglial cell, spinal cord",1.6825124844082
+"atf6 | 24C | 24hpf",10,"(Intercept)","epidermal cell, enveloping layer of ectoderm (5.5-8 hpf)",-0.568808144361725
+"atf6 | 24C | 24hpf",10,"cohort_PC1","epidermal cell, enveloping layer of ectoderm (5.5-8 hpf)",0.51008767807717
+"atf6 | 24C | 24hpf",10,"cohort_PC2","epidermal cell, enveloping layer of ectoderm (5.5-8 hpf)",-0.0277817254364228
+"atf6 | 24C | 24hpf",10,"(Intercept)","epidermal mucus secreting cell, pharynx",-0.958571227656718
+"atf6 | 24C | 24hpf",10,"cohort_PC1","epidermal mucus secreting cell, pharynx",0.277984248439278
+"atf6 | 24C | 24hpf",10,"cohort_PC2","epidermal mucus secreting cell, pharynx",0.0604446401862424
+"atf6 | 24C | 24hpf",10,"(Intercept)","epithelial cell of distal tubule, distal tubule",1.0753206293355
+"atf6 | 24C | 24hpf",10,"cohort_PC1","epithelial cell of distal tubule, distal tubule",-0.0069374763732924
+"atf6 | 24C | 24hpf",10,"cohort_PC2","epithelial cell of distal tubule, distal tubule",-0.133204536046914
+"atf6 | 24C | 24hpf",10,"(Intercept)","epithelial cell, cloaca",-0.391363950043954
+"atf6 | 24C | 24hpf",10,"cohort_PC1","epithelial cell, cloaca",0.284089655729999
+"atf6 | 24C | 24hpf",10,"cohort_PC2","epithelial cell, cloaca",1.49135889897529
+"atf6 | 24C | 24hpf",10,"(Intercept)","epithelial cell, Kupffer's vesicle",1.64100030774515
+"atf6 | 24C | 24hpf",10,"cohort_PC1","epithelial cell, Kupffer's vesicle",-0.468754983817785
+"atf6 | 24C | 24hpf",10,"cohort_PC2","epithelial cell, Kupffer's vesicle",-0.752666647623659
+"atf6 | 24C | 24hpf",10,"(Intercept)","epithelial cell, median fin fold (includes pectoral)",1.14343485435182
+"atf6 | 24C | 24hpf",10,"cohort_PC1","epithelial cell, median fin fold (includes pectoral)",0.533745370113721
+"atf6 | 24C | 24hpf",10,"cohort_PC2","epithelial cell, median fin fold (includes pectoral)",0.384924914093775
+"atf6 | 24C | 24hpf",10,"(Intercept)","epithelial cell, pharyngeal epithelium",2.30153245058394
+"atf6 | 24C | 24hpf",10,"cohort_PC1","epithelial cell, pharyngeal epithelium",0.0892442453513984
+"atf6 | 24C | 24hpf",10,"cohort_PC2","epithelial cell, pharyngeal epithelium",-0.654828630911483
+"atf6 | 24C | 24hpf",10,"(Intercept)","erythrocyte, blood (primitive)",1.49301018989118
+"atf6 | 24C | 24hpf",10,"cohort_PC1","erythrocyte, blood (primitive)",-0.0678586441082593
+"atf6 | 24C | 24hpf",10,"cohort_PC2","erythrocyte, blood (primitive)",0.707155754550016
+"atf6 | 24C | 24hpf",10,"(Intercept)","erythroid progenitor cell, blood (definitive)",-1.95394819381559
+"atf6 | 24C | 24hpf",10,"cohort_PC1","erythroid progenitor cell, blood (definitive)",0.930871943575095
+"atf6 | 24C | 24hpf",10,"cohort_PC2","erythroid progenitor cell, blood (definitive)",4.52271475910603
+"atf6 | 24C | 24hpf",10,"(Intercept)","erythroid progenitor cell, blood (primitive)",1.35433910585942
+"atf6 | 24C | 24hpf",10,"cohort_PC1","erythroid progenitor cell, blood (primitive)",-0.0568493202084875
+"atf6 | 24C | 24hpf",10,"cohort_PC2","erythroid progenitor cell, blood (primitive)",0.0585627305685855
+"atf6 | 24C | 24hpf",10,"(Intercept)","eye photoreceptor cell, outer nuclear layer of retina",-0.745651448097885
+"atf6 | 24C | 24hpf",10,"cohort_PC1","eye photoreceptor cell, outer nuclear layer of retina",-0.683070602082789
+"atf6 | 24C | 24hpf",10,"cohort_PC2","eye photoreceptor cell, outer nuclear layer of retina",-0.982986870928221
+"atf6 | 24C | 24hpf",10,"(Intercept)","eye photoreceptor cell, outer nuclear layer of retina (cycling)",-0.0244746186160381
+"atf6 | 24C | 24hpf",10,"cohort_PC1","eye photoreceptor cell, outer nuclear layer of retina (cycling)",-0.435260631855782
+"atf6 | 24C | 24hpf",10,"cohort_PC2","eye photoreceptor cell, outer nuclear layer of retina (cycling)",-0.346906093199064
+"atf6 | 24C | 24hpf",10,"(Intercept)","fast muscle cell, fast muscle tissue",1.61628627141444
+"atf6 | 24C | 24hpf",10,"cohort_PC1","fast muscle cell, fast muscle tissue",-0.0372409441648446
+"atf6 | 24C | 24hpf",10,"cohort_PC2","fast muscle cell, fast muscle tissue",1.30488527942368
+"atf6 | 24C | 24hpf",10,"(Intercept)","fast muscle cell, fast muscle tissue (differentiating)",3.64256000074422
+"atf6 | 24C | 24hpf",10,"cohort_PC1","fast muscle cell, fast muscle tissue (differentiating)",0.247182901857298
+"atf6 | 24C | 24hpf",10,"cohort_PC2","fast muscle cell, fast muscle tissue (differentiating)",-0.526998585520916
+"atf6 | 24C | 24hpf",10,"(Intercept)","fast muscle myoblast, fast muscle tissue",3.92021648724174
+"atf6 | 24C | 24hpf",10,"cohort_PC1","fast muscle myoblast, fast muscle tissue",-0.212451859622215
+"atf6 | 24C | 24hpf",10,"cohort_PC2","fast muscle myoblast, fast muscle tissue",-0.172336209299058
+"atf6 | 24C | 24hpf",10,"(Intercept)","fibroblast, meninx",-8.3929228623088
+"atf6 | 24C | 24hpf",10,"cohort_PC1","fibroblast, meninx",-10.3423042108474
+"atf6 | 24C | 24hpf",10,"cohort_PC2","fibroblast, meninx",-4.59962778023089
+"atf6 | 24C | 24hpf",10,"(Intercept)","fibroblast, meninx (slc47a2.1+)",-1.26721147165994
+"atf6 | 24C | 24hpf",10,"cohort_PC1","fibroblast, meninx (slc47a2.1+)",-0.817697277280972
+"atf6 | 24C | 24hpf",10,"cohort_PC2","fibroblast, meninx (slc47a2.1+)",-0.884125425216696
+"atf6 | 24C | 24hpf",10,"(Intercept)","GABAergic neuron, forebrain",1.39606555844508
+"atf6 | 24C | 24hpf",10,"cohort_PC1","GABAergic neuron, forebrain",0.282890971032747
+"atf6 | 24C | 24hpf",10,"cohort_PC2","GABAergic neuron, forebrain",0.430077317583471
+"atf6 | 24C | 24hpf",10,"(Intercept)","GABAergic neuron, tegmentum (midbrain-hindbrain boundary)",-1.33622439105679
+"atf6 | 24C | 24hpf",10,"cohort_PC1","GABAergic neuron, tegmentum (midbrain-hindbrain boundary)",0.0463958921747464
+"atf6 | 24C | 24hpf",10,"cohort_PC2","GABAergic neuron, tegmentum (midbrain-hindbrain boundary)",-2.11250295232564
+"atf6 | 24C | 24hpf",10,"(Intercept)","GABAergic neuron, telencephalon (lhx6+)",-8.24039391173186
+"atf6 | 24C | 24hpf",10,"cohort_PC1","GABAergic neuron, telencephalon (lhx6+)",-7.61075488107095
+"atf6 | 24C | 24hpf",10,"cohort_PC2","GABAergic neuron, telencephalon (lhx6+)",16.8863143699723
+"atf6 | 24C | 24hpf",10,"(Intercept)","glial cell, floor plate (hpgd+)",-2.09409274397413
+"atf6 | 24C | 24hpf",10,"cohort_PC1","glial cell, floor plate (hpgd+)",1.53008094785629
+"atf6 | 24C | 24hpf",10,"cohort_PC2","glial cell, floor plate (hpgd+)",4.99189945938691
+"atf6 | 24C | 24hpf",10,"(Intercept)","glial cell, floor plate (pappaa+)",2.47478464053257
+"atf6 | 24C | 24hpf",10,"cohort_PC1","glial cell, floor plate (pappaa+)",-0.219567201629968
+"atf6 | 24C | 24hpf",10,"cohort_PC2","glial cell, floor plate (pappaa+)",-0.00167363683231987
+"atf6 | 24C | 24hpf",10,"(Intercept)","glial cell, optic stalk",2.42893365705619
+"atf6 | 24C | 24hpf",10,"cohort_PC1","glial cell, optic stalk",0.39639114774781
+"atf6 | 24C | 24hpf",10,"cohort_PC2","glial cell, optic stalk",0.395726778236731
+"atf6 | 24C | 24hpf",10,"(Intercept)","glutamatergic neuron, forebrain",1.1338212847905
+"atf6 | 24C | 24hpf",10,"cohort_PC1","glutamatergic neuron, forebrain",0.263683523751343
+"atf6 | 24C | 24hpf",10,"cohort_PC2","glutamatergic neuron, forebrain",-0.447346006730655
+"atf6 | 24C | 24hpf",10,"(Intercept)","glutamatergic neuron, hindbrain (anterior, pitx2+)",-7.15218818233623
+"atf6 | 24C | 24hpf",10,"cohort_PC1","glutamatergic neuron, hindbrain (anterior, pitx2+)",6.38926976700869
+"atf6 | 24C | 24hpf",10,"cohort_PC2","glutamatergic neuron, hindbrain (anterior, pitx2+)",18.7423390051282
+"atf6 | 24C | 24hpf",10,"(Intercept)","glutamatergic neuron, hindbrain (anterior)",-4.64575176176363
+"atf6 | 24C | 24hpf",10,"cohort_PC1","glutamatergic neuron, hindbrain (anterior)",5.1228520120771
+"atf6 | 24C | 24hpf",10,"cohort_PC2","glutamatergic neuron, hindbrain (anterior)",12.4795355875485
+"atf6 | 24C | 24hpf",10,"(Intercept)","glutamatergic neuron, hindbrain (lateral)",-1.90700309990905
+"atf6 | 24C | 24hpf",10,"cohort_PC1","glutamatergic neuron, hindbrain (lateral)",-1.7757738612226
+"atf6 | 24C | 24hpf",10,"cohort_PC2","glutamatergic neuron, hindbrain (lateral)",1.04042893010806
+"atf6 | 24C | 24hpf",10,"(Intercept)","glutamatergic neuron, hindbrain (lhx9+)",-6.88660204064271
+"atf6 | 24C | 24hpf",10,"cohort_PC1","glutamatergic neuron, hindbrain (lhx9+)",9.49838164743736
+"atf6 | 24C | 24hpf",10,"cohort_PC2","glutamatergic neuron, hindbrain (lhx9+)",15.0405185972933
+"atf6 | 24C | 24hpf",10,"(Intercept)","glutamatergic neuron, medulla oblongata (phox2bb+)",-4.47183275521725
+"atf6 | 24C | 24hpf",10,"cohort_PC1","glutamatergic neuron, medulla oblongata (phox2bb+)",-6.32146539364928
+"atf6 | 24C | 24hpf",10,"cohort_PC2","glutamatergic neuron, medulla oblongata (phox2bb+)",4.07326058560758
+"atf6 | 24C | 24hpf",10,"(Intercept)","glutamatergic neuron, spinal cord",-1.09691238403276
+"atf6 | 24C | 24hpf",10,"cohort_PC1","glutamatergic neuron, spinal cord",-0.487333782701773
+"atf6 | 24C | 24hpf",10,"cohort_PC2","glutamatergic neuron, spinal cord",-3.31262315322958
+"atf6 | 24C | 24hpf",10,"(Intercept)","glutamatergic neuron, spinal cord (gpr139+)",-6.88660204064271
+"atf6 | 24C | 24hpf",10,"cohort_PC1","glutamatergic neuron, spinal cord (gpr139+)",9.49838164743736
+"atf6 | 24C | 24hpf",10,"cohort_PC2","glutamatergic neuron, spinal cord (gpr139+)",15.0405185972933
+"atf6 | 24C | 24hpf",10,"(Intercept)","glutamatergic neuron, spinal cord (V2a, chata+)",-1.94598950065279
+"atf6 | 24C | 24hpf",10,"cohort_PC1","glutamatergic neuron, spinal cord (V2a, chata+)",-1.14607497121083
+"atf6 | 24C | 24hpf",10,"cohort_PC2","glutamatergic neuron, spinal cord (V2a, chata+)",-2.66475765052838
+"atf6 | 24C | 24hpf",10,"(Intercept)","glutamatergic neuron, subthalamic nucleus (differentiating)",-5.45486301692473
+"atf6 | 24C | 24hpf",10,"cohort_PC1","glutamatergic neuron, subthalamic nucleus (differentiating)",-8.92659436605519
+"atf6 | 24C | 24hpf",10,"cohort_PC2","glutamatergic neuron, subthalamic nucleus (differentiating)",9.44287598215512
+"atf6 | 24C | 24hpf",10,"(Intercept)","glutamatergic neuron, telencephalon (proximal to olfactory bulb)",-0.749879078397298
+"atf6 | 24C | 24hpf",10,"cohort_PC1","glutamatergic neuron, telencephalon (proximal to olfactory bulb)",0.109229161564717
+"atf6 | 24C | 24hpf",10,"cohort_PC2","glutamatergic neuron, telencephalon (proximal to olfactory bulb)",0.468508782836478
+"atf6 | 24C | 24hpf",10,"(Intercept)","hatching gland cell, hatching gland",-3.86029092644318
+"atf6 | 24C | 24hpf",10,"cohort_PC1","hatching gland cell, hatching gland",2.65392000045036
+"atf6 | 24C | 24hpf",10,"cohort_PC2","hatching gland cell, hatching gland",12.4024355836112
+"atf6 | 24C | 24hpf",10,"(Intercept)","hatching gland cell, polster",3.11071342007057
+"atf6 | 24C | 24hpf",10,"cohort_PC1","hatching gland cell, polster",-0.379929921790392
+"atf6 | 24C | 24hpf",10,"cohort_PC2","hatching gland cell, polster",-0.356747017963011
+"atf6 | 24C | 24hpf",10,"(Intercept)","hematopoietic precursor cell, blood",-0.240680308186986
+"atf6 | 24C | 24hpf",10,"cohort_PC1","hematopoietic precursor cell, blood",-0.785326644228015
+"atf6 | 24C | 24hpf",10,"cohort_PC2","hematopoietic precursor cell, blood",0.987916741526779
+"atf6 | 24C | 24hpf",10,"(Intercept)","inhibitory interneuron, spinal cord",-0.258427920123156
+"atf6 | 24C | 24hpf",10,"cohort_PC1","inhibitory interneuron, spinal cord",-0.603143451133969
+"atf6 | 24C | 24hpf",10,"cohort_PC2","inhibitory interneuron, spinal cord",1.28464996292986
+"atf6 | 24C | 24hpf",10,"(Intercept)","inhibitory interneuron, spinal cord (dI6)",-5.13269787228348
+"atf6 | 24C | 24hpf",10,"cohort_PC1","inhibitory interneuron, spinal cord (dI6)",8.55870605031057
+"atf6 | 24C | 24hpf",10,"cohort_PC2","inhibitory interneuron, spinal cord (dI6)",11.147628331891
+"atf6 | 24C | 24hpf",10,"(Intercept)","inhibitory interneuron, spinal cord (V1)",-8.20746918991502
+"atf6 | 24C | 24hpf",10,"cohort_PC1","inhibitory interneuron, spinal cord (V1)",9.94382215479345
+"atf6 | 24C | 24hpf",10,"cohort_PC2","inhibitory interneuron, spinal cord (V1)",-2.8404010290698
+"atf6 | 24C | 24hpf",10,"(Intercept)","inhibitory interneuron, spinal cord (V2b)",-4.47183275521725
+"atf6 | 24C | 24hpf",10,"cohort_PC1","inhibitory interneuron, spinal cord (V2b)",-6.32146539364928
+"atf6 | 24C | 24hpf",10,"cohort_PC2","inhibitory interneuron, spinal cord (V2b)",4.07326058560758
+"atf6 | 24C | 24hpf",10,"(Intercept)","ionocyte, gill (KS)",-8.3929228623088
+"atf6 | 24C | 24hpf",10,"cohort_PC1","ionocyte, gill (KS)",-10.3423042108474
+"atf6 | 24C | 24hpf",10,"cohort_PC2","ionocyte, gill (KS)",-4.59962778023089
+"atf6 | 24C | 24hpf",10,"(Intercept)","ionocyte, NA (NaK)",-0.426337391435741
+"atf6 | 24C | 24hpf",10,"cohort_PC1","ionocyte, NA (NaK)",0.637004105633643
+"atf6 | 24C | 24hpf",10,"cohort_PC2","ionocyte, NA (NaK)",-0.722853218645869
+"atf6 | 24C | 24hpf",10,"(Intercept)","ionocyte, NA (progenitor, 11-18 hpf, NaK)",1.05356079253736
+"atf6 | 24C | 24hpf",10,"cohort_PC1","ionocyte, NA (progenitor, 11-18 hpf, NaK)",0.66773643692883
+"atf6 | 24C | 24hpf",10,"cohort_PC2","ionocyte, NA (progenitor, 11-18 hpf, NaK)",0.946264113558047
+"atf6 | 24C | 24hpf",10,"(Intercept)","ionocyte, NA (progenitor, 14-18 hpf)",1.32398586151349
+"atf6 | 24C | 24hpf",10,"cohort_PC1","ionocyte, NA (progenitor, 14-18 hpf)",-0.227579692805307
+"atf6 | 24C | 24hpf",10,"cohort_PC2","ionocyte, NA (progenitor, 14-18 hpf)",0.870194967662406
+"atf6 | 24C | 24hpf",10,"(Intercept)","ionocyte, NA (progenitor, 18 hpf, kitb+)",0.597856718363919
+"atf6 | 24C | 24hpf",10,"cohort_PC1","ionocyte, NA (progenitor, 18 hpf, kitb+)",0.428862946185291
+"atf6 | 24C | 24hpf",10,"cohort_PC2","ionocyte, NA (progenitor, 18 hpf, kitb+)",-0.689431107287438
+"atf6 | 24C | 24hpf",10,"(Intercept)","ionocyte, NA (progenitor, 24-96 hpf)",-4.64575176176363
+"atf6 | 24C | 24hpf",10,"cohort_PC1","ionocyte, NA (progenitor, 24-96 hpf)",5.1228520120771
+"atf6 | 24C | 24hpf",10,"cohort_PC2","ionocyte, NA (progenitor, 24-96 hpf)",12.4795355875485
+"atf6 | 24C | 24hpf",10,"(Intercept)","ionocyte, NA (vH)",-6.88660204064271
+"atf6 | 24C | 24hpf",10,"cohort_PC1","ionocyte, NA (vH)",9.49838164743736
+"atf6 | 24C | 24hpf",10,"cohort_PC2","ionocyte, NA (vH)",15.0405185972933
+"atf6 | 24C | 24hpf",10,"(Intercept)","iridoblast, integument",-1.70790276206917
+"atf6 | 24C | 24hpf",10,"cohort_PC1","iridoblast, integument",3.29109826815759
+"atf6 | 24C | 24hpf",10,"cohort_PC2","iridoblast, integument",3.2180343027932
+"atf6 | 24C | 24hpf",10,"(Intercept)","kidney proximal convoluted tubule epithelial cell, proximal convoluted tubule",1.34498747719859
+"atf6 | 24C | 24hpf",10,"cohort_PC1","kidney proximal convoluted tubule epithelial cell, proximal convoluted tubule",-0.19455594558196
+"atf6 | 24C | 24hpf",10,"cohort_PC2","kidney proximal convoluted tubule epithelial cell, proximal convoluted tubule",-0.510837650875236
+"atf6 | 24C | 24hpf",10,"(Intercept)","kidney proximal straight tubule epithelial cell, proximal straight tubule",-8.20746918991502
+"atf6 | 24C | 24hpf",10,"cohort_PC1","kidney proximal straight tubule epithelial cell, proximal straight tubule",9.94382215479345
+"atf6 | 24C | 24hpf",10,"cohort_PC2","kidney proximal straight tubule epithelial cell, proximal straight tubule",-2.8404010290698
+"atf6 | 24C | 24hpf",10,"(Intercept)","Kolmer-Agduhr neuron, spinal cord (KA')",-2.33144821490834
+"atf6 | 24C | 24hpf",10,"cohort_PC1","Kolmer-Agduhr neuron, spinal cord (KA')",-3.19661263833874
+"atf6 | 24C | 24hpf",10,"cohort_PC2","Kolmer-Agduhr neuron, spinal cord (KA')",0.0467464925165199
+"atf6 | 24C | 24hpf",10,"(Intercept)","L cone cell, outer nuclear layer of retina",-1.23399858587717
+"atf6 | 24C | 24hpf",10,"cohort_PC1","L cone cell, outer nuclear layer of retina",-0.540579609219337
+"atf6 | 24C | 24hpf",10,"cohort_PC2","L cone cell, outer nuclear layer of retina",-0.560353337089529
+"atf6 | 24C | 24hpf",10,"(Intercept)","lens fiber cell, lens of camera-type eye",-7.15218818233623
+"atf6 | 24C | 24hpf",10,"cohort_PC1","lens fiber cell, lens of camera-type eye",6.38926976700869
+"atf6 | 24C | 24hpf",10,"cohort_PC2","lens fiber cell, lens of camera-type eye",18.7423390051282
+"atf6 | 24C | 24hpf",10,"(Intercept)","macrophage, blood (primitive)",0.967956566669007
+"atf6 | 24C | 24hpf",10,"cohort_PC1","macrophage, blood (primitive)",1.00834337059033
+"atf6 | 24C | 24hpf",10,"cohort_PC2","macrophage, blood (primitive)",-0.416407124981918
+"atf6 | 24C | 24hpf",10,"(Intercept)","melanoblast, integument",-4.47183275521725
+"atf6 | 24C | 24hpf",10,"cohort_PC1","melanoblast, integument",-6.32146539364928
+"atf6 | 24C | 24hpf",10,"cohort_PC2","melanoblast, integument",4.07326058560758
+"atf6 | 24C | 24hpf",10,"(Intercept)","Merkel-like cell, taste bud",-0.559256138198422
+"atf6 | 24C | 24hpf",10,"cohort_PC1","Merkel-like cell, taste bud",0.879828186273555
+"atf6 | 24C | 24hpf",10,"cohort_PC2","Merkel-like cell, taste bud",2.37435582293491
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesenchymal cell, anterior segment of eyeball (scinla+)",-2.58025334330856
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesenchymal cell, anterior segment of eyeball (scinla+)",-0.90713667062153
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesenchymal cell, anterior segment of eyeball (scinla+)",1.97676186550117
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesenchymal cell, bulbus arteriosus",-3.53021591217904
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesenchymal cell, bulbus arteriosus",-5.81574320056474
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesenchymal cell, bulbus arteriosus",3.55655615428441
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesenchymal cell, median fin fold",0.849274187992156
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesenchymal cell, median fin fold",-0.072012749302297
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesenchymal cell, median fin fold",-0.978102746379866
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesenchymal cell, median fin fold (posterior)",-0.0716253869388378
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesenchymal cell, median fin fold (posterior)",-0.563854824495549
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesenchymal cell, median fin fold (posterior)",0.505579492030275
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesenchymal cell, meninx",-1.42873302756835
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesenchymal cell, meninx",1.17868172823977
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesenchymal cell, meninx",-1.64296412149015
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesenchymal cell, myotome",3.14801384738885
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesenchymal cell, myotome",-0.0509963362623148
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesenchymal cell, myotome",0.100108075103338
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesenchymal cell, periocular mesenchyme",-0.299638214921455
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesenchymal cell, periocular mesenchyme",0.422274476655733
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesenchymal cell, periocular mesenchyme",-1.41316739570813
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesenchymal cell, pharyngeal arch",0.98277198925237
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesenchymal cell, pharyngeal arch",0.372832827668809
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesenchymal cell, pharyngeal arch",0.014674813994989
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesenchymal cell, pharyngeal arch (anterior)",-0.791327587498189
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesenchymal cell, pharyngeal arch (anterior)",0.0830628011925632
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesenchymal cell, pharyngeal arch (anterior)",0.955831298635431
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesenchymal cell, pharyngeal arch (met+)",1.65216092096018
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesenchymal cell, pharyngeal arch (met+)",0.48793312021955
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesenchymal cell, pharyngeal arch (met+)",0.314237182321175
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesenchymal cell, pharyngeal arch (tbx15+)",2.59793217799638
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesenchymal cell, pharyngeal arch (tbx15+)",-0.231265350380275
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesenchymal cell, pharyngeal arch (tbx15+)",-0.0207575185431961
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesenchymal cell, sclerotome",0.0755691599418362
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesenchymal cell, sclerotome",0.804419153959434
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesenchymal cell, sclerotome",-1.05876056140093
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesenchymal cell, ventral mesenchyme (rhag+)",1.5843193333704
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesenchymal cell, ventral mesenchyme (rhag+)",-0.369812858057732
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesenchymal cell, ventral mesenchyme (rhag+)",0.547911950605613
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesodermal cell, anterior lateral plate mesoderm (wt1a+, pbx1b+, pax2a+)",1.30395410114898
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesodermal cell, anterior lateral plate mesoderm (wt1a+, pbx1b+, pax2a+)",-0.398765580509168
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesodermal cell, anterior lateral plate mesoderm (wt1a+, pbx1b+, pax2a+)",0.465892844087611
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesodermal cell, anterior lateral plate mesoderm (wt1a+, pbx1b+)",1.45189209312871
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesodermal cell, anterior lateral plate mesoderm (wt1a+, pbx1b+)",-0.667510347912641
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesodermal cell, anterior lateral plate mesoderm (wt1a+, pbx1b+)",0.0799817691505717
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesodermal cell, cardiopharyngeal field",-5.45486301692473
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesodermal cell, cardiopharyngeal field",-8.92659436605519
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesodermal cell, cardiopharyngeal field",9.44287598215512
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesodermal cell, chordamesoderm (axial)",-1.14356836898979
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesodermal cell, chordamesoderm (axial)",-1.69265806386306
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesodermal cell, chordamesoderm (axial)",-0.756167323942005
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesodermal cell, craniocervical region",1.26236864263623
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesodermal cell, craniocervical region",0.239820929992241
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesodermal cell, craniocervical region",-1.52874310453911
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesodermal cell, heart primordium",1.48437726553463
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesodermal cell, heart primordium",-0.327735308253903
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesodermal cell, heart primordium",-0.362200042699532
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesodermal cell, migratory muscle progenitor",-1.21076857192316
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesodermal cell, migratory muscle progenitor",-0.450888072019592
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesodermal cell, migratory muscle progenitor",2.29358441756963
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesodermal cell, pectoral fin bud",-7.15218818233623
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesodermal cell, pectoral fin bud",6.38926976700869
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesodermal cell, pectoral fin bud",18.7423390051282
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesodermal cell, pectoral fin bud (progenitor)",1.10066698817294
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesodermal cell, pectoral fin bud (progenitor)",0.212032414633875
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesodermal cell, pectoral fin bud (progenitor)",-0.875369881376667
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesodermal cell, pericardium (wt1a+, tbx5a+)",-0.279244543159446
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesodermal cell, pericardium (wt1a+, tbx5a+)",-0.805524277500494
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesodermal cell, pericardium (wt1a+, tbx5a+)",1.31921258859847
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesodermal cell, pharyngeal arch (prdm1a+)",-0.683939471310989
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesodermal cell, pharyngeal arch (prdm1a+)",-1.38983645522978
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesodermal cell, pharyngeal arch (prdm1a+)",-1.1150489459371
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesodermal cell, pharyngeal arch (tcf21+)",1.99850596150367
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesodermal cell, pharyngeal arch (tcf21+)",0.221280314551957
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesodermal cell, pharyngeal arch (tcf21+)",0.126029549836848
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesodermal cell, posterior lateral plate mesoderm (hand2+)",2.36874622674963
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesodermal cell, posterior lateral plate mesoderm (hand2+)",-0.47762541686818
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesodermal cell, posterior lateral plate mesoderm (hand2+)",-0.194313162358296
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesodermal cell, posterior lateral plate mesoderm (pax2a+)",-0.15715650132362
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesodermal cell, posterior lateral plate mesoderm (pax2a+)",-1.26632408137257
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesodermal cell, posterior lateral plate mesoderm (pax2a+)",1.49347766024649
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesodermal cell, presomitic mesoderm",3.69370193219942
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesodermal cell, presomitic mesoderm",-0.254343711981343
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesodermal cell, presomitic mesoderm",0.267316109350773
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesodermal cell, pronephros",1.13858613254636
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesodermal cell, pronephros",-1.44699130715271
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesodermal cell, pronephros",-1.52268843253295
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesodermal cell, smooth muscle tissue (trunk, progenitor)",-6.88660204064271
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesodermal cell, smooth muscle tissue (trunk, progenitor)",9.49838164743736
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesodermal cell, smooth muscle tissue (trunk, progenitor)",15.0405185972933
+"atf6 | 24C | 24hpf",10,"(Intercept)","mesodermal cell, somite",3.63685889263271
+"atf6 | 24C | 24hpf",10,"cohort_PC1","mesodermal cell, somite",-0.115733786069983
+"atf6 | 24C | 24hpf",10,"cohort_PC2","mesodermal cell, somite",-0.116164627669654
+"atf6 | 24C | 24hpf",10,"(Intercept)","microvillous olfactory receptor neuron, olfactory organ",-4.47183275521725
+"atf6 | 24C | 24hpf",10,"cohort_PC1","microvillous olfactory receptor neuron, olfactory organ",-6.32146539364928
+"atf6 | 24C | 24hpf",10,"cohort_PC2","microvillous olfactory receptor neuron, olfactory organ",4.07326058560758
+"atf6 | 24C | 24hpf",10,"(Intercept)","migratory cranial neural crest cell, cranial neural crest",1.74099671069748
+"atf6 | 24C | 24hpf",10,"cohort_PC1","migratory cranial neural crest cell, cranial neural crest",-0.191697249275807
+"atf6 | 24C | 24hpf",10,"cohort_PC2","migratory cranial neural crest cell, cranial neural crest",0.471523957505223
+"atf6 | 24C | 24hpf",10,"(Intercept)","migratory trunk neural crest cell, trunk neural crest",1.88411957403013
+"atf6 | 24C | 24hpf",10,"cohort_PC1","migratory trunk neural crest cell, trunk neural crest",-0.1504393981943
+"atf6 | 24C | 24hpf",10,"cohort_PC2","migratory trunk neural crest cell, trunk neural crest",-0.731385685706028
+"atf6 | 24C | 24hpf",10,"(Intercept)","myelinating Schwann cell, neural crest",-1.49629536199614
+"atf6 | 24C | 24hpf",10,"cohort_PC1","myelinating Schwann cell, neural crest",-1.34724092102844
+"atf6 | 24C | 24hpf",10,"cohort_PC2","myelinating Schwann cell, neural crest",3.3294747022023
+"atf6 | 24C | 24hpf",10,"(Intercept)","myeloid lineage restricted progenitor cell, blood (primitive)",-2.80954390451966
+"atf6 | 24C | 24hpf",10,"cohort_PC1","myeloid lineage restricted progenitor cell, blood (primitive)",-1.96139090116084
+"atf6 | 24C | 24hpf",10,"cohort_PC2","myeloid lineage restricted progenitor cell, blood (primitive)",5.5281376515825
+"atf6 | 24C | 24hpf",10,"(Intercept)","myoblast, skeletal musculature (craniocervical and hypaxial)",-1.03223036000723
+"atf6 | 24C | 24hpf",10,"cohort_PC1","myoblast, skeletal musculature (craniocervical and hypaxial)",0.93648669729309
+"atf6 | 24C | 24hpf",10,"cohort_PC2","myoblast, skeletal musculature (craniocervical and hypaxial)",-0.505492972323823
+"atf6 | 24C | 24hpf",10,"(Intercept)","neural crest cell, cranial neural crest (cycling)",-0.173254741837472
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neural crest cell, cranial neural crest (cycling)",-0.360557448213497
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neural crest cell, cranial neural crest (cycling)",-1.53976152645661
+"atf6 | 24C | 24hpf",10,"(Intercept)","neural crest cell, head mesenchyme (gdf11+)",2.12865129620815
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neural crest cell, head mesenchyme (gdf11+)",0.61903450644685
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neural crest cell, head mesenchyme (gdf11+)",-0.181606423640103
+"atf6 | 24C | 24hpf",10,"(Intercept)","neural crest cell, head mesenchyme (tnc+)",2.18743063067763
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neural crest cell, head mesenchyme (tnc+)",0.16654279887768
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neural crest cell, head mesenchyme (tnc+)",0.186640760090219
+"atf6 | 24C | 24hpf",10,"(Intercept)","neural crest cell, rhombomere (3 and 5)",-5.13269787228348
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neural crest cell, rhombomere (3 and 5)",8.55870605031057
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neural crest cell, rhombomere (3 and 5)",11.147628331891
+"atf6 | 24C | 24hpf",10,"(Intercept)","neural crest cell, rhombomere (posterior)",1.34473458558115
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neural crest cell, rhombomere (posterior)",-0.12837294081854
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neural crest cell, rhombomere (posterior)",-0.264590696447587
+"atf6 | 24C | 24hpf",10,"(Intercept)","neural crest cell, trunk neural crest (delaminating)",1.92153394878267
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neural crest cell, trunk neural crest (delaminating)",-0.0296375940079665
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neural crest cell, trunk neural crest (delaminating)",-0.86159676249688
+"atf6 | 24C | 24hpf",10,"(Intercept)","neural progenitor cell, hindbrain",3.41096000318288
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neural progenitor cell, hindbrain",0.299523685960637
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neural progenitor cell, hindbrain",-0.0296333749626697
+"atf6 | 24C | 24hpf",10,"(Intercept)","neural progenitor cell, midbrain",4.35904337358156
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neural progenitor cell, midbrain",0.255254214340373
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neural progenitor cell, midbrain",0.164819473804315
+"atf6 | 24C | 24hpf",10,"(Intercept)","neural progenitor cell, midbrain (ank1a+)",0.664677178322767
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neural progenitor cell, midbrain (ank1a+)",-0.241670978533102
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neural progenitor cell, midbrain (ank1a+)",0.00401024882304196
+"atf6 | 24C | 24hpf",10,"(Intercept)","neural progenitor cell, midbrain-hindbrain boundary",3.56132185689314
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neural progenitor cell, midbrain-hindbrain boundary",0.160340843292615
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neural progenitor cell, midbrain-hindbrain boundary",0.318279993165698
+"atf6 | 24C | 24hpf",10,"(Intercept)","neural progenitor cell, rhombomere (2 and 4)",1.77781456850179
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neural progenitor cell, rhombomere (2 and 4)",-0.111242125731703
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neural progenitor cell, rhombomere (2 and 4)",0.0850882565431833
+"atf6 | 24C | 24hpf",10,"(Intercept)","neural progenitor cell, rhombomere (7 and 8)",4.06770102165523
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neural progenitor cell, rhombomere (7 and 8)",0.0850307175220825
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neural progenitor cell, rhombomere (7 and 8)",-0.120722488594677
+"atf6 | 24C | 24hpf",10,"(Intercept)","neural progenitor cell, rhombomere 3",2.58928022778464
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neural progenitor cell, rhombomere 3",0.149616005717608
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neural progenitor cell, rhombomere 3",0.246091780910255
+"atf6 | 24C | 24hpf",10,"(Intercept)","neural progenitor cell, rhombomere 5",2.75649496525332
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neural progenitor cell, rhombomere 5",0.162339777593889
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neural progenitor cell, rhombomere 5",0.31575313552335
+"atf6 | 24C | 24hpf",10,"(Intercept)","neural progenitor cell, rhombomere 6",2.62623793980833
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neural progenitor cell, rhombomere 6",-0.019968626848854
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neural progenitor cell, rhombomere 6",-0.188542654325993
+"atf6 | 24C | 24hpf",10,"(Intercept)","neurecto-epithelial cell, roof plate",1.27761159133433
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neurecto-epithelial cell, roof plate",0.473022258312008
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neurecto-epithelial cell, roof plate",0.0157987349084988
+"atf6 | 24C | 24hpf",10,"(Intercept)","neurecto-epithelial cell, spinal cord",2.82310506870607
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neurecto-epithelial cell, spinal cord",-0.193580231000293
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neurecto-epithelial cell, spinal cord",0.566618360386967
+"atf6 | 24C | 24hpf",10,"(Intercept)","neurectodermal cell, future diencephalon",3.00222103955167
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neurectodermal cell, future diencephalon",0.0594761231921272
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neurectodermal cell, future diencephalon",0.543001998173314
+"atf6 | 24C | 24hpf",10,"(Intercept)","neurectodermal cell, future diencephalon (ventral)",2.93948595452523
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neurectodermal cell, future diencephalon (ventral)",0.0386734342870567
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neurectodermal cell, future diencephalon (ventral)",0.217485401952254
+"atf6 | 24C | 24hpf",10,"(Intercept)","neurectodermal cell, future telencephalon",3.09891158597133
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neurectodermal cell, future telencephalon",0.00137935869532986
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neurectodermal cell, future telencephalon",0.120742774237747
+"atf6 | 24C | 24hpf",10,"(Intercept)","neurectodermal cell, spinal cord neural keel",3.83762161055608
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neurectodermal cell, spinal cord neural keel",-0.0650781166511384
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neurectodermal cell, spinal cord neural keel",0.0703547216566258
+"atf6 | 24C | 24hpf",10,"(Intercept)","neuroblast (sensu Vertebrata), diencephalon (ventral)",1.66802377404624
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neuroblast (sensu Vertebrata), diencephalon (ventral)",-0.240419085787459
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neuroblast (sensu Vertebrata), diencephalon (ventral)",0.467885246524719
+"atf6 | 24C | 24hpf",10,"(Intercept)","neuroblast (sensu Vertebrata), forebrain",0.186183867640803
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neuroblast (sensu Vertebrata), forebrain",0.317980381080684
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neuroblast (sensu Vertebrata), forebrain",1.3286307921322
+"atf6 | 24C | 24hpf",10,"(Intercept)","neuroblast (sensu Vertebrata), hindbrain",0.568360926250509
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neuroblast (sensu Vertebrata), hindbrain",0.108830015950931
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neuroblast (sensu Vertebrata), hindbrain",-0.520582603334938
+"atf6 | 24C | 24hpf",10,"(Intercept)","neuroblast (sensu Vertebrata), midbrain",-0.395594233760674
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neuroblast (sensu Vertebrata), midbrain",-0.252522728138648
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neuroblast (sensu Vertebrata), midbrain",0.235320591607575
+"atf6 | 24C | 24hpf",10,"(Intercept)","neuroblast (sensu Vertebrata), midbrain (ank1a+)",-2.75655554211463
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neuroblast (sensu Vertebrata), midbrain (ank1a+)",-1.38726522579936
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neuroblast (sensu Vertebrata), midbrain (ank1a+)",7.01461204595911
+"atf6 | 24C | 24hpf",10,"(Intercept)","neuroblast (sensu Vertebrata), rhombomere 3",-0.121670135392215
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neuroblast (sensu Vertebrata), rhombomere 3",-1.23056669952923
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neuroblast (sensu Vertebrata), rhombomere 3",-0.0886970361388701
+"atf6 | 24C | 24hpf",10,"(Intercept)","neuroblast (sensu Vertebrata), spinal cord",1.77451622510284
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neuroblast (sensu Vertebrata), spinal cord",0.237451369367301
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neuroblast (sensu Vertebrata), spinal cord",0.50017999150987
+"atf6 | 24C | 24hpf",10,"(Intercept)","neuroblast (sensu Vertebrata), spinal cord (pMN domain)",1.79062789849475
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neuroblast (sensu Vertebrata), spinal cord (pMN domain)",-0.321450213541895
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neuroblast (sensu Vertebrata), spinal cord (pMN domain)",-0.406438387784354
+"atf6 | 24C | 24hpf",10,"(Intercept)","neuroblast (sensu Vertebrata), spinal cord (primary)",2.87140990704738
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neuroblast (sensu Vertebrata), spinal cord (primary)",0.171910679461839
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neuroblast (sensu Vertebrata), spinal cord (primary)",-0.251890210909949
+"atf6 | 24C | 24hpf",10,"(Intercept)","neuroblast (sensu Vertebrata), spinal cord (SMNs)",-1.12939663823074
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neuroblast (sensu Vertebrata), spinal cord (SMNs)",-0.503852575536636
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neuroblast (sensu Vertebrata), spinal cord (SMNs)",4.51627225206089
+"atf6 | 24C | 24hpf",10,"(Intercept)","neuromast mantle cell, lateral line",0.569079492633753
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neuromast mantle cell, lateral line",0.634940925374816
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neuromast mantle cell, lateral line",-0.0750026525870256
+"atf6 | 24C | 24hpf",10,"(Intercept)","neuromesodermal progenitor cell, post-anal tail bud",2.10329064769301
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neuromesodermal progenitor cell, post-anal tail bud",-0.272340206234072
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neuromesodermal progenitor cell, post-anal tail bud",0.534961525494912
+"atf6 | 24C | 24hpf",10,"(Intercept)","neuromesodermal progenitor cell, post-anal tail bud (vasculature & pronephros fated)",0.76625493537927
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neuromesodermal progenitor cell, post-anal tail bud (vasculature & pronephros fated)",-0.261585976723894
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neuromesodermal progenitor cell, post-anal tail bud (vasculature & pronephros fated)",-0.112003167170556
+"atf6 | 24C | 24hpf",10,"(Intercept)","neuron, cranial ganglion",0.669400037475366
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neuron, cranial ganglion",-0.115485579587489
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neuron, cranial ganglion",0.705234054273411
+"atf6 | 24C | 24hpf",10,"(Intercept)","neuron, epibranchial ganglion",-2.48918972536991
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neuron, epibranchial ganglion",0.11259117527112
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neuron, epibranchial ganglion",1.67975213256363
+"atf6 | 24C | 24hpf",10,"(Intercept)","neuron, olfactory placode",2.09874849701763
+"atf6 | 24C | 24hpf",10,"cohort_PC1","neuron, olfactory placode",0.115408398716569
+"atf6 | 24C | 24hpf",10,"cohort_PC2","neuron, olfactory placode",0.193655275853695
+"atf6 | 24C | 24hpf",10,"(Intercept)","notochordal cell, notochord (11-18 hpf)",2.05359150853615
+"atf6 | 24C | 24hpf",10,"cohort_PC1","notochordal cell, notochord (11-18 hpf)",-0.0725572550336673
+"atf6 | 24C | 24hpf",10,"cohort_PC2","notochordal cell, notochord (11-18 hpf)",0.96024729341566
+"atf6 | 24C | 24hpf",10,"(Intercept)","notochordal cell, notochord (18 hpf)",2.57720836377064
+"atf6 | 24C | 24hpf",10,"cohort_PC1","notochordal cell, notochord (18 hpf)",0.0761420124448846
+"atf6 | 24C | 24hpf",10,"cohort_PC2","notochordal cell, notochord (18 hpf)",-0.144692773368997
+"atf6 | 24C | 24hpf",10,"(Intercept)","notochordal cell, notochord (posterior, 11-18 hpf)",1.42209172568635
+"atf6 | 24C | 24hpf",10,"cohort_PC1","notochordal cell, notochord (posterior, 11-18 hpf)",-0.577212221850275
+"atf6 | 24C | 24hpf",10,"cohort_PC2","notochordal cell, notochord (posterior, 11-18 hpf)",-0.78679367286283
+"atf6 | 24C | 24hpf",10,"(Intercept)","notochordal sheath cell, notochord",-0.80834128657799
+"atf6 | 24C | 24hpf",10,"cohort_PC1","notochordal sheath cell, notochord",1.65536440541248
+"atf6 | 24C | 24hpf",10,"cohort_PC2","notochordal sheath cell, notochord",-0.582253304698841
+"atf6 | 24C | 24hpf",10,"(Intercept)","notochordal vacuole cell, notochord (18 hpf)",0.559553930117286
+"atf6 | 24C | 24hpf",10,"cohort_PC1","notochordal vacuole cell, notochord (18 hpf)",-0.365683288855373
+"atf6 | 24C | 24hpf",10,"cohort_PC2","notochordal vacuole cell, notochord (18 hpf)",-2.37350612548813
+"atf6 | 24C | 24hpf",10,"(Intercept)","notochordal vacuole cell, notochord (24-96 hpf)",-3.08863012726197
+"atf6 | 24C | 24hpf",10,"cohort_PC1","notochordal vacuole cell, notochord (24-96 hpf)",2.06893625077859
+"atf6 | 24C | 24hpf",10,"cohort_PC2","notochordal vacuole cell, notochord (24-96 hpf)",-3.48688109319628
+"atf6 | 24C | 24hpf",10,"(Intercept)","osteoblast, cleithrum",-6.88660204064271
+"atf6 | 24C | 24hpf",10,"cohort_PC1","osteoblast, cleithrum",9.49838164743736
+"atf6 | 24C | 24hpf",10,"cohort_PC2","osteoblast, cleithrum",15.0405185972933
+"atf6 | 24C | 24hpf",10,"(Intercept)","peptidergic neuron, dorsal horn of spinal cord",-4.47183275521725
+"atf6 | 24C | 24hpf",10,"cohort_PC1","peptidergic neuron, dorsal horn of spinal cord",-6.32146539364928
+"atf6 | 24C | 24hpf",10,"cohort_PC2","peptidergic neuron, dorsal horn of spinal cord",4.07326058560758
+"atf6 | 24C | 24hpf",10,"(Intercept)","pericyte, unknown",-2.48918972536991
+"atf6 | 24C | 24hpf",10,"cohort_PC1","pericyte, unknown",0.11259117527112
+"atf6 | 24C | 24hpf",10,"cohort_PC2","pericyte, unknown",1.67975213256363
+"atf6 | 24C | 24hpf",10,"(Intercept)","peridermal cell, periderm (10-18 hpf)",2.49775439531623
+"atf6 | 24C | 24hpf",10,"cohort_PC1","peridermal cell, periderm (10-18 hpf)",0.130474364647216
+"atf6 | 24C | 24hpf",10,"cohort_PC2","peridermal cell, periderm (10-18 hpf)",-0.590620717154967
+"atf6 | 24C | 24hpf",10,"(Intercept)","peridermal cell, periderm (24-72 hpf)",1.27689215048804
+"atf6 | 24C | 24hpf",10,"cohort_PC1","peridermal cell, periderm (24-72 hpf)",0.485058567119137
+"atf6 | 24C | 24hpf",10,"cohort_PC2","peridermal cell, periderm (24-72 hpf)",-1.42231045390173
+"atf6 | 24C | 24hpf",10,"(Intercept)","peridermal cell, periderm (96 hpf)",1.37523915914585
+"atf6 | 24C | 24hpf",10,"cohort_PC1","peridermal cell, periderm (96 hpf)",-0.137585382370872
+"atf6 | 24C | 24hpf",10,"cohort_PC2","peridermal cell, periderm (96 hpf)",0.830696064543688
+"atf6 | 24C | 24hpf",10,"(Intercept)","peridermal cell, periderm (muc13a+)",-1.93658405271579
+"atf6 | 24C | 24hpf",10,"cohort_PC1","peridermal cell, periderm (muc13a+)",-1.56162616768505
+"atf6 | 24C | 24hpf",10,"cohort_PC2","peridermal cell, periderm (muc13a+)",3.89190878893428
+"atf6 | 24C | 24hpf",10,"(Intercept)","photoreceptor cell, epiphysis",1.48356913366554
+"atf6 | 24C | 24hpf",10,"cohort_PC1","photoreceptor cell, epiphysis",-0.0435437976320391
+"atf6 | 24C | 24hpf",10,"cohort_PC2","photoreceptor cell, epiphysis",-0.132168081291145
+"atf6 | 24C | 24hpf",10,"(Intercept)","pigment cell, cranial neural crest (progenitor)",1.028008660789
+"atf6 | 24C | 24hpf",10,"cohort_PC1","pigment cell, cranial neural crest (progenitor)",0.0557075334004982
+"atf6 | 24C | 24hpf",10,"cohort_PC2","pigment cell, cranial neural crest (progenitor)",0.186761079970764
+"atf6 | 24C | 24hpf",10,"(Intercept)","pigment cell, trunk neural crest (progenitor)",1.64228877708261
+"atf6 | 24C | 24hpf",10,"cohort_PC1","pigment cell, trunk neural crest (progenitor)",-0.249119482113077
+"atf6 | 24C | 24hpf",10,"cohort_PC2","pigment cell, trunk neural crest (progenitor)",-0.0374420536599608
+"atf6 | 24C | 24hpf",10,"(Intercept)","podocyte, pronephric glomerulus",-0.758756372389893
+"atf6 | 24C | 24hpf",10,"cohort_PC1","podocyte, pronephric glomerulus",0.784695372847843
+"atf6 | 24C | 24hpf",10,"cohort_PC2","podocyte, pronephric glomerulus",1.83470798178205
+"atf6 | 24C | 24hpf",10,"(Intercept)","premigratory neural crest cell, cranial neural crest",-1.22067443708593
+"atf6 | 24C | 24hpf",10,"cohort_PC1","premigratory neural crest cell, cranial neural crest",-0.0105231089274171
+"atf6 | 24C | 24hpf",10,"cohort_PC2","premigratory neural crest cell, cranial neural crest",-0.616897209481242
+"atf6 | 24C | 24hpf",10,"(Intercept)","premigratory neural crest cell, trunk neural crest",0.369158946652197
+"atf6 | 24C | 24hpf",10,"cohort_PC1","premigratory neural crest cell, trunk neural crest",-0.0678947735236742
+"atf6 | 24C | 24hpf",10,"cohort_PC2","premigratory neural crest cell, trunk neural crest",1.51246911197002
+"atf6 | 24C | 24hpf",10,"(Intercept)","radial glial cell, diencephalon",-0.213176156176692
+"atf6 | 24C | 24hpf",10,"cohort_PC1","radial glial cell, diencephalon",-0.940105822933486
+"atf6 | 24C | 24hpf",10,"cohort_PC2","radial glial cell, diencephalon",0.513179092388242
+"atf6 | 24C | 24hpf",10,"(Intercept)","radial glial cell, hindbrain",-2.24125250056993
+"atf6 | 24C | 24hpf",10,"cohort_PC1","radial glial cell, hindbrain",2.02146510087229
+"atf6 | 24C | 24hpf",10,"cohort_PC2","radial glial cell, hindbrain",3.15417429937203
+"atf6 | 24C | 24hpf",10,"(Intercept)","radial glial cell, midbrain",0.489669190814582
+"atf6 | 24C | 24hpf",10,"cohort_PC1","radial glial cell, midbrain",-0.366413813740448
+"atf6 | 24C | 24hpf",10,"cohort_PC2","radial glial cell, midbrain",0.909645741540373
+"atf6 | 24C | 24hpf",10,"(Intercept)","radial glial cell, spinal cord",1.98142871759409
+"atf6 | 24C | 24hpf",10,"cohort_PC1","radial glial cell, spinal cord",0.176315436871279
+"atf6 | 24C | 24hpf",10,"cohort_PC2","radial glial cell, spinal cord",-0.0434123230399714
+"atf6 | 24C | 24hpf",10,"(Intercept)","radial glial cell, telencephalon",0.150740010768998
+"atf6 | 24C | 24hpf",10,"cohort_PC1","radial glial cell, telencephalon",0.181994867751351
+"atf6 | 24C | 24hpf",10,"cohort_PC2","radial glial cell, telencephalon",1.04772060946947
+"atf6 | 24C | 24hpf",10,"(Intercept)","retinal cell, retina (precursor)",-1.30474990458
+"atf6 | 24C | 24hpf",10,"cohort_PC1","retinal cell, retina (precursor)",1.69987386759502
+"atf6 | 24C | 24hpf",10,"cohort_PC2","retinal cell, retina (precursor)",1.67774581098937
+"atf6 | 24C | 24hpf",10,"(Intercept)","retinal ganglion cell, ganglionic layer of retina",-4.47183275521725
+"atf6 | 24C | 24hpf",10,"cohort_PC1","retinal ganglion cell, ganglionic layer of retina",-6.32146539364928
+"atf6 | 24C | 24hpf",10,"cohort_PC2","retinal ganglion cell, ganglionic layer of retina",4.07326058560758
+"atf6 | 24C | 24hpf",10,"(Intercept)","retinal ganglion cell, ganglionic layer of retina (precursor)",-1.72321763501093
+"atf6 | 24C | 24hpf",10,"cohort_PC1","retinal ganglion cell, ganglionic layer of retina (precursor)",0.88334071517884
+"atf6 | 24C | 24hpf",10,"cohort_PC2","retinal ganglion cell, ganglionic layer of retina (precursor)",-0.901205560494634
+"atf6 | 24C | 24hpf",10,"(Intercept)","retinal pigment epithelial cell, pigmented layer of retina",1.96875204993969
+"atf6 | 24C | 24hpf",10,"cohort_PC1","retinal pigment epithelial cell, pigmented layer of retina",0.204320549341029
+"atf6 | 24C | 24hpf",10,"cohort_PC2","retinal pigment epithelial cell, pigmented layer of retina",0.0015894917023258
+"atf6 | 24C | 24hpf",10,"(Intercept)","retinal progenitor cell, optic cup",3.46346507521759
+"atf6 | 24C | 24hpf",10,"cohort_PC1","retinal progenitor cell, optic cup",0.5548654205644
+"atf6 | 24C | 24hpf",10,"cohort_PC2","retinal progenitor cell, optic cup",0.737642822063931
+"atf6 | 24C | 24hpf",10,"(Intercept)","retinal progenitor cell, optic vesicle",1.89127428094447
+"atf6 | 24C | 24hpf",10,"cohort_PC1","retinal progenitor cell, optic vesicle",-0.761576933913021
+"atf6 | 24C | 24hpf",10,"cohort_PC2","retinal progenitor cell, optic vesicle",0.953040878814454
+"atf6 | 24C | 24hpf",10,"(Intercept)","retinal progenitor cell, retina",3.40572696410611
+"atf6 | 24C | 24hpf",10,"cohort_PC1","retinal progenitor cell, retina",0.166271387513804
+"atf6 | 24C | 24hpf",10,"cohort_PC2","retinal progenitor cell, retina",-0.171556541332834
+"atf6 | 24C | 24hpf",10,"(Intercept)","retinal progenitor cell, retina (atoh7+)",0.441798640836435
+"atf6 | 24C | 24hpf",10,"cohort_PC1","retinal progenitor cell, retina (atoh7+)",0.0523942843328566
+"atf6 | 24C | 24hpf",10,"cohort_PC2","retinal progenitor cell, retina (atoh7+)",2.11077447694285
+"atf6 | 24C | 24hpf",10,"(Intercept)","retinal rod cell, outer nuclear layer of retina",-0.822190359672422
+"atf6 | 24C | 24hpf",10,"cohort_PC1","retinal rod cell, outer nuclear layer of retina",1.66264998456165
+"atf6 | 24C | 24hpf",10,"cohort_PC2","retinal rod cell, outer nuclear layer of retina",-0.913060729504501
+"atf6 | 24C | 24hpf",10,"(Intercept)","Rohon-Beard neuron, spinal cord",1.72243872663359
+"atf6 | 24C | 24hpf",10,"cohort_PC1","Rohon-Beard neuron, spinal cord",-0.218137192342393
+"atf6 | 24C | 24hpf",10,"cohort_PC2","Rohon-Beard neuron, spinal cord",0.640767587245049
+"atf6 | 24C | 24hpf",10,"(Intercept)","sensory hair cell, ear (includes lateral line)",-1.74247417724043
+"atf6 | 24C | 24hpf",10,"cohort_PC1","sensory hair cell, ear (includes lateral line)",-0.868470896367237
+"atf6 | 24C | 24hpf",10,"cohort_PC2","sensory hair cell, ear (includes lateral line)",-1.71180146076067
+"atf6 | 24C | 24hpf",10,"(Intercept)","slow muscle cell, slow muscle tissue",1.94280319945753
+"atf6 | 24C | 24hpf",10,"cohort_PC1","slow muscle cell, slow muscle tissue",-0.1985802751149
+"atf6 | 24C | 24hpf",10,"cohort_PC2","slow muscle cell, slow muscle tissue",-0.336779312483002
+"atf6 | 24C | 24hpf",10,"(Intercept)","slow muscle myoblast, slow muscle tissue",3.16058372727044
+"atf6 | 24C | 24hpf",10,"cohort_PC1","slow muscle myoblast, slow muscle tissue",-0.033190202295578
+"atf6 | 24C | 24hpf",10,"cohort_PC2","slow muscle myoblast, slow muscle tissue",-0.42938006555344
+"atf6 | 24C | 24hpf",10,"(Intercept)","smooth muscle cell, arch of aorta",-0.265155849187243
+"atf6 | 24C | 24hpf",10,"cohort_PC1","smooth muscle cell, arch of aorta",-0.0556627858865622
+"atf6 | 24C | 24hpf",10,"cohort_PC2","smooth muscle cell, arch of aorta",-1.30449418291409
+"atf6 | 24C | 24hpf",10,"(Intercept)","smooth muscle cell, epicardium",0.746831439268875
+"atf6 | 24C | 24hpf",10,"cohort_PC1","smooth muscle cell, epicardium",0.787988716866898
+"atf6 | 24C | 24hpf",10,"cohort_PC2","smooth muscle cell, epicardium",-0.414037223943224
+"atf6 | 24C | 24hpf",10,"(Intercept)","smooth muscle cell, myocardium",0.410025299869781
+"atf6 | 24C | 24hpf",10,"cohort_PC1","smooth muscle cell, myocardium",0.112266672275274
+"atf6 | 24C | 24hpf",10,"cohort_PC2","smooth muscle cell, myocardium",0.507414180403218
+"atf6 | 24C | 24hpf",10,"(Intercept)","smooth muscle cell, visceral mesothelium",-6.88660204064271
+"atf6 | 24C | 24hpf",10,"cohort_PC1","smooth muscle cell, visceral mesothelium",9.49838164743736
+"atf6 | 24C | 24hpf",10,"cohort_PC2","smooth muscle cell, visceral mesothelium",15.0405185972933
+"atf6 | 24C | 24hpf",10,"(Intercept)","supporting cell, meninx (lymphatic)",-1.56047050011453
+"atf6 | 24C | 24hpf",10,"cohort_PC1","supporting cell, meninx (lymphatic)",-0.385050504295632
+"atf6 | 24C | 24hpf",10,"cohort_PC2","supporting cell, meninx (lymphatic)",-3.15982091229034
+"atf6 | 24C | 24hpf",10,"(Intercept)","syncytial cell, yolk sac",3.48027470338445
+"atf6 | 24C | 24hpf",10,"cohort_PC1","syncytial cell, yolk sac",-0.147858053165524
+"atf6 | 24C | 24hpf",10,"cohort_PC2","syncytial cell, yolk sac",-0.308473754314885
+"atf6 | 24C | 24hpf",10,"(Intercept)","syncytial cell, yolk sac (10 hpf)",0.771193568146221
+"atf6 | 24C | 24hpf",10,"cohort_PC1","syncytial cell, yolk sac (10 hpf)",-0.807050952733234
+"atf6 | 24C | 24hpf",10,"cohort_PC2","syncytial cell, yolk sac (10 hpf)",1.09437662436917
+"atf6 | 24C | 24hpf",10,"(Intercept)","tendon cell, somite",0.128922476043746
+"atf6 | 24C | 24hpf",10,"cohort_PC1","tendon cell, somite",0.282586671101894
+"atf6 | 24C | 24hpf",10,"cohort_PC2","tendon cell, somite",1.22928507972256
+"atf6 | 24C | 24hpf",10,"(Intercept)","tendon cell, unknown",-2.51794409614736
+"atf6 | 24C | 24hpf",10,"cohort_PC1","tendon cell, unknown",-0.696064005760224
+"atf6 | 24C | 24hpf",10,"cohort_PC2","tendon cell, unknown",4.98724727882941
+"atf6 | 24C | 24hpf",10,"(Intercept)","trigeminal neuron, trigeminal ganglion",0.0529241073289284
+"atf6 | 24C | 24hpf",10,"cohort_PC1","trigeminal neuron, trigeminal ganglion",-0.297658740002969
+"atf6 | 24C | 24hpf",10,"cohort_PC2","trigeminal neuron, trigeminal ganglion",-1.27462405245013
+"atf6 | 24C | 24hpf",10,"(Intercept)","unknown, hypochord",0.856068562558486
+"atf6 | 24C | 24hpf",10,"cohort_PC1","unknown, hypochord",-0.517626111073089
+"atf6 | 24C | 24hpf",10,"cohort_PC2","unknown, hypochord",0.86784857487071
+"atf6 | 24C | 24hpf",10,"(Intercept)","vagal neural crest cell, neural crest",2.16798251419755
+"atf6 | 24C | 24hpf",10,"cohort_PC1","vagal neural crest cell, neural crest",-0.142766194151385
+"atf6 | 24C | 24hpf",10,"cohort_PC2","vagal neural crest cell, neural crest",0.728813351962281
+"atf6 | 24C | 24hpf",10,"(Intercept)","xanthoblast, integument",-0.336793566040409
+"atf6 | 24C | 24hpf",10,"cohort_PC1","xanthoblast, integument",-0.484179683781291
+"atf6 | 24C | 24hpf",10,"cohort_PC2","xanthoblast, integument",1.88884940876659
+"atf6 | 24C | 24hpf",10,"(Intercept)","xanthophore cell, integument",-2.48918972536991
+"atf6 | 24C | 24hpf",10,"cohort_PC1","xanthophore cell, integument",0.11259117527112
+"atf6 | 24C | 24hpf",10,"cohort_PC2","xanthophore cell, integument",1.67975213256363

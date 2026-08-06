@@ -1,0 +1,7 @@
+experiment_id,sci_expt,notes
+20250612_24hpf_ctrl_atf6,GENE7,"hash_plate_num=1; confirmed against GENE7_embryo_metadata.tsv (P01, timepoint 24, Control/atf6)"
+20250612_24hpf_wfs1_ctcf,GENE7,"hash_plate_num=2; confirmed against GENE7_embryo_metadata.tsv (P02, timepoint 24, wfs1a;wfs1b/ctcf)"
+20250612_30hpf_ctrl_atf6,GENE7,"hash_plate_num=18; confirmed against GENE7_embryo_metadata.tsv (P18, timepoint 30, Control/atf6)"
+20250612_30hpf_wfs1_ctcf,GENE7,"hash_plate_num=4; confirmed against GENE7_embryo_metadata.tsv (P04, timepoint 30, wfs1a;wfs1b/ctcf)"
+20250612_36hpf_ctrl_atf6,GENE7,"hash_plate_num=5; confirmed against GENE7_embryo_metadata.tsv (P05, timepoint 36, Control/atf6)"
+20250612_36hpf_wfs1_ctcf,GENE7,"hash_plate_num=6; confirmed against GENE7_embryo_metadata.tsv (P06, timepoint 36, wfs1a;wfs1b/ctcf)"

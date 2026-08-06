@@ -97,11 +97,11 @@ def resolve_snip_qc_flag_sources(
     resolved = []
     for step, flags in sorted(step_to_flags.items()):
         artifact_key = _find_per_well_csv_artifact_key(step)
-        applicability_columns = tuple(
+        applicability_columns = tuple(sorted({
             column
             for column in (applicability_column_for_flag(flag) for flag in flags)
             if column is not None
-        )
+        }))
         payload_columns = set(_SOURCE_PAYLOADS[step])
         missing_applicability = sorted(set(applicability_columns) - payload_columns)
         if missing_applicability:
@@ -118,7 +118,7 @@ def resolve_snip_qc_flag_sources(
             artifact_key=artifact_key,
             flag_columns=tuple(sorted(flags)),
             path=path,
-            applicability_columns=tuple(sorted(applicability_columns)),
+            applicability_columns=applicability_columns,
         ))
     return tuple(resolved)
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from data_pipeline.feature_extraction.stage_inference import predict_stage_hpf
 from data_pipeline.quality_control.death_detection.contract import (
     DEATH_DETECTION_QC_TABLE_COLUMNS,
     DEATH_EVENT_TABLE_COLUMNS,
@@ -34,7 +35,7 @@ CHANNEL = "BF"
 
 def _build_inputs(tmp_path):
     """Two animals in one well: phys 1 clearly dies, phys 2 stays alive."""
-    fa_rows, timing_rows, stage_rows, inv_rows = [], [], [], []
+    fa_rows, timing_rows, inv_rows = [], [], []
     traces = {1: [1.0, 1.0, 1.0, 0.1, 0.05, 0.05], 2: [1.0, 0.99, 0.98, 0.99, 0.98, 0.97]}
     times = list(range(6))
     # uniform 1h frames; timing is per (well, time_index)
@@ -60,28 +61,29 @@ def _build_inputs(tmp_path):
             }
             fa_rows.append({**common, "fraction_alive": frac})
             inv_rows.append({**common, "mask_id": image_id + f"_m{phys_index}"})
-            stage_rows.append(
-                {
-                    "experiment_id": EXP,
-                    "well_id": WELL,
-                    "physical_embryo_id": phys,
-                    "embryo_id": embryo_id,
-                    "snip_id": snip_id,
-                    "time_index": t,
-                    "predicted_stage_hpf": 24.0 + t,
-                }
-            )
 
     paths = {}
     for name, rows in (
         ("fraction_alive", fa_rows),
         ("frame_inventory", timing_rows),
-        ("stage_predictions", stage_rows),
         ("snip_inventory", inv_rows),
     ):
         p = tmp_path / f"{name}.csv"
         pd.DataFrame(rows).to_csv(p, index=False)
         paths[name] = p
+
+    plate_metadata = pd.DataFrame(
+        [
+            {
+                "experiment_id": EXP,
+                "well_id": WELL,
+                "start_age_hpf": 24.0,
+                "temperature": 28.0,
+            }
+        ]
+    )
+    paths["plate_metadata"] = tmp_path / "plate_metadata.csv"
+    plate_metadata.to_csv(paths["plate_metadata"], index=False)
 
     registry = pd.DataFrame(
         {"physical_embryo_id": [build_physical_embryo_id(WELL, i) for i in (1, 2)]}
@@ -99,7 +101,7 @@ def test_both_grains_emitted_correctly(tmp_path):
     run_death_detection(
         fraction_alive_csv=paths["fraction_alive"],
         frame_inventory_csv=paths["frame_inventory"],
-        stage_predictions_csv=paths["stage_predictions"],
+        plate_metadata_csv=paths["plate_metadata"],
         snip_inventory_csv=paths["snip_inventory"],
         physical_embryo_registry_csv=paths["registry"],
         output_qc_csv=out_qc,
@@ -112,6 +114,7 @@ def test_both_grains_emitted_correctly(tmp_path):
     assert list(qc.columns) == DEATH_DETECTION_QC_TABLE_COLUMNS
     assert qc["snip_id"].is_unique and len(qc) == 12  # 2 animals x 6 frames
     assert qc["viability_dead_flag"].dtype == bool and qc["persistence_dead_flag"].dtype == bool
+    assert set(qc["death_detection_qc_applicability"]) == {"exclusion"}
     # the validator (registry verifier) must pass
     validate_death_detection_qc(qc, physical_embryo_registry_df=pd.read_csv(paths["registry"]), check_sources=True)
     # only the dying animal carries persistence-true snips
@@ -129,7 +132,54 @@ def test_both_grains_emitted_correctly(tmp_path):
     assert event["physical_embryo_id"].is_unique
     validate_death_event(event, physical_embryo_registry_df=pd.read_csv(paths["registry"]), check_sources=True)
     # The decline candidate marks the frame BEFORE the steep drop (diff t=2->t=3), so the
-    # inflection is t=2; with lead_time_hr=0 the called-death frame D == 2 and stage = 24 + 2.
+    # inflection is t=2; with lead_time_hr=0 the called-death frame D == 2. Stage is calculated
+    # directly from well metadata + frame timing, independently of the dying animal's snip rows.
     death_d = int(event["death_event_time_index"].iloc[0])
     assert death_d == 2
-    assert event["death_event_stage_hpf"].iloc[0] == pytest.approx(24.0 + death_d)
+    assert event["death_event_stage_hpf"].iloc[0] == pytest.approx(
+        predict_stage_hpf(24.0, death_d * 3600.0, 28.0)
+    )
+
+
+def test_single_frame_single_z_death_calls_are_retained_but_diagnostic_only(tmp_path):
+    paths = _build_inputs(tmp_path)
+
+    fraction_alive = pd.read_csv(paths["fraction_alive"])
+    fraction_alive = fraction_alive[fraction_alive["time_index"].eq(0)].copy()
+    fraction_alive.loc[fraction_alive.index[0], "fraction_alive"] = 0.1
+    fraction_alive.to_csv(paths["fraction_alive"], index=False)
+
+    snip_inventory = pd.read_csv(paths["snip_inventory"])
+    snip_inventory = snip_inventory[snip_inventory["time_index"].eq(0)].copy()
+    snip_inventory.to_csv(paths["snip_inventory"], index=False)
+
+    frame_inventory = pd.read_csv(paths["frame_inventory"])
+    frame_inventory = frame_inventory[frame_inventory["time_index"].eq(0)].copy()
+    frame_inventory["image_id"] = [
+        build_image_id(WELL, CHANNEL, int(t)) for t in frame_inventory["time_index"]
+    ]
+    frame_inventory["image_product_type"] = "projection"
+    frame_inventory["source_scope"] = "seahub"
+    frame_inventory["image_kind"] = "single_z"
+    frame_inventory["z_position"] = None
+    frame_inventory["calibration_status"] = "placeholder"
+    frame_inventory.to_csv(paths["frame_inventory"], index=False)
+
+    out_qc = tmp_path / "death_detection_qc.csv"
+    run_death_detection(
+        fraction_alive_csv=paths["fraction_alive"],
+        frame_inventory_csv=paths["frame_inventory"],
+        plate_metadata_csv=paths["plate_metadata"],
+        snip_inventory_csv=paths["snip_inventory"],
+        physical_embryo_registry_csv=paths["registry"],
+        output_qc_csv=out_qc,
+        output_death_event_csv=tmp_path / "death_event.csv",
+        config_overrides={"lead_time_hr": 0.0},
+    )
+
+    qc = pd.read_csv(out_qc)
+    assert len(qc) == 2
+    assert qc["viability_dead_flag"].any()
+    assert not qc["persistence_dead_flag"].any()
+    assert set(qc["death_detection_qc_applicability"]) == {"diagnostic_only"}
+    validate_death_detection_qc(qc)

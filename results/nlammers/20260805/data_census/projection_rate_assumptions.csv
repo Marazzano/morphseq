@@ -1,0 +1,4 @@
+scope,lower_timepoint_rate,upper_timepoint_rate,lower_embryo_rate,upper_embryo_rate,lower_policy,upper_policy
+Keyence,0.546608254233163,0.7266089496192761,0.8166479190101237,0.9478815148106486,strict current QC,death + mask geometry
+YX1,0.3644062177343727,0.5947674033096837,0.7987321711568938,0.90702588483888,strict current QC,death + mask geometry
+SeaHub,0.9892051030421982,1.0,0.9892051030421982,1.0,current detection completion,all reconciled embryos

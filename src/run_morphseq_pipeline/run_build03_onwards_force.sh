@@ -109,9 +109,9 @@ DEFAULT_EXPERIMENTS="20251207_pbx,20260213,20260223,20260224,20260304,20260306,2
 : "${BUILD02_NUM_WORKERS:=1}"       # DataLoader workers for UNet inference
 : "${BUILD02_OVERWRITE:=1}"         # 1=overwrite existing masks, 0=skip existing
 
-# Snip export knobs (outscale fixed at 7.8 to match embedding expectations)
+# Snip export knobs (outscale fixed at the morphology-VAE training contract)
 : "${SNIP_WORKERS:=1}"
-: "${SNIP_DL_RAD_UM:=50}"
+: "${SNIP_DL_RAD_UM:=75}"
 : "${SNIP_OVERWRITE:=0}"
 # ----------------------------------------------------------------------------
 
@@ -321,7 +321,7 @@ else:
 extract_embryo_snips(
     root=data_root,
     stats_df=stats_df,
-    outscale=7.8,
+    outscale=6.5,
     dl_rad_um=float("${SNIP_DL_RAD_UM}"),
     overwrite_flag=${SNIP_OVERWRITE_PY},
     n_workers=int("${SNIP_WORKERS}"),
@@ -388,5 +388,4 @@ echo "🎉 SAM2 onwards pipeline completed for ${EXPERIMENT}!"
   #   --data-root morphseq_playground \
   #   --experiments 20250501,20250912,20251020,20251104,20251106,20251113,20251119,20251121,20251125 \
   #   --action build03 --force
-
 
