@@ -1,6 +1,6 @@
 experiment_wells: null
 experiments:
-- 20260624_2x_td_bf_pbx_coll
+- 20260624_2x_td_bf_pbx_coll_plate01
 feature_extraction:
   consolidated_features: {}
   curvature_metrics: {}
@@ -97,6 +97,12 @@ snip_processing:
   save_raw_crops: true
   target_pixel_size_um: 7.8
   write_manifest_csv: true
+target_wells:
+  20260624_2x_td_bf_pbx_coll_plate01:
+  - 20260624_2x_td_bf_pbx_coll_plate01_A01
+  - 20260624_2x_td_bf_pbx_coll_plate01_A02
+  - 20260624_2x_td_bf_pbx_coll_plate01_B01
+  - 20260624_2x_td_bf_pbx_coll_plate01_B02
 threads: 4
 unet_snip:
   device: cuda

@@ -1,6 +1,7 @@
 """Tests for build_keyence_stitch_map — mocked stitcher, no real TIFFs required."""
 
 import json
+import logging
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -10,6 +11,7 @@ import pytest
 
 from data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map import (
     build_keyence_stitch_map,
+    stage_prior_offsets,
 )
 
 
@@ -160,18 +162,76 @@ def test_deterministic_seed(tmp_path):
     assert out1.read_bytes() == out2.read_bytes()
 
 
-def test_raises_when_no_good_samples(tmp_path):
+def test_falls_back_to_the_stage_prior_when_no_sample_aligns(tmp_path, caplog):
+    """No well aligns -> the map is written from the stage prior, and SAYS so.
+
+    POLICY CHANGE, not a regression. This test previously asserted RuntimeError("no sample fully
+    aligned"). The builder deliberately stopped failing for lack of a fully-aligned sample
+    (docstring, build_keyence_stitch_map:57-60): every tile index falls back to the stage prior so
+    the map always covers all tiles.
+
+    The test therefore asserts the SEMANTIC RESULT of the fallback rather than being rewritten to
+    echo whatever the implementation now returns. What matters is that a map with no image evidence
+    behind it is DISTINGUISHABLE from a calibrated one -- a silent fallback is how an uncalibrated
+    map gets trusted as a measured one.
+    """
     inv = _make_inventory(input_root=tmp_path, n_wells=1, n_time=2, n_tiles=3)
     out = tmp_path / "map.json"
 
-    with (
-        patch(f"{_BUILD_MOD}.read_keyence_plane",
-              side_effect=OSError("file not found")),
-    ):
-        with pytest.raises(RuntimeError, match="no sample fully aligned"):
+    with caplog.at_level(logging.WARNING):
+        with patch(f"{_BUILD_MOD}.read_keyence_plane", side_effect=OSError("file not found")):
             build_keyence_stitch_map(inv, n_samples=5, out_path=out, input_root=tmp_path)
 
-    assert not out.exists()
+    # 1. a map IS produced, covering every tile
+    assert out.exists(), "the fallback must still write a usable map"
+    written = json.loads(out.read_text())
+    assert len(written["coords"]) == 3
+
+    # 2. it records that no data-supported estimate was available
+    assert written["metadata"]["alignment_source"] == "stage_prior"
+    assert written["metadata"]["n_good_samples"] == 0
+
+    # 3. the offsets are STAGE-DERIVED, not invented. Deliberately a structural check rather than
+    #    a value-by-value comparison against stage_prior_offsets(): that helper is per-WELL and
+    #    anchors to the CENTER tile, whereas the written map is deliberately re-normalized to a
+    #    MIN-ORIGIN frame (build_keyence_stitch_map:94-102) so it matches how stitch2d renormalizes
+    #    loaded params. Re-deriving the expected values here would mean copying both the anchoring
+    #    and that renormalization into the test -- which is how a test starts asserting "whatever
+    #    the implementation returns".
+    #
+    #    What must hold is that the prior is a real geometric layout, expressed in the frame the
+    #    map actually ships: every axis touches its own origin, nothing is negative, and the tiles
+    #    occupy genuinely distinct positions.
+    offsets = np.asarray([written["coords"][str(i)] for i in range(len(written["coords"]))])
+    assert (offsets >= 0).all(), "the written map is min-origin, so no offset may be negative"
+    assert (offsets.min(axis=0) == 0).all(), (
+        "each axis must touch zero -- otherwise the map is not in the min-origin frame that "
+        "downstream materialization QC compares against"
+    )
+    assert len({tuple(o) for o in offsets}) == len(offsets), (
+        "tiles stacked on identical offsets means no layout was derived at all"
+    )
+
+    # 4. it is loud about it
+    assert any("stage prior" in r.message.lower() for r in caplog.records), (
+        "a whole-map fallback with zero image evidence must warn"
+    )
+
+
+def test_malformed_input_still_fails(tmp_path):
+    """The fallback must not become a blanket error sponge.
+
+    "Never fails for lack of an aligned sample" is a statement about IMAGE EVIDENCE, not a licence
+    to absorb structurally broken input. An empty inventory has no tiles to lay out and no stage
+    positions to derive a prior from, so there is nothing to fall back TO.
+    """
+    with pytest.raises(ValueError, match="empty"):
+        build_keyence_stitch_map(
+            _make_inventory(input_root=tmp_path, n_wells=1, n_time=1, n_tiles=1).iloc[0:0],
+            n_samples=5,
+            out_path=tmp_path / "map.json",
+            input_root=tmp_path,
+        )
 
 
 def test_orientation_from_inventory(tmp_path):
@@ -229,12 +289,23 @@ def test_raises_on_empty_inventory(tmp_path):
 
 
 def test_skips_partial_alignments_and_keeps_good_samples(tmp_path):
+    """A well that places only some tiles still contributes those tiles; the rest use the prior.
+
+    THE INJECTED FITS MUST AGREE WITH THE STAGE PRIOR. Stage C rejects any fit deviating from the
+    prior by more than DEFAULT_CALIBRATION_THRESHOLD_PX in either axis, so fits invented
+    independently of the fixture's stage coordinates are all filtered out and every tile silently
+    falls back to the prior -- which makes the test pass or fail for reasons unrelated to partial
+    alignment. _make_inventory places tile i at x = x_offset * i (default 10.0) in the [y, x]
+    frame, so the fits must too.
+    """
     inv = _make_inventory(input_root=tmp_path, n_wells=1, n_time=3, n_tiles=3)
     out = tmp_path / "map.json"
 
     fake_image = np.zeros((10, 10), dtype=np.uint8)
-    partial = {0: [0.0, 0.0], 1: [700.0, 1.0]}
-    full = {0: [0.0, 0.0], 1: [700.0, 1.0], 2: [1400.0, 2.0]}
+    # Center-anchored (tile 1 is the center of 3), matching what stitch2d hands back before
+    # collect_center_anchored_fits re-anchors it.
+    partial = {0: [0.0, -10.0], 1: [0.0, 0.0]}
+    full = {0: [0.0, -10.0], 1: [0.0, 0.0], 2: [0.0, 10.0]}
 
     with (
         patch(f"{_BUILD_MOD}.read_keyence_plane",
@@ -246,5 +317,9 @@ def test_skips_partial_alignments_and_keeps_good_samples(tmp_path):
         build_keyence_stitch_map(inv, n_samples=3, out_path=out, input_root=tmp_path)
 
     data = json.loads(out.read_text())
-    assert data["coords"] == {"0": [0.0, 0.0], "1": [700.0, 1.0], "2": [1400.0, 2.0]}
+    # Written in the MIN-ORIGIN frame, so the center-anchored -10/0/+10 above shifts to 0/10/20.
+    assert data["coords"] == {"0": [0.0, 0.0], "1": [0.0, 10.0], "2": [0.0, 20.0]}
     assert data["metadata"]["shape"] == [3, 1]
+    # Tile 2 placed in only ONE of the three samples, but that one fit survived the prior filter,
+    # so the map is calibrated rather than falling back for it.
+    assert data["metadata"]["alignment_source"] == "aligned"

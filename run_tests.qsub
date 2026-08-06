@@ -2,7 +2,7 @@
 #$ -N morphseq_tests
 #$ -q trapnell-login.q
 #$ -l mfree=16G
-#$ -l h_rt=4:00:00
+#$ -l h_rt=0:30:00
 #$ -j y
 #$ -V
 #$ -o /net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/logs
