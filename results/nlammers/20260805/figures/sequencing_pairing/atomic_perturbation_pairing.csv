@@ -1,0 +1,7 @@
+scope,domain,sequenced,total,imaging_only
+Keyence,chemical,0,2,2
+Keyence,environmental,7,7,0
+Keyence,genetic,9,9,0
+SeaHub,chemical,0,18,18
+SeaHub,environmental,0,3,3
+SeaHub,genetic,122,160,38

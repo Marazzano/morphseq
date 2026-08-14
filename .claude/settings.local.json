@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls /net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/core/data/*.py)",
+      "Bash(PYTHON=/net/trapnell/vol1/home/nlammers/micromamba/envs/morphseq-env/bin/python)",
+      "Bash(\"$PYTHON\" -c \"from src.core.run.run_utils import initialize_model; print\\(''OK''\\)\")",
+      "Bash(/net/trapnell/vol1/home/nlammers/micromamba/envs/morphseq-env/bin/python -c \"from src.core.run.run_utils import initialize_model; print\\(''OK''\\)\")"
+    ]
+  }
+}

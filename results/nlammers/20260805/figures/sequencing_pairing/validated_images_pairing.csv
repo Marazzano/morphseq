@@ -1,0 +1,12 @@
+scope,perturbation_class,imaging_only,sequenced
+Keyence,chemical,86,0
+Keyence,control,40,392
+Keyence,environmental,171,232
+Keyence,environmental+chemical,355,0
+Keyence,environmental+genetic,0,330
+Keyence,genetic,0,755
+SeaHub,chemical,952,0
+SeaHub,control,584,688
+SeaHub,environmental,272,0
+SeaHub,environmental+genetic,32,0
+SeaHub,genetic,1464,4072
