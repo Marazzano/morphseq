@@ -60,6 +60,10 @@
 | D13 | Predictive z-slice reconstruction: **excluded** | [NICK] |
 | D14 | Microscope/optical conditioning: **add explicitly** | [NICK] |
 | D15 | Metric path made functional now; **metric policy revisited separately** | [NICK] |
+| D16 | **Run provenance = one directory per run**: `resolved_config.yaml`, gzipped `snip_ids`, `split_assignments.csv` keyed by `physical_embryo_id`, `metric_group_map.csv`, `sources.json` (path/size/mtime/row-count per source artifact), `cohort_report.json` (counts by filter and exclusion reason), plus the adapter's git SHA. **Not** the full manifest — IDs + config regenerate it, `sources.json` detects when they can't | [NICK] |
+| D17 | **Provenance bundle is a W&B Artifact**; the local directory is a staging area addressed by one config key (`run_artifacts_dir`). No coupling to Hydra cwd or Lightning internals, so the folder layout can be redesigned without touching provenance code | [NICK] |
+| D18 | Manifest carries the **individual QC flag columns**, not just `use_snip`, so cohort policy is a named predicate over flags. Default strict for the first end-to-end run; per-flag policy is a first-class alternative to settle before any science run | [CLAUDE, pending] |
+| D19 | Do **not** hash image content (≈28 GB, hours). Hash source artifacts only (~500 MB, seconds) plus the sorted `snip_id` list | [NICK] |
 
 **Augmentations:** wanted — embryo rescaling ~50%± FOV-constrained; brightness/contrast;
 reflections/rotations FOV-constrained (believed implemented). Dirt-speck texture **tabled**.
@@ -83,6 +87,15 @@ a required check.
 7. Phase-one experiment ID list.
 8. Checkpoint compatibility requirement.
 
+## 4b. Cohort reality (measured 2026-08-19)
+
+699,505 inventory rows → 531,902 with QC → 185,204 pass `use_snip` → **176,466 survive the combined
+metric gate (25.2%)**. QC pass rate 34.8%, and biased by experiment length: >10k-snip experiments
+average 34.9%, ≤1k-snip experiments 77.0%. `is_valid_snip` is True for every row, so the strict gate
+reduces to `use_snip` alone. Intensity η² by experiment is concentrated at the black end
+(`min` 0.477, `zero_fraction` 0.242) rather than saturation (0.047) — brightness augmentation must
+be **additive-offset-with-clipping**, not multiplicative, to span it.
+
 ## 5. Unverified — repo/data checks
 
 - `contrastive_transform` per-view augmentation independence; whether FOV-constrained ±50% rescaling exists.
@@ -91,6 +104,10 @@ a required check.
 - Actual µm/px consistency across the cohort.
 - Read+decode throughput off the real mount (decides D8's cache question).
 - Whether `src.data_pipeline` path helpers import cleanly in the training env.
+- I/O throughput on the **real training host** — the recon measured a workstation over a virtual
+  mount, so read latency is not representative. CPU-side numbers (decode 1.14 ms, resize 0.30 ms)
+  are valid anywhere and cap the benefit of pre-downsampling at ~24%; only the sharding question
+  is open.
 
 ## 6. Deferred
 
