@@ -1,13 +1,13 @@
 # Pipeline output reconnaissance for core-model refactor
 
-Generated 2026-08-18T05:36:45.198131+00:00 by `/home/nick/miniconda3/envs/morphseq-env/bin/python` with pandas 2.2.3. This was a read-only survey of `/media/nick/gs_cluster/projects/data/morphseq/pipeline/output`.
+Generated 2026-08-18T05:36:45.198131+00:00 by `/home/nick/miniconda3/envs/morphseq-env/bin/python` with pandas 2.2.3. This was a read-only survey of `/media/nick/gs_cluster/projects/data/morphseq/pipeline/output`. Section 7 and its dependent conclusions were rerun 2026-08-19T03:31:41.073578+00:00 with PyArrow 25.0.1.
 
 ## Scope and blocking findings
 
 - Explicit cohort: **148 deduplicated experiment IDs** from 3 manifests.
 - Newest selected experiment by ID: `20260724_hotfish_36hpf_plate02`.
 - Pipeline path authority: `src/data_pipeline/pipeline_orchestrator/orchestration/paths.py` (loaded directly to avoid package initializer side effects).
-- **Blocking:** neither `pyarrow` nor `fastparquet` is installed in the training environment. QC Parquet files could be located but not read; every QC-derived statistic and the combined metric gate is therefore unmeasured, not silently omitted.
+- QC Parquet is now readable: **105/105 present files** opened successfully. The remaining availability blocker is upstream: **28 inventory-bearing experiments (167,603 snips) have no QC artifact**, so those rows remain unresolved rather than being treated as QC failures.
 
 <details><summary>Exact ordered experiment IDs</summary>
 
@@ -169,7 +169,7 @@ Generated 2026-08-18T05:36:45.198131+00:00 by `/home/nick/miniconda3/envs/morphs
 | --- | --- | --- | --- | --- |
 | inventory | 148 | 133 | 133 | 2 |
 | plate | 148 | 144 | 144 | 38 |
-| qc | 148 | 105 | 0 | 0 |
+| qc | 148 | 105 | 105 | 3 |
 | stage | 148 | 109 | 109 | 2 |
 
 Inventory schema flag: **133/133** readable inventories lack `source_micrometers_per_pixel`; **133/133** lack `snip_micrometers_per_pixel`. A further **15** selected experiments have no readable merged inventory.
@@ -180,6 +180,9 @@ Schema IDs expand to these exact ordered column lists:
 - `I02` (inventory): `["snip_id", "embryo_id", "physical_embryo_id", "experiment_id", "well_id", "image_id", "time_index", "channel_id", "mask_id", "track_id", "image_path", "processed_snip_path", "embryo_mask", "embryo_mask_snip_path", "crop_x_min_px", "crop_y_min_px", "crop_x_max_px", "crop_y_max_px", "crop_width_px", "crop_height_px", "is_valid_snip", "error_message"]`
 - `S01` (stage): `["experiment_id", "well_id", "physical_embryo_id", "embryo_id", "snip_id", "image_id", "time_index", "channel_id", "predicted_stage_hpf", "model_version", "stage_prediction_status"]`
 - `S02` (stage): `["experiment_id", "well_id", "physical_embryo_id", "embryo_id", "snip_id", "image_id", "time_index", "channel_id", "predicted_stage_hpf", "model_version"]`
+- `Q01` (QC; 101 experiments): `["experiment_id", "well_id", "physical_embryo_id", "embryo_id", "snip_id", "persistence_dead_flag", "viability_dead_flag", "focus_flag", "focus_qc_applicability", "discontinuous_mask_flag", "edge_flag", "overlapping_mask_flag", "motion_blur_flag", "motion_blur_qc_applicability", "sa_outlier_flag", "surface_area_qc_applicability", "use_snip", "qc_fail_reasons"]`
+- `Q02` (QC; 2 experiments): `["experiment_id", "well_id", "physical_embryo_id", "embryo_id", "snip_id", "use_snip", "qc_fail_reasons"]`
+- `Q03` (QC; 2 experiments): `["experiment_id", "well_id", "physical_embryo_id", "embryo_id", "snip_id", "persistence_dead_flag", "viability_dead_flag", "death_detection_qc_applicability", "focus_flag", "focus_qc_applicability", "discontinuous_mask_flag", "edge_flag", "overlapping_mask_flag", "motion_blur_flag", "motion_blur_qc_applicability", "sa_outlier_flag", "surface_area_qc_applicability", "use_snip", "qc_fail_reasons"]`
 - `P01` (plate): `["well_index", "medium", "image_to_hash_map", "hash_plate_num", "mold_type", "genotype", "strain", "chem_perturbation", "start_age_hpf", "embryos_per_well", "temperature", "morph_seq_qc", "experiment_id", "well_id"]`
 - `P02` (plate): `["well_index", "medium", "mold_type", "genotype", "strain", "chem_perturbation", "start_age_hpf", "embryos_per_well", "temperature", "morph_seq_qc", "experiment_id", "well_id"]`
 - `P03` (plate): `["well_index", "medium", "mold_type", "genotype", "chem_perturbation", "start_age_hpf", "embryos_per_well", "temperature", "image_to_hash_plate_num", "hash_to_image_map", "qc", "morph_seq_qc", "experiment_id", "well_id"]`
@@ -225,595 +228,595 @@ Schema IDs expand to these exact ordered column lists:
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 20250612_24hpf_ctrl_atf6 | inventory | readable | 97 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250612_24hpf_ctrl_atf6 | stage | readable | 97 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250612_24hpf_ctrl_atf6 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250612_24hpf_ctrl_atf6 | qc | readable | 97 | Q03 | 20260724_hotfish_36hpf_plate01 | ["death_detection_qc_applicability"] | [] |  |
 | 20250612_24hpf_ctrl_atf6 | plate | readable | 96 | P01 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "morph_seq_qc", "strain"] | ["image_notes", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250612_24hpf_wfs1_ctcf | inventory | readable | 96 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250612_24hpf_wfs1_ctcf | stage | readable | 96 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250612_24hpf_wfs1_ctcf | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250612_24hpf_wfs1_ctcf | qc | readable | 96 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250612_24hpf_wfs1_ctcf | plate | readable | 96 | P02 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "morph_seq_qc", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250612_30hpf_ctrl_atf6 | inventory | readable | 97 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250612_30hpf_ctrl_atf6 | stage | readable | 97 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250612_30hpf_ctrl_atf6 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250612_30hpf_ctrl_atf6 | qc | readable | 97 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250612_30hpf_ctrl_atf6 | plate | readable | 96 | P02 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "morph_seq_qc", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250612_30hpf_wfs1_ctcf | inventory | readable | 97 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250612_30hpf_wfs1_ctcf | stage | readable | 97 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250612_30hpf_wfs1_ctcf | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250612_30hpf_wfs1_ctcf | qc | readable | 97 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250612_30hpf_wfs1_ctcf | plate | readable | 96 | P02 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "morph_seq_qc", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250612_36hpf_ctrl_atf6 | inventory | readable | 102 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250612_36hpf_ctrl_atf6 | stage | readable | 102 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250612_36hpf_ctrl_atf6 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250612_36hpf_ctrl_atf6 | qc | readable | 102 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250612_36hpf_ctrl_atf6 | plate | readable | 96 | P02 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "morph_seq_qc", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250612_36hpf_wfs1_ctcf | inventory | readable | 97 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250612_36hpf_wfs1_ctcf | stage | readable | 97 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250612_36hpf_wfs1_ctcf | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250612_36hpf_wfs1_ctcf | qc | readable | 97 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250612_36hpf_wfs1_ctcf | plate | readable | 96 | P02 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "morph_seq_qc", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20240813_24hpf | inventory | readable | 48 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20240813_24hpf | stage | readable | 48 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20240813_24hpf | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20240813_24hpf | qc | readable | 48 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20240813_24hpf | plate | readable | 96 | P03 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "hash_to_image_map", "image_to_hash_plate_num", "mold_type", "morph_seq_qc"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "sequenced", "start_stage_hpf"] |  |
 | 20240813_30hpf | inventory | readable | 50 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20240813_30hpf | stage | readable | 50 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20240813_30hpf | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20240813_30hpf | qc | readable | 50 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20240813_30hpf | plate | readable | 96 | P03 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "hash_to_image_map", "image_to_hash_plate_num", "mold_type", "morph_seq_qc"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "sequenced", "start_stage_hpf"] |  |
 | 20240813_36hpf | inventory | readable | 50 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20240813_36hpf | stage | readable | 50 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20240813_36hpf | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20240813_36hpf | qc | readable | 50 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20240813_36hpf | plate | readable | 96 | P03 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "hash_to_image_map", "image_to_hash_plate_num", "mold_type", "morph_seq_qc"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "sequenced", "start_stage_hpf"] |  |
 | 20240813_extras | inventory | absent | — | — | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20240813_extras | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20240813_extras | qc | absent | — | — | none-readable | [] | [] |  |
+| 20240813_extras | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20240813_extras | plate | readable | 96 | P04 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "sequenced", "start_stage_hpf"] |  |
 | 20260702_hotchem_24hpf_plate01 | inventory | readable | 104 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260702_hotchem_24hpf_plate01 | stage | readable | 104 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260702_hotchem_24hpf_plate01 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260702_hotchem_24hpf_plate01 | qc | readable | 104 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260702_hotchem_24hpf_plate01 | plate | readable | 96 | P05 | 20260724_hotfish_36hpf_plate01 | [] | ["image_notes", "start_stage_hpf"] |  |
 | 20260702_hotchem_24hpf_plate02 | inventory | readable | 117 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260702_hotchem_24hpf_plate02 | stage | readable | 117 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260702_hotchem_24hpf_plate02 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260702_hotchem_24hpf_plate02 | qc | readable | 117 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260702_hotchem_24hpf_plate02 | plate | readable | 96 | P05 | 20260724_hotfish_36hpf_plate01 | [] | ["image_notes", "start_stage_hpf"] |  |
 | 20260702_hotchem_30hpf_plate01 | inventory | readable | 124 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260702_hotchem_30hpf_plate01 | stage | readable | 124 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260702_hotchem_30hpf_plate01 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260702_hotchem_30hpf_plate01 | qc | readable | 124 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260702_hotchem_30hpf_plate01 | plate | readable | 96 | P05 | 20260724_hotfish_36hpf_plate01 | [] | ["image_notes", "start_stage_hpf"] |  |
 | 20260702_hotchem_30hpf_plate02 | inventory | readable | 107 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260702_hotchem_30hpf_plate02 | stage | readable | 107 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260702_hotchem_30hpf_plate02 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260702_hotchem_30hpf_plate02 | qc | readable | 107 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260702_hotchem_30hpf_plate02 | plate | readable | 96 | P05 | 20260724_hotfish_36hpf_plate01 | [] | ["image_notes", "start_stage_hpf"] |  |
 | 20260702_hotchem_36hpf_plate01 | inventory | readable | 101 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260702_hotchem_36hpf_plate01 | stage | readable | 101 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260702_hotchem_36hpf_plate01 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260702_hotchem_36hpf_plate01 | qc | readable | 101 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260702_hotchem_36hpf_plate01 | plate | readable | 96 | P05 | 20260724_hotfish_36hpf_plate01 | [] | ["image_notes", "start_stage_hpf"] |  |
 | 20260702_hotchem_36hpf_plate02 | inventory | readable | 99 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260702_hotchem_36hpf_plate02 | stage | readable | 99 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260702_hotchem_36hpf_plate02 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260702_hotchem_36hpf_plate02 | qc | readable | 99 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260702_hotchem_36hpf_plate02 | plate | readable | 96 | P05 | 20260724_hotfish_36hpf_plate01 | [] | ["image_notes", "start_stage_hpf"] |  |
 | 20260320_cilia_crispant_48hpf | inventory | absent | — | — | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260320_cilia_crispant_48hpf | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260320_cilia_crispant_48hpf | qc | absent | — | — | none-readable | [] | [] |  |
+| 20260320_cilia_crispant_48hpf | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260320_cilia_crispant_48hpf | plate | readable | 96 | P06 | 20260724_hotfish_36hpf_plate01 | ["pair", "strain"] | ["image_notes", "start_stage_hpf"] |  |
 | 20260324_cep290_18hpf_24hpf_plate02 | inventory | absent | — | — | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260324_cep290_18hpf_24hpf_plate02 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260324_cep290_18hpf_24hpf_plate02 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20260324_cep290_18hpf_24hpf_plate02 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260324_cep290_18hpf_24hpf_plate02 | plate | readable | 96 | P07 | 20260724_hotfish_36hpf_plate01 | ["pair", "strain"] | ["image_notes", "start_stage_hpf"] |  |
 | 20260324_cep290_18hpf_plate01 | inventory | absent | — | — | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260324_cep290_18hpf_plate01 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260324_cep290_18hpf_plate01 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20260324_cep290_18hpf_plate01 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260324_cep290_18hpf_plate01 | plate | readable | 96 | P06 | 20260724_hotfish_36hpf_plate01 | ["pair", "strain"] | ["image_notes", "start_stage_hpf"] |  |
 | 20260324_cep290_24hpf_plate01 | inventory | readable | 101 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260324_cep290_24hpf_plate01 | stage | readable | 101 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260324_cep290_24hpf_plate01 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260324_cep290_24hpf_plate01 | qc | readable | 101 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260324_cep290_24hpf_plate01 | plate | readable | 96 | P08 | 20260724_hotfish_36hpf_plate01 | ["strain"] | ["image_notes", "start_stage_hpf"] |  |
 | 20260324_cep290_24hpf_plate02 | inventory | readable | 101 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260324_cep290_24hpf_plate02 | stage | readable | 101 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260324_cep290_24hpf_plate02 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260324_cep290_24hpf_plate02 | qc | readable | 101 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260324_cep290_24hpf_plate02 | plate | readable | 96 | P08 | 20260724_hotfish_36hpf_plate01 | ["strain"] | ["image_notes", "start_stage_hpf"] |  |
 | 20260324_cep290_30hpf_plate01 | inventory | readable | 98 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260324_cep290_30hpf_plate01 | stage | readable | 98 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260324_cep290_30hpf_plate01 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260324_cep290_30hpf_plate01 | qc | readable | 98 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260324_cep290_30hpf_plate01 | plate | readable | 96 | P08 | 20260724_hotfish_36hpf_plate01 | ["strain"] | ["image_notes", "start_stage_hpf"] |  |
 | 20260324_cep290_30hpf_plate02 | inventory | readable | 72 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260324_cep290_30hpf_plate02 | stage | readable | 72 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260324_cep290_30hpf_plate02 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260324_cep290_30hpf_plate02 | qc | readable | 72 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260324_cep290_30hpf_plate02 | plate | readable | 96 | P08 | 20260724_hotfish_36hpf_plate01 | ["strain"] | ["image_notes", "start_stage_hpf"] |  |
 | 20260331_b9d2_18hpf_plate01 | inventory | absent | — | — | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260331_b9d2_18hpf_plate01 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260331_b9d2_18hpf_plate01 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20260331_b9d2_18hpf_plate01 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260331_b9d2_18hpf_plate01 | plate | readable | 96 | P08 | 20260724_hotfish_36hpf_plate01 | ["strain"] | ["image_notes", "start_stage_hpf"] |  |
 | 20260331_b9d2_18hpf_plate02 | inventory | readable | 70 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260331_b9d2_18hpf_plate02 | stage | readable | 70 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260331_b9d2_18hpf_plate02 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260331_b9d2_18hpf_plate02 | qc | readable | 70 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260331_b9d2_18hpf_plate02 | plate | readable | 96 | P08 | 20260724_hotfish_36hpf_plate01 | ["strain"] | ["image_notes", "start_stage_hpf"] |  |
 | 20260414_b9d2_14hpf_plate01 | inventory | readable | 107 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260414_b9d2_14hpf_plate01 | stage | readable | 107 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260414_b9d2_14hpf_plate01 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260414_b9d2_14hpf_plate01 | qc | readable | 107 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260414_b9d2_14hpf_plate01 | plate | readable | 96 | P08 | 20260724_hotfish_36hpf_plate01 | ["strain"] | ["image_notes", "start_stage_hpf"] |  |
 | 20260414_b9d2_14hpf_plate02 | inventory | absent | — | — | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260414_b9d2_14hpf_plate02 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260414_b9d2_14hpf_plate02 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20260414_b9d2_14hpf_plate02 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260414_b9d2_14hpf_plate02 | plate | readable | 96 | P08 | 20260724_hotfish_36hpf_plate01 | ["strain"] | ["image_notes", "start_stage_hpf"] |  |
 | 20260414_b9d2_30hpf_plate01 | inventory | readable | 106 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260414_b9d2_30hpf_plate01 | stage | readable | 106 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260414_b9d2_30hpf_plate01 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260414_b9d2_30hpf_plate01 | qc | readable | 106 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260414_b9d2_30hpf_plate01 | plate | readable | 96 | P08 | 20260724_hotfish_36hpf_plate01 | ["strain"] | ["image_notes", "start_stage_hpf"] |  |
 | 20260414_b9d2_30hpf_plate02 | inventory | readable | 72 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260414_b9d2_30hpf_plate02 | stage | readable | 72 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260414_b9d2_30hpf_plate02 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260414_b9d2_30hpf_plate02 | qc | readable | 72 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260414_b9d2_30hpf_plate02 | plate | readable | 96 | P09 | 20260724_hotfish_36hpf_plate01 | ["pair", "strain"] | ["image_notes", "start_stage_hpf"] |  |
 | 20260415_b9d2_30to48hpf_plate01_t02 | inventory | readable | 109 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260415_b9d2_30to48hpf_plate01_t02 | stage | readable | 109 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260415_b9d2_30to48hpf_plate01_t02 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260415_b9d2_30to48hpf_plate01_t02 | qc | readable | 109 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260415_b9d2_30to48hpf_plate01_t02 | plate | readable | 96 | P10 | 20260724_hotfish_36hpf_plate01 | ["pair", "strain"] | ["image_notes", "start_stage_hpf"] |  |
 | 20260415_b9d2_30to48hpf_plate02_t02 | inventory | readable | 58 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260415_b9d2_30to48hpf_plate02_t02 | stage | readable | 58 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260415_b9d2_30to48hpf_plate02_t02 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260415_b9d2_30to48hpf_plate02_t02 | qc | readable | 58 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260415_b9d2_30to48hpf_plate02_t02 | plate | readable | 96 | P08 | 20260724_hotfish_36hpf_plate01 | ["strain"] | ["image_notes", "start_stage_hpf"] |  |
 | 20260415_cep290_18hpf_plate03 | inventory | readable | 81 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260415_cep290_18hpf_plate03 | stage | readable | 81 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260415_cep290_18hpf_plate03 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260415_cep290_18hpf_plate03 | qc | readable | 81 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260415_cep290_18hpf_plate03 | plate | readable | 96 | P08 | 20260724_hotfish_36hpf_plate01 | ["strain"] | ["image_notes", "start_stage_hpf"] |  |
 | 20260415_cep290_30to48hpf_plate02_t01 | inventory | readable | 93 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260415_cep290_30to48hpf_plate02_t01 | stage | readable | 93 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260415_cep290_30to48hpf_plate02_t01 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260415_cep290_30to48hpf_plate02_t01 | qc | readable | 93 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260415_cep290_30to48hpf_plate02_t01 | plate | readable | 96 | P06 | 20260724_hotfish_36hpf_plate01 | ["pair", "strain"] | ["image_notes", "start_stage_hpf"] |  |
 | 20230525 | inventory | absent | — | — | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20230525 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20230525 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20230525 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20230525 | plate | readable | 96 | P11 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "start_age_morph"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20230531 | inventory | readable | 7,846 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20230531 | stage | readable | 7,846 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20230531 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20230531 | qc | readable | 7,846 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20230531 | plate | readable | 96 | P11 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "start_age_morph"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20230602 | inventory | readable | 8,998 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20230602 | stage | readable | 8,998 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20230602 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20230602 | qc | readable | 8,998 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20230602 | plate | readable | 96 | P11 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "start_age_morph"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20230613 | inventory | readable | 5,421 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20230613 | stage | readable | 5,421 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20230613 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20230613 | qc | readable | 5,421 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20230613 | plate | readable | 96 | P12 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "start_age_morph"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20230615 | inventory | readable | 4,216 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20230615 | stage | readable | 4,216 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20230615 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20230615 | qc | readable | 4,216 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20230615 | plate | readable | 96 | P12 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "start_age_morph"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20230620 | inventory | readable | 5,460 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20230620 | stage | readable | 5,460 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20230620 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20230620 | qc | readable | 5,460 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20230620 | plate | readable | 96 | P12 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "start_age_morph"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20230622 | inventory | readable | 3,582 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20230622 | stage | readable | 3,582 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20230622 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20230622 | qc | readable | 3,582 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20230622 | plate | readable | 96 | P12 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "start_age_morph"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20230627 | inventory | readable | 4,193 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20230627 | stage | readable | 4,193 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20230627 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20230627 | qc | readable | 4,193 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20230627 | plate | readable | 96 | P13 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "start_age_morph"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20230629 | inventory | readable | 3,918 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20230629 | stage | readable | 3,918 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20230629 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20230629 | qc | readable | 3,918 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20230629 | plate | readable | 96 | P12 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "start_age_morph"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20230831 | inventory | readable | 65 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20230831 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20230831 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20230831 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20230831 | plate | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20240509_18ss | inventory | readable | 25 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20240509_18ss | stage | readable | 25 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20240509_18ss | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20240509_18ss | qc | readable | 25 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20240509_18ss | plate | readable | 96 | P14 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "hash_to_image_map", "image_to_hash_plate_num", "mold_type", "morph_seq_qc"] | ["hash_plate_num", "sequenced", "start_stage_hpf"] |  |
 | 20240509_24hpf | inventory | readable | 32 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20240509_24hpf | stage | readable | 32 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20240509_24hpf | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20240509_24hpf | qc | readable | 32 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20240509_24hpf | plate | readable | 96 | P14 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "hash_to_image_map", "image_to_hash_plate_num", "mold_type", "morph_seq_qc"] | ["hash_plate_num", "sequenced", "start_stage_hpf"] |  |
 | 20240510 | inventory | readable | 59 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20240510 | stage | readable | 59 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20240510 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20240510 | qc | readable | 59 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20240510 | plate | readable | 96 | P15 | 20260724_hotfish_36hpf_plate01 | [] | ["chem_perturbation", "hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20240717 | inventory | readable | 68 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20240717 | stage | readable | 68 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20240717 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20240717 | qc | readable | 68 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20240717 | plate | readable | 96 | P16 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "hash_to_image_map", "image_to_hash_plate_num", "mold_type", "morph_seq_qc"] | ["hash_plate_num", "image_notes", "sequenced", "start_stage_hpf"] |  |
 | 20240718 | inventory | readable | 99 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20240718 | stage | readable | 99 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20240718 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20240718 | qc | readable | 99 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20240718 | plate | readable | 96 | P16 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "hash_to_image_map", "image_to_hash_plate_num", "mold_type", "morph_seq_qc"] | ["hash_plate_num", "image_notes", "sequenced", "start_stage_hpf"] |  |
 | 20240724 | inventory | readable | 56 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20240724 | stage | readable | 56 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20240724 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20240724 | qc | readable | 56 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20240724 | plate | readable | 96 | P16 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "hash_to_image_map", "image_to_hash_plate_num", "mold_type", "morph_seq_qc"] | ["hash_plate_num", "image_notes", "sequenced", "start_stage_hpf"] |  |
 | 20240725 | inventory | readable | 64 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20240725 | stage | readable | 64 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20240725 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20240725 | qc | readable | 64 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20240725 | plate | readable | 96 | P16 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "hash_to_image_map", "image_to_hash_plate_num", "mold_type", "morph_seq_qc"] | ["hash_plate_num", "image_notes", "sequenced", "start_stage_hpf"] |  |
 | 20240726 | inventory | readable | 60 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20240726 | stage | readable | 60 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20240726 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20240726 | qc | readable | 60 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20240726 | plate | readable | 96 | P16 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "hash_to_image_map", "image_to_hash_plate_num", "mold_type", "morph_seq_qc"] | ["hash_plate_num", "image_notes", "sequenced", "start_stage_hpf"] |  |
 | 20250622_chem_28C_T00_1425 | inventory | readable | 91 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250622_chem_28C_T00_1425 | stage | readable | 91 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250622_chem_28C_T00_1425 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250622_chem_28C_T00_1425 | qc | readable | 91 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250622_chem_28C_T00_1425 | plate | readable | 96 | P17 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250622_chem_28C_T01_1658 | inventory | readable | 86 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250622_chem_28C_T01_1658 | stage | readable | 86 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250622_chem_28C_T01_1658 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250622_chem_28C_T01_1658 | qc | readable | 86 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250622_chem_28C_T01_1658 | plate | readable | 96 | P17 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250622_chem_34C_T00_1256 | inventory | readable | 78 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250622_chem_34C_T00_1256 | stage | readable | 78 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250622_chem_34C_T00_1256 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250622_chem_34C_T00_1256 | qc | readable | 78 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250622_chem_34C_T00_1256 | plate | readable | 96 | P17 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250622_chem_34C_T01_1632 | inventory | readable | 79 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250622_chem_34C_T01_1632 | stage | readable | 79 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250622_chem_34C_T01_1632 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250622_chem_34C_T01_1632 | qc | readable | 79 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250622_chem_34C_T01_1632 | plate | readable | 96 | P17 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250622_chem_35C_T00_1223_check | inventory | readable | 79 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250622_chem_35C_T00_1223_check | stage | readable | 79 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250622_chem_35C_T00_1223_check | qc | absent | — | — | none-readable | [] | [] |  |
+| 20250622_chem_35C_T00_1223_check | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250622_chem_35C_T00_1223_check | plate | readable | 96 | P17 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250622_chem_35C_T01_1605 | inventory | readable | 85 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250622_chem_35C_T01_1605 | stage | readable | 85 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250622_chem_35C_T01_1605 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20250622_chem_35C_T01_1605 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250622_chem_35C_T01_1605 | plate | readable | 96 | P17 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250623_chem_28C_T02_1259 | inventory | readable | 86 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250623_chem_28C_T02_1259 | stage | readable | 86 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250623_chem_28C_T02_1259 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20250623_chem_28C_T02_1259 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250623_chem_28C_T02_1259 | plate | readable | 96 | P17 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250623_chem_34C_T02_1231 | inventory | readable | 83 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250623_chem_34C_T02_1231 | stage | readable | 83 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250623_chem_34C_T02_1231 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20250623_chem_34C_T02_1231 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250623_chem_34C_T02_1231 | plate | readable | 96 | P17 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250623_chem_35C_T02_1204 | inventory | absent | — | — | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250623_chem_35C_T02_1204 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250623_chem_35C_T02_1204 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20250623_chem_35C_T02_1204 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250623_chem_35C_T02_1204 | plate | readable | 96 | P17 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250624_chem02_28C_T00_1356 | inventory | readable | 104 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250624_chem02_28C_T00_1356 | stage | readable | 104 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250624_chem02_28C_T00_1356 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250624_chem02_28C_T00_1356 | qc | readable | 104 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250624_chem02_28C_T00_1356 | plate | readable | 96 | P17 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250624_chem02_28C_T01_1808 | inventory | readable | 97 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250624_chem02_28C_T01_1808 | stage | readable | 97 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250624_chem02_28C_T01_1808 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250624_chem02_28C_T01_1808 | qc | readable | 97 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250624_chem02_28C_T01_1808 | plate | readable | 96 | P17 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250624_chem02_34C_T00_1243 | inventory | readable | 78 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250624_chem02_34C_T00_1243 | stage | readable | 78 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250624_chem02_34C_T00_1243 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250624_chem02_34C_T00_1243 | qc | readable | 78 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250624_chem02_34C_T00_1243 | plate | readable | 96 | P17 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250624_chem02_34C_T01_1739 | inventory | readable | 75 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250624_chem02_34C_T01_1739 | stage | readable | 75 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250624_chem02_34C_T01_1739 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250624_chem02_34C_T01_1739 | qc | readable | 75 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250624_chem02_34C_T01_1739 | plate | readable | 96 | P17 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250624_chem02_35C_T00_1216 | inventory | readable | 81 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250624_chem02_35C_T00_1216 | stage | readable | 81 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250624_chem02_35C_T00_1216 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250624_chem02_35C_T00_1216 | qc | readable | 81 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250624_chem02_35C_T00_1216 | plate | readable | 96 | P17 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250624_chem02_35C_T01_1711 | inventory | readable | 84 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250624_chem02_35C_T01_1711 | stage | readable | 84 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250624_chem02_35C_T01_1711 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250624_chem02_35C_T01_1711 | qc | readable | 84 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250624_chem02_35C_T01_1711 | plate | readable | 96 | P17 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250625_chem02_28C_T02_1332 | inventory | readable | 96 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250625_chem02_28C_T02_1332 | stage | readable | 96 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250625_chem02_28C_T02_1332 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250625_chem02_28C_T02_1332 | qc | readable | 96 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250625_chem02_28C_T02_1332 | plate | readable | 96 | P17 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250625_chem02_34C_T02_1301 | inventory | readable | 82 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250625_chem02_34C_T02_1301 | stage | readable | 82 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250625_chem02_34C_T02_1301 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250625_chem02_34C_T02_1301 | qc | readable | 82 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250625_chem02_34C_T02_1301 | plate | readable | 96 | P17 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250625_chem02_35C_T02_1228 | inventory | readable | 84 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250625_chem02_35C_T02_1228 | stage | readable | 84 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250625_chem02_35C_T02_1228 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250625_chem02_35C_T02_1228 | qc | readable | 84 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250625_chem02_35C_T02_1228 | plate | readable | 96 | P17 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250703_chem3_28C_T00_1325 | inventory | readable | 61 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250703_chem3_28C_T00_1325 | stage | readable | 61 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250703_chem3_28C_T00_1325 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250703_chem3_28C_T00_1325 | qc | readable | 61 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250703_chem3_28C_T00_1325 | plate | readable | 96 | P18 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250703_chem3_34C_T00_1131 | inventory | readable | 58 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250703_chem3_34C_T00_1131 | stage | readable | 58 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250703_chem3_34C_T00_1131 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250703_chem3_34C_T00_1131 | qc | readable | 58 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250703_chem3_34C_T00_1131 | plate | readable | 96 | P18 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250703_chem3_34C_T01_1457 | inventory | readable | 59 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250703_chem3_34C_T01_1457 | stage | readable | 59 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250703_chem3_34C_T01_1457 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250703_chem3_34C_T01_1457 | qc | readable | 59 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250703_chem3_34C_T01_1457 | plate | readable | 96 | P18 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250703_chem3_35C_T00_1101 | inventory | readable | 65 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250703_chem3_35C_T00_1101 | stage | readable | 65 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250703_chem3_35C_T00_1101 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250703_chem3_35C_T00_1101 | qc | readable | 65 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250703_chem3_35C_T00_1101 | plate | readable | 96 | P18 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250703_chem3_35C_T01_1437 | inventory | readable | 58 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250703_chem3_35C_T01_1437 | stage | readable | 58 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250703_chem3_35C_T01_1437 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250703_chem3_35C_T01_1437 | qc | readable | 58 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250703_chem3_35C_T01_1437 | plate | readable | 96 | P18 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250716_chem4_28C_T00_1158 | inventory | readable | 87 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250716_chem4_28C_T00_1158 | stage | readable | 87 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250716_chem4_28C_T00_1158 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250716_chem4_28C_T00_1158 | qc | readable | 87 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250716_chem4_28C_T00_1158 | plate | readable | 96 | P17 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250716_chem4_28C_T01_1400 | inventory | readable | 94 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250716_chem4_28C_T01_1400 | stage | readable | 94 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250716_chem4_28C_T01_1400 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250716_chem4_28C_T01_1400 | qc | readable | 94 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250716_chem4_28C_T01_1400 | plate | readable | 96 | P17 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250716_chem4_34C_T00_1014 | inventory | readable | 94 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250716_chem4_34C_T00_1014 | stage | readable | 94 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250716_chem4_34C_T00_1014 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250716_chem4_34C_T00_1014 | qc | readable | 94 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250716_chem4_34C_T00_1014 | plate | readable | 96 | P17 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250716_chem4_35C_T00_1045 | inventory | readable | 91 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250716_chem4_35C_T00_1045 | stage | readable | 91 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250716_chem4_35C_T00_1045 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250716_chem4_35C_T00_1045 | qc | readable | 91 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250716_chem4_35C_T00_1045 | plate | readable | 96 | P17 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250721_chem5_28C_T00_1257 | inventory | readable | 107 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250721_chem5_28C_T00_1257 | stage | readable | 107 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250721_chem5_28C_T00_1257 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250721_chem5_28C_T00_1257 | qc | readable | 107 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250721_chem5_28C_T00_1257 | plate | readable | 96 | P17 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250721_chem5_28C_T01_1401 | inventory | readable | 107 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250721_chem5_28C_T01_1401 | stage | readable | 107 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250721_chem5_28C_T01_1401 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250721_chem5_28C_T01_1401 | qc | readable | 107 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250721_chem5_28C_T01_1401 | plate | readable | 96 | P17 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250721_chem5_35C_T00_1023 | inventory | readable | 108 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250721_chem5_35C_T00_1023 | stage | readable | 108 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250721_chem5_35C_T00_1023 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250721_chem5_35C_T00_1023 | qc | readable | 108 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250721_chem5_35C_T00_1023 | plate | readable | 96 | P17 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20260319_cilia_crispant_18hpf | inventory | readable | 92 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260319_cilia_crispant_18hpf | stage | readable | 92 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260319_cilia_crispant_18hpf | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260319_cilia_crispant_18hpf | qc | readable | 92 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260319_cilia_crispant_18hpf | plate | readable | 96 | P06 | 20260724_hotfish_36hpf_plate01 | ["pair", "strain"] | ["image_notes", "start_stage_hpf"] |  |
 | 20260319_cilia_crispant_24hpf | inventory | readable | 99 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260319_cilia_crispant_24hpf | stage | readable | 99 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260319_cilia_crispant_24hpf | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260319_cilia_crispant_24hpf | qc | readable | 99 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260319_cilia_crispant_24hpf | plate | readable | 96 | P06 | 20260724_hotfish_36hpf_plate01 | ["pair", "strain"] | ["image_notes", "start_stage_hpf"] |  |
 | 20260319_cilia_crispant_30hpf | inventory | readable | 102 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260319_cilia_crispant_30hpf | stage | readable | 102 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260319_cilia_crispant_30hpf | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260319_cilia_crispant_30hpf | qc | readable | 102 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260319_cilia_crispant_30hpf | plate | readable | 96 | P06 | 20260724_hotfish_36hpf_plate01 | ["pair", "strain"] | ["image_notes", "start_stage_hpf"] |  |
 | 20260416_cep290_30to48hpf_plate01_t02 | inventory | readable | 109 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260416_cep290_30to48hpf_plate01_t02 | stage | readable | 109 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260416_cep290_30to48hpf_plate01_t02 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260416_cep290_30to48hpf_plate01_t02 | qc | readable | 109 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260416_cep290_30to48hpf_plate01_t02 | plate | readable | 96 | P06 | 20260724_hotfish_36hpf_plate01 | ["pair", "strain"] | ["image_notes", "start_stage_hpf"] |  |
 | 20260416_cep290_30to48hpf_plate02_t02 | inventory | readable | 70 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260416_cep290_30to48hpf_plate02_t02 | stage | readable | 70 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260416_cep290_30to48hpf_plate02_t02 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260416_cep290_30to48hpf_plate02_t02 | qc | readable | 70 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260416_cep290_30to48hpf_plate02_t02 | plate | readable | 96 | P06 | 20260724_hotfish_36hpf_plate01 | ["pair", "strain"] | ["image_notes", "start_stage_hpf"] |  |
 | 20260320 | inventory | absent | — | — | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260320 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260320 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20260320 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260320 | plate | readable | 96 | P19 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "pair", "series_number_map", "start_age_morph", "tricane"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20231110 | inventory | readable | 5,852 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20231110 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20231110 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20231110 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20231110 | plate | readable | 96 | P20 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "series_number_map"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20231206 | inventory | readable | 7,587 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20231206 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20231206 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20231206 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20231206 | plate | readable | 96 | P21 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "series_number_map"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20231218 | inventory | readable | 3,536 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20231218 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20231218 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20231218 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20231218 | plate | readable | 96 | P22 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "genotype_map_orig", "mold_type", "series_number_map"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "sequenced", "start_stage_hpf"] |  |
 | 20240306 | inventory | readable | 10,837 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20240306 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20240306 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20240306 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20240306 | plate | readable | 96 | P23 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "series_number_map"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20240307 | inventory | readable | 4,972 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20240307 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20240307 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20240307 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20240307 | plate | readable | 96 | P23 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "series_number_map"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20240404 | inventory | readable | 3,222 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20240404 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20240404 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20240404 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20240404 | plate | readable | 96 | P24 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "series_number_map"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20240411 | inventory | readable | 4,464 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20240411 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20240411 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20240411 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20240411 | plate | readable | 96 | P24 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "series_number_map"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20240418 | inventory | readable | 9,062 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20240418 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20240418 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20240418 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20240418 | plate | readable | 96 | P25 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "series_number_map"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20240509 | inventory | readable | 4,387 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20240509 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20240509 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20240509 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20240509 | plate | readable | 96 | P26 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "morph_seq_qc", "series_number_map"] | ["hash_plate_num", "image_to_hash_map", "sequenced", "start_stage_hpf"] |  |
 | 20240522 | inventory | readable | 9,284 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20240522 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20240522 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20240522 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20240522 | plate | readable | 96 | P27 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "orig_genotype", "series_number_map"] | ["hash_plate_num", "image_to_hash_map", "sequenced", "start_stage_hpf"] |  |
 | 20240530 | inventory | readable | 10,692 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20240530 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20240530 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20240530 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20240530 | plate | readable | 96 | P28 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "series_number_map"] | ["hash_plate_num", "image_to_hash_map", "sequenced", "start_stage_hpf"] |  |
 | 20240626 | inventory | readable | 11,088 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20240626 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20240626 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20240626 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20240626 | plate | readable | 96 | P26 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "morph_seq_qc", "series_number_map"] | ["hash_plate_num", "image_to_hash_map", "sequenced", "start_stage_hpf"] |  |
 | 20240812 | inventory | readable | 7,575 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20240812 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20240812 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20240812 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20240812 | plate | readable | 96 | P23 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "series_number_map"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20241022 | inventory | readable | 3,737 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20241022 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20241022 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20241022 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20241022 | plate | readable | 96 | P29 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "series_number_map"] | ["hash_plate_num", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20241023 | inventory | readable | 4,687 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20241023 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20241023 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20241023 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20241023 | plate | readable | 96 | P29 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "series_number_map"] | ["hash_plate_num", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250126 | inventory | readable | 7,745 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250126 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250126 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20250126 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250126 | plate | readable | 96 | P30 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "series_number_map", "start_age_morph"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250215 | inventory | readable | 7,644 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250215 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250215 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20250215 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250215 | plate | readable | 96 | P31 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "series_number_map", "start_age_morph"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250305 | inventory | readable | 32,962 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250305 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250305 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20250305 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250305 | plate | readable | 96 | P31 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "series_number_map", "start_age_morph"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250415 | inventory | readable | 4,267 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250415 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250415 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20250415 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250415 | plate | readable | 96 | P32 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "series_number_map", "start_age_morph"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250416 | inventory | absent | — | — | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250416 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250416 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20250416 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250416 | plate | readable | 96 | P31 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "series_number_map", "start_age_morph"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250425 | inventory | readable | 13,429 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250425 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250425 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20250425 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250425 | plate | readable | 96 | P33 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "pair", "series_number_map", "start_age_morph"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250501 | inventory | readable | 24,718 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250501 | stage | readable | 24,718 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250501 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250501 | qc | readable | 24,718 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250501 | plate | readable | 96 | P31 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "series_number_map", "start_age_morph"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250512 | inventory | readable | 24,569 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250512 | stage | readable | 24,569 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250512 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250512 | qc | readable | 24,569 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250512 | plate | readable | 96 | P31 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "series_number_map", "start_age_morph"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250515_part2 | inventory | readable | 3,510 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250515_part2 | stage | readable | 3,510 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250515_part2 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250515_part2 | qc | readable | 3,510 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250515_part2 | plate | readable | 96 | P31 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "series_number_map", "start_age_morph"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250519 | inventory | readable | 4,179 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250519 | stage | readable | 4,179 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250519 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250519 | qc | readable | 4,179 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250519 | plate | readable | 96 | P31 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "series_number_map", "start_age_morph"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250711 | inventory | readable | 19,723 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250711 | stage | readable | 19,723 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250711 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250711 | qc | readable | 19,723 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250711 | plate | readable | 96 | P31 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "series_number_map", "start_age_morph"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20250912 | inventory | readable | 15,572 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20250912 | stage | readable | 15,572 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20250912 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20250912 | qc | readable | 15,572 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20250912 | plate | readable | 96 | P31 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "series_number_map", "start_age_morph"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20251017_part1 | inventory | readable | 6,794 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20251017_part1 | stage | readable | 6,794 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20251017_part1 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20251017_part1 | qc | readable | 6,794 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20251017_part1 | plate | readable | 96 | P34 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "series_number_map", "start_age_morph", "tricane"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20251017_part2 | inventory | readable | 7,559 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20251017_part2 | stage | readable | 7,559 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20251017_part2 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20251017_part2 | qc | readable | 7,559 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20251017_part2 | plate | readable | 96 | P34 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "series_number_map", "start_age_morph", "tricane"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20251020 | inventory | readable | 5,216 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20251020 | stage | readable | 5,216 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20251020 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20251020 | qc | readable | 5,216 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20251020 | plate | readable | 96 | P34 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "series_number_map", "start_age_morph", "tricane"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20251104 | inventory | absent | — | — | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20251104 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20251104 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20251104 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20251104 | plate | readable | 96 | P19 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "pair", "series_number_map", "start_age_morph", "tricane"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20251106 | inventory | absent | — | — | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20251106 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20251106 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20251106 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20251106 | plate | readable | 96 | P19 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "pair", "series_number_map", "start_age_morph", "tricane"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20251112 | inventory | readable | 6,991 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20251112 | stage | readable | 6,991 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20251112 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20251112 | qc | readable | 6,991 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20251112 | plate | readable | 96 | P19 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "pair", "series_number_map", "start_age_morph", "tricane"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20251113 | inventory | absent | — | — | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20251113 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20251113 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20251113 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20251113 | plate | readable | 96 | P19 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "pair", "series_number_map", "start_age_morph", "tricane"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20251119 | inventory | readable | 10,440 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20251119 | stage | readable | 10,440 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20251119 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20251119 | qc | readable | 10,440 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20251119 | plate | readable | 96 | P19 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "pair", "series_number_map", "start_age_morph", "tricane"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20251121 | inventory | readable | 20,857 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20251121 | stage | readable | 20,857 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20251121 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20251121 | qc | readable | 20,857 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20251121 | plate | readable | 96 | P19 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "pair", "series_number_map", "start_age_morph", "tricane"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20251125 | inventory | readable | 21,934 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20251125 | stage | readable | 21,934 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20251125 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20251125 | qc | readable | 21,934 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20251125 | plate | readable | 96 | P19 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "pair", "series_number_map", "start_age_morph", "tricane"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20251205 | inventory | readable | 12,291 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20251205 | stage | readable | 12,291 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20251205 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20251205 | qc | readable | 12,291 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20251205 | plate | readable | 96 | P19 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "pair", "series_number_map", "start_age_morph", "tricane"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20251207_pbx | inventory | readable | 14,760 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20251207_pbx | stage | readable | 14,760 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20251207_pbx | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20251207_pbx | qc | readable | 14,760 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20251207_pbx | plate | readable | 96 | P35 | 20260724_hotfish_36hpf_plate01 | ["series_number_map"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20251212 | inventory | readable | 11,437 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20251212 | stage | readable | 11,437 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20251212 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20251212 | qc | readable | 11,437 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20251212 | plate | readable | 96 | P19 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "pair", "series_number_map", "start_age_morph", "tricane"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20260122 | inventory | readable | 20,098 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260122 | stage | readable | 20,098 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260122 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260122 | qc | readable | 20,098 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260122 | plate | readable | 96 | P19 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "pair", "series_number_map", "start_age_morph", "tricane"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20260202 | inventory | readable | 16,943 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260202 | stage | readable | 16,943 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260202 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260202 | qc | readable | 16,943 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260202 | plate | readable | 96 | P19 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "pair", "series_number_map", "start_age_morph", "tricane"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20260206 | inventory | readable | 14,700 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260206 | stage | readable | 14,700 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260206 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260206 | qc | readable | 14,700 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260206 | plate | readable | 96 | P19 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "pair", "series_number_map", "start_age_morph", "tricane"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20260208 | inventory | readable | 31,680 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260208 | stage | readable | 31,680 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260208 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260208 | qc | readable | 31,680 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260208 | plate | readable | 96 | P19 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "pair", "series_number_map", "start_age_morph", "tricane"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20260210 | inventory | readable | 15,892 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260210 | stage | readable | 15,892 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260210 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260210 | qc | readable | 15,892 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260210 | plate | readable | 96 | P19 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "pair", "series_number_map", "start_age_morph", "tricane"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20260213 | inventory | readable | 29,010 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260213 | stage | readable | 29,010 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260213 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260213 | qc | readable | 29,010 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260213 | plate | readable | 96 | P19 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "pair", "series_number_map", "start_age_morph", "tricane"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20260219 | inventory | readable | 31,713 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260219 | stage | readable | 31,713 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260219 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260219 | qc | readable | 31,713 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260219 | plate | readable | 96 | P19 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "pair", "series_number_map", "start_age_morph", "tricane"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20260223 | inventory | absent | — | — | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260223 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260223 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20260223 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260223 | plate | readable | 96 | P36 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "pair", "series_number_map", "start_age_morph", "tricane"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20260224 | inventory | absent | — | — | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260224 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260224 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20260224 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260224 | plate | readable | 96 | P19 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "pair", "series_number_map", "start_age_morph", "tricane"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20260228 | inventory | readable | 17,012 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260228 | stage | readable | 17,012 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260228 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260228 | qc | readable | 17,012 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260228 | plate | readable | 96 | P19 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "pair", "series_number_map", "start_age_morph", "tricane"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20260304 | inventory | readable | 37,409 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260304 | stage | readable | 37,409 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260304 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260304 | qc | readable | 37,409 | Q03 | 20260724_hotfish_36hpf_plate01 | ["death_detection_qc_applicability"] | [] |  |
 | 20260304 | plate | readable | 96 | P19 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "pair", "series_number_map", "start_age_morph", "tricane"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20260306 | inventory | readable | 26,979 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260306 | stage | readable | 26,979 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260306 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260306 | qc | readable | 26,979 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260306 | plate | readable | 96 | P19 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "pair", "series_number_map", "start_age_morph", "tricane"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20260319 | inventory | readable | 10,269 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260319 | stage | readable | 10,269 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260319 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260319 | qc | readable | 10,269 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260319 | plate | readable | 96 | P19 | 20260724_hotfish_36hpf_plate01 | ["embryos_per_well", "mold_type", "pair", "series_number_map", "start_age_morph", "tricane"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20260417_irx_pilot | inventory | readable | 4,968 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260417_irx_pilot | stage | readable | 4,968 | S02 | 20260724_hotfish_36hpf_plate01 | [] | ["stage_prediction_status"] |  |
-| 20260417_irx_pilot | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260417_irx_pilot | qc | readable | 4,968 | Q02 | 20260724_hotfish_36hpf_plate01 | [] | ["persistence_dead_flag", "viability_dead_flag", "focus_flag", "focus_qc_applicability", "discontinuous_mask_flag", "edge_flag", "overlapping_mask_flag", "motion_blur_flag", "motion_blur_qc_applicability", "sa_outlier_flag", "surface_area_qc_applicability"] |  |
 | 20260417_irx_pilot | plate | readable | 96 | P37 | 20260724_hotfish_36hpf_plate01 | ["strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20260418_irx_pilot | inventory | readable | 15,251 | I02 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260418_irx_pilot | stage | readable | 15,251 | S02 | 20260724_hotfish_36hpf_plate01 | [] | ["stage_prediction_status"] |  |
-| 20260418_irx_pilot | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260418_irx_pilot | qc | readable | 15,251 | Q02 | 20260724_hotfish_36hpf_plate01 | [] | ["persistence_dead_flag", "viability_dead_flag", "focus_flag", "focus_qc_applicability", "discontinuous_mask_flag", "edge_flag", "overlapping_mask_flag", "motion_blur_flag", "motion_blur_qc_applicability", "sa_outlier_flag", "surface_area_qc_applicability"] |  |
 | 20260418_irx_pilot | plate | readable | 96 | P37 | 20260724_hotfish_36hpf_plate01 | ["strain"] | ["hash_plate_num", "image_notes", "image_to_hash_map", "qc", "sequenced", "start_stage_hpf"] |  |
 | 20260724_hotfish_24hpf_plate01 | inventory | readable | 102 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260724_hotfish_24hpf_plate01 | stage | readable | 102 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260724_hotfish_24hpf_plate01 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260724_hotfish_24hpf_plate01 | qc | readable | 102 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260724_hotfish_24hpf_plate01 | plate | readable | 96 | P38 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260724_hotfish_24hpf_plate02 | inventory | readable | 56 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260724_hotfish_24hpf_plate02 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260724_hotfish_24hpf_plate02 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20260724_hotfish_24hpf_plate02 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260724_hotfish_24hpf_plate02 | plate | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260724_hotfish_30hpf_plate01 | inventory | readable | 98 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260724_hotfish_30hpf_plate01 | stage | readable | 98 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260724_hotfish_30hpf_plate01 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260724_hotfish_30hpf_plate01 | qc | readable | 98 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260724_hotfish_30hpf_plate01 | plate | readable | 96 | P38 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260724_hotfish_30hpf_plate02 | inventory | readable | 59 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260724_hotfish_30hpf_plate02 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260724_hotfish_30hpf_plate02 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20260724_hotfish_30hpf_plate02 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260724_hotfish_30hpf_plate02 | plate | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260724_hotfish_36hpf_plate01 | inventory | readable | 101 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260724_hotfish_36hpf_plate01 | stage | readable | 101 | S01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260724_hotfish_36hpf_plate01 | qc | present / blocked | — | — | none-readable | [] | [] | BLOCKED: neither pyarrow nor fastparquet is installed |
+| 20260724_hotfish_36hpf_plate01 | qc | readable | 101 | Q01 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260724_hotfish_36hpf_plate01 | plate | readable | 96 | P38 | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260724_hotfish_36hpf_plate02 | inventory | readable | 61 | I01 | 20260724_hotfish_36hpf_plate02 | [] | [] |  |
 | 20260724_hotfish_36hpf_plate02 | stage | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
-| 20260724_hotfish_36hpf_plate02 | qc | absent | — | — | none-readable | [] | [] |  |
+| 20260724_hotfish_36hpf_plate02 | qc | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 | 20260724_hotfish_36hpf_plate02 | plate | absent | — | — | 20260724_hotfish_36hpf_plate01 | [] | [] |  |
 
 </details>
@@ -889,7 +892,32 @@ Opened **100/100** sampled files; **100/100** were 8-bit, non-interlaced graysca
 
 ## 7. QC
 
-**BLOCKED by missing Parquet engine.** `use_snip` pass rates, failure-reason tokens, `is_valid_snip × use_snip`, inventory rows without QC, the strict gate, and its experiment correlation could not be measured. This is a hard training preflight failure, not an optional omission.
+Rerun with PyArrow 25.0.1: all **105/105 present QC Parquets** were readable, yielding **531,902 QC rows** in three schema variants. There were no duplicate QC `snip_id` rows, null `use_snip` verdicts, or QC IDs absent from inventory. Each QC-bearing experiment had a complete one-to-one inventory/QC match. The other **28 inventory-bearing experiments** have no QC file, leaving **167,603/699,505 inventory snips (23.96%)** without a QC row. Missing QC remains unresolved data availability, not a negative verdict. Exact availability and schemas are in [qc_availability_by_experiment.csv](recon_tables/qc_availability_by_experiment.csv) and [qc_schema_catalog.csv](recon_tables/qc_schema_catalog.csv).
+
+Across QC-evaluable rows, `use_snip` passed **185,204** and failed **346,698**, for a row-weighted pass rate of **34.82%**. The unweighted experiment-level pass rate had median **72.41%** (5th–95th percentile: **20.41%–95.49%**); the much lower row-weighted rate reflects large, low-pass experiments.
+
+| `is_valid_snip` | `use_snip=True` | `use_snip=False` | no QC row |
+| --- | ---: | ---: | ---: |
+| True | 185,204 | 346,698 | 167,603 |
+| False | 0 | 0 | 0 |
+| missing | 0 | 0 | 0 |
+
+Every inventory row has `is_valid_snip=True`. Consequently, on QC-evaluable rows the strict gate `is_valid_snip ∧ use_snip` is exactly the `use_snip` verdict: **185,204 pass (34.82%)** and **346,698 are removed (65.18%)**. It must not be evaluated by filling the 167,603 missing QC values with `False`.
+
+| QC failure-reason token | rows |
+| --- | ---: |
+| `sa_outlier_flag` | 241,274 |
+| `focus_flag` | 173,605 |
+| `persistence_dead_flag` | 115,150 |
+| `viability_dead_flag` | 110,782 |
+| `motion_blur_flag` | 70,583 |
+| `edge_flag` | 51,708 |
+| `overlapping_mask_flag` | 45,759 |
+| `discontinuous_mask_flag` | 8,129 |
+
+Failure-reason counts are multi-label and therefore exceed the number of failed rows. Strict-gate removal is strongly nonuniform by experiment: the experiment-level removal-rate 5th percentile, median, and 95th percentile are **4.51%**, **27.59%**, and **79.59%**, respectively, a **75.08-percentage-point** central-90% spread. Experiment identity explains **14.38%** of the row-level binary strict-gate variance (η²). Under the declared 5-percentage-point spread screen, QC exclusion is explicitly **experiment-correlated**, not approximately uniform.
+
+Exact results are in [qc_by_experiment.csv](recon_tables/qc_by_experiment.csv), [qc_fail_reason_counts.csv](recon_tables/qc_fail_reason_counts.csv), [valid_use_snip_crosstab.csv](recon_tables/valid_use_snip_crosstab.csv), and [qc_rerun_summary.csv](recon_tables/qc_rerun_summary.csv).
 
 ## 8. Staging
 
@@ -900,7 +928,7 @@ Opened **100/100** sampled files; **100/100** were 8-bit, non-interlaced graysca
 | missing_start_age_hpf | 898 |
 
 Finite predicted-stage coverage against all inventory rows: **531,337/699,505 (75.96%)**.
-Survivors of the measurable precursor gate `valid ∧ status==predicted ∧ finite stage`: **511,118**. The requested full metric gate additionally requires QC and is blocked when Parquet is unreadable.
+Survivors of the precursor gate `valid ∧ status==predicted ∧ finite stage`: **511,118**. Adding `use_snip=True` yields **176,466 definite full-gate survivors** (**25.23%** of all inventory rows; **34.53%** of precursor survivors). Rows without QC are unresolved and are not counted as failures. Exact per-experiment survivor counts are in [combined_metric_gate_by_experiment.csv](recon_tables/combined_metric_gate_by_experiment.csv).
 Per-experiment coverage: [staging_by_experiment.csv](recon_tables/staging_by_experiment.csv). Stage histogram: [stage_histogram.csv](recon_tables/stage_histogram.csv).
 
 ## 9. Metric-group candidates
@@ -1133,7 +1161,7 @@ A group is flagged when any split has fewer than two physical embryos. Exact can
 The three findings most likely to change the bridge design are:
 
 1. **Preflight must be cohort-wide and schema-aware:** 15 selected experiments lack a merged inventory, 39 lack merged staging, and both requested scale fields are absent from all 133 readable inventories.
-2. **QC cannot be optional:** the training environment cannot currently read the required Parquet verdicts, so strict cohort selection and combined-gate sizing are blocked until the environment contract supplies an engine.
+2. **QC materially and nonuniformly changes cohort composition:** only 34.82% of QC-evaluable rows pass, experiment identity explains 14.38% of strict-gate variance, and 28 inventory-bearing experiments lack QC entirely.
 3. **Intensity normalization/batch controls need an explicit decision:** the largest experiment η² among mean/std/saturation is 0.264, which is a material experiment signal by the stated screen.
 
 Comparison with `NEW_PIPELINE_CORE_INTEGRATION_AUDIT.md`:
@@ -1141,11 +1169,11 @@ Comparison with `NEW_PIPELINE_CORE_INTEGRATION_AUDIT.md`:
 - The image-format claim is confirmed (100.00% conforming before the interlace check).
 - The audit already warned that a live inventory lacked the two scale fields; this broader cohort determines whether that was isolated or systemic. It is an extension of the warning, not inherently a contradiction.
 - The audit says `short_pert_name` is not guaranteed; this cohort confirms it is absent.
-- No measured result contradicts the recommended inventory + stage + QC + plate boundary; current artifact availability and the Parquet blocker strengthen the need for fail-loud preflight.
+- No measured result contradicts the recommended inventory + stage + QC + plate boundary. The successful Parquet rerun removes the environment blocker, while the 28 missing QC artifacts and experiment-correlated exclusion strengthen the need for fail-loud preflight and cohort reporting.
 
 Items not measured, with reasons:
 
-- All QC-derived results and full metric-gate survivors: no Parquet engine in the training environment.
+- Strict QC and combined-gate eligibility for 167,603 inventory snips: 28 inventory-bearing experiments have no QC artifact, so these rows remain unresolved rather than failed.
 - Direct product-type provenance: the inventory column is absent; path-segment inference is reported separately.
 - `z_position` distribution: no populated source column at the snip-inventory boundary.
 - µm/px distributions and mixed-scale determination: requested fields absent/unpopulated.
