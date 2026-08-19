@@ -130,6 +130,7 @@ class _VAELossBase(nn.Module):
 
         # --- Pixel reconstruction ---
         self.reconstruction_loss = cfg.reconstruction_loss
+        self.input_dim = tuple(cfg.input_dim)
 
         # --- Perceptual (LPIPS) ---
         self.pips_flag     = cfg.pips_flag
@@ -181,10 +182,12 @@ class _VAELossBase(nn.Module):
     # normalised [0, 1] images, matching the KLD scale.  For L1 we apply
     # an additional /10 because L1 ≈ 10× L2 for Gaussian noise.
     def _pixel_scale(self) -> float:
+        height, width = self.input_dim[-2:]
+        pixel_count = height * width
         if self.reconstruction_loss != "L1":
-            return (128 * 288) / 100
+            return pixel_count / 100
         else:
-            return (128 * 288) / 10 / 100
+            return pixel_count / 10 / 100
 
     # -----------------------------------------------------------------------
     # Shared computation of the four core VAE loss terms
@@ -339,7 +342,7 @@ class NTXentLoss(_VAELossBase):
         dist_matrix = torch.cdist(features, features, p=2).pow(2)
         N     = self.cfg.latent_dim_bio / 2
         sigma = N
-        dist_normed = (-(dist_matrix / sigma).pow(0.5) + self.cfg.margin) / temperature
+        dist_normed = -(dist_matrix / sigma).pow(0.5) / temperature
 
         # Build target matrix: 1 = positive, 0 = negative, -1 = exclude
         target_matrix = torch.zeros(pair_matrix.shape, dtype=torch.float32)

@@ -1,6 +1,6 @@
 from pydantic.dataclasses import dataclass
 from dataclasses import field
-from typing import Any
+from typing import Union
 
 
 @dataclass
@@ -37,12 +37,19 @@ class LitTrainConfig:
     """
 
     benchmark: bool = True          # run initial cuDNN conv benchmark sweep
-    accumulate_grad_batches: int = 2
     max_epochs: int = 100
     lr_base: float = 1e-4
     save_every_n: int = 50
     eval_gpu_flag: bool = True
     save_epochs: list[int] = field(default_factory=list)
+
+    # --- Lightning runtime ---
+    # Defaults preserve the existing cluster behavior. CPU smoke runs can use
+    # accelerator="cpu", devices=1, strategy="auto", precision=32.
+    accelerator: str = "gpu"
+    devices: Union[str, int, list[int]] = "auto"
+    strategy: str = "ddp_find_unused_parameters_true"
+    precision: Union[str, int] = 16
 
     # --- Encoder LR scale ---
     # Set to 1.0 to give the encoder backbone the same LR as the decoder.

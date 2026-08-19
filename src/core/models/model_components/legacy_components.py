@@ -1,11 +1,9 @@
-import sys
-sys.path.append("/net/trapnell/vol1/home/nlammers/projects/data/morphseq/")
 # from src.vae.models.nn import BaseEncoder, BaseDecoder
 from src.core.models.model_utils import ModelOutput
 import torch.nn as nn
 import torch
 from typing import Tuple
-from src.functions.utilities import conv_output_shape
+from src.core.functions.utilities import conv_output_shape
 from scipy.stats import ortho_group
 from src.core.models.model_components.arch_configs import LegacyArchitecture
 

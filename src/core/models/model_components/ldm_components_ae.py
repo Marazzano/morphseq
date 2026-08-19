@@ -3,7 +3,7 @@ import torch.nn as nn
 import numpy as np
 from src.core.models.model_components.attention import LinearAttention
 from src.core.models.model_utils import ModelOutput
-from src.functions.utilities import conv_output_shape, deconv_output_shape # TODO: incorporate h/w info in enc/dec
+from src.core.functions.utilities import conv_output_shape, deconv_output_shape # TODO: incorporate h/w info in enc/dec
 
 # NL additions for compatibility with existing pipeline code
 class WrappedLDMDecoder(nn.Module):

@@ -3,7 +3,7 @@ set -euo pipefail
 
 # === First run ===
 echo ">>> Starting first run: run_name=${1:-runA}"
-python -m src.run.training --multirun \
+python -m src.core.run.training --multirun \
     hydra.job.name=sweep01_gan00_pips \
     model=vae_timm \
     model.ddconfig.name="Vit-Large" \

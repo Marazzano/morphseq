@@ -3,7 +3,7 @@ set -euo pipefail
 
 # === First run ===
 echo ">>> Starting first run: run_name=${1:-Blurg}"
-python -m src.run.training_cluster --multirun \
+python -m src.core.run.training --config-name base_cluster_metric --multirun \
     hydra.job.name=sweep07_test \
     model=metric_vae_timm \
     model.ddconfig.name="Swin-Tiny" \
@@ -12,5 +12,5 @@ python -m src.run.training_cluster --multirun \
     model.lossconfig.reconstruction_loss="L1" \
     model.lossconfig.pips_weight=0 \
     model.lossconfig.kld_weight=5,10,25 \
-    model.lossconfig.schedule_metric=zip(True,False) \
-    model.lossconfig.schedule_kld=zip(True,False)
+    'model.lossconfig.schedule_metric=zip(True,False)' \
+    'model.lossconfig.schedule_kld=zip(True,False)'

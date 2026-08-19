@@ -87,7 +87,8 @@ class metricVAE(nn.Module):
 
         if self.vanilla: # do normal VAE pass if not training
             encoder_output = self.encoder(x)
-            mu, logvar = encoder_output.embedding, encoder_output.log_covariance
+            mu = encoder_output.embedding
+            logvar = encoder_output.log_covariance.clamp(min=-10.0, max=5.0)
             z = self.reparametrize(mu, logvar)
             recon_x = self.decoder(z)["reconstruction"]
 
@@ -103,7 +104,7 @@ class metricVAE(nn.Module):
             # 3) run everything in one shot
             enc = self.encoder(x_all)
             mu = enc.embedding  # (2B, D)
-            logvar = enc.log_covariance  # (2B, D)
+            logvar = enc.log_covariance.clamp(min=-10.0, max=5.0)  # (2B, D)
             B = x0.shape[0]
             z = self.reparametrize(mu[:B], logvar[:B]) # we only need the actual samples (not positive pairs)
             recon_x = self.decoder(z)["reconstruction"]
@@ -125,5 +126,4 @@ class metricVAE(nn.Module):
         std = (0.5 * logvar).exp()
         eps = torch.randn_like(std)
         return mu + eps * std
-
 

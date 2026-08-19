@@ -21,7 +21,7 @@ def _abs_ancestor(path: str, levels: str) -> str:
 OmegaConf.register_new_resolver("ancestor", _abs_ancestor)
 
 @hydra.main(version_base="1.1",
-            config_path="/src/core/hydra_configs",
+            config_path="../hydra_configs",
             config_name="base")
 
 def main(cfg: DictConfig):
@@ -33,6 +33,5 @@ def main(cfg: DictConfig):
 
 if __name__ == "__main__":
     main()
-
 
 

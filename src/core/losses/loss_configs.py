@@ -1,4 +1,4 @@
-from typing    import Literal, Optional
+from typing import Literal, Optional, Tuple
 from pydantic.dataclasses import dataclass
 from dataclasses import field
 from importlib import import_module
@@ -15,6 +15,10 @@ class BasicLoss:
     ] = "src.core.losses.loss_functions.VAELossBasic"
 
     max_epochs: int = 25 # this will be overwritten by whatever is passed to the trainconfig
+
+    # Model input geometry. Model config assembly overwrites this from
+    # ``ddconfig.input_dim`` so loss normalisation follows the selected model.
+    input_dim: Tuple[int, int, int] = (1, 288, 128)
 
     # KLD
     kld_weight: float = 1.0
@@ -128,7 +132,6 @@ class MetricLoss(BasicLoss):
     # metric learning
     temperature: float = 0.1  # sets sharpness of loss 'gradient'
     metric_weight: float = 1.0  # tunes weight of contastive loss within the loss function
-    margin: float = 1.0  # sets tolerance/scale for metric loss.
     distance_metric: Literal["euclidean"] = "euclidean"  # Could/should add cosine
 
     # params to structure interactions

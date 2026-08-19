@@ -22,6 +22,5 @@ model:
 
   trainconfig:
     benchmark: True
-    accumulate_grad_batches: 2
     max_epochs: 100
 

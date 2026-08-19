@@ -212,15 +212,20 @@ def train_vae(cfg):
     #     devices = 1
     #     strategy = "ddp_cpu"  # uses Gloo on CPU
 
+    strategy = train_config.strategy
+    if strategy == "ddp_find_unused_parameters_true":
+        strategy = DDPStrategy(find_unused_parameters=True)
+
     # 3) train with Lightning
     trainer = pl.Trainer(logger=[wandb_logger, tb_logger],
                          max_epochs=train_config.max_epochs,
-                         precision=16,
+                         precision=train_config.precision,
                          callbacks=[SaveRunMetadata(data_config), checkpoint_cb] + spec_ckpt_cb,
-                         accelerator="gpu",
+                         accelerator=train_config.accelerator,
                          log_every_n_steps=10,
-                         strategy=DDPStrategy(find_unused_parameters=True),
-                         devices="auto",
+                         strategy=strategy,
+                         devices=train_config.devices,
+                         benchmark=train_config.benchmark,
                          )
 
     # wandb_run = trainer.logger.experiment
