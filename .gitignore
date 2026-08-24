@@ -81,7 +81,6 @@ src/build/__pychache__/
 
 # Ignore __pycache__ directories (recursively)
 **/__pycache__/
-src/core/data/
 .aider*
 .codex
 .codex/
