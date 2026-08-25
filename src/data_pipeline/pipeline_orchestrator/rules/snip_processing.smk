@@ -63,6 +63,12 @@ def _snip_inventory_validated(experiment: str, *, path_mode: str, well_id: str |
     fmt = {"snip_product_key": snip_product_key} if snip_product_key is not None else None
     return rule_validated(SNIP_INVENTORY_STEP, "snip_inventory", experiment, path_mode=path_mode, well_id=well_id, format_vars=fmt)
 
+def _snip_inventory_provenance(experiment: str, *, path_mode: str, well_id: str | None = None, snip_product_key: str | None = None):
+    return str(_snip_inventory_artifact(
+        experiment, "snip_inventory", path_mode=path_mode, well_id=well_id,
+        snip_product_key=snip_product_key,
+    )) + ".provenance.json"
+
 def _snip_inventory_artifacts_for_run(wc):
     # WELLS x PRODUCTS, over the AUTHORITATIVE shards -- never the compatibility alias, which would
     # otherwise double-count BF through both paths.
@@ -80,6 +86,15 @@ def _snip_inventory_validated_for_run(wc):
         str(_snip_inventory_validated(
             wc.experiment, path_mode=PATH_MODE_PER_WELL, well_id=w, snip_product_key=k,
         ))
+        for w in wells_for_experiment(wc)
+        for k in SNIP_PRODUCT_KEYS
+    ]
+
+def _snip_inventory_provenance_for_run(wc):
+    return [
+        _snip_inventory_provenance(
+            wc.experiment, path_mode=PATH_MODE_PER_WELL, well_id=w, snip_product_key=k,
+        )
         for w in wells_for_experiment(wc)
         for k in SNIP_PRODUCT_KEYS
     ]
@@ -184,6 +199,10 @@ rule snip_materialization_per_well:
             well_id="{well_id}",
             snip_product_key="{snip_product_key}",
         )),
+        provenance=_snip_inventory_provenance(
+            "{experiment}", path_mode=PATH_MODE_PER_WELL,
+            well_id="{well_id}", snip_product_key="{snip_product_key}",
+        ),
     params:
         snip_product_key=lambda wc: wc.snip_product_key,
         snips_dir=lambda wc: _snip_inventory_snips_dir(wc.experiment, wc.well_id),
@@ -269,6 +288,10 @@ rule validate_snip_inventory_for_well:
             well_id="{well_id}",
             snip_product_key="{snip_product_key}",
         )),
+        provenance=_snip_inventory_provenance(
+            "{experiment}", path_mode=PATH_MODE_PER_WELL,
+            well_id="{well_id}", snip_product_key="{snip_product_key}",
+        ),
     output:
         validated=str(_snip_inventory_validated(
             "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}",
@@ -278,6 +301,7 @@ rule validate_snip_inventory_for_well:
         """
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks validate-snip-inventory \
           --input-csv "{input.snip_inventory}" \
+          --provenance-json "{input.provenance}" \
           --output-flag "{output.validated}"
         """
 
@@ -291,16 +315,21 @@ rule merge_snip_inventory:
         # sentinel, and collect_well_shard_paths (which requires both) sees zero validated shards
         # and raises "no shards to concatenate". Matches the SAFE merge rules (e.g. merge_frame_masks).
         per_well_validated=_snip_inventory_validated_for_run,
+        per_well_provenance=_snip_inventory_provenance_for_run,
     output:
         merged=str(_snip_inventory_artifact(
             "{experiment}", "snip_inventory",
             path_mode=PATH_MODE_MERGED,
         )),
+        merged_provenance=_snip_inventory_provenance(
+            "{experiment}", path_mode=PATH_MODE_MERGED,
+        ),
     shell:
         """
         {RUN} -c "
 from data_pipeline.pipeline_orchestrator.orchestration.well_runner import concat_well_shards_to_file
 from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_identity_contract import SNIP_INVENTORY_COLUMNS
+from data_pipeline.object_extraction.snip_processing.provenance import merge_rendering_sidecars
 from pathlib import Path
 # THE SHARDS SNAKEMAKE ALREADY RESOLVED, not a re-derivation. collect_well_shard_paths builds
 # per-well paths from the registry and knows nothing about the product dimension, so it cannot fill
@@ -308,5 +337,9 @@ from pathlib import Path
 # of truth regardless. input.per_well is wells x products by construction.
 shards = [Path(p) for p in '{input.per_well}'.split()]
 concat_well_shards_to_file(shards, '{output.merged}', required_columns=SNIP_INVENTORY_COLUMNS, sort_columns=['experiment_id', 'well_id', 'snip_id'])
+merge_rendering_sidecars(
+    [Path(p) for p in '{input.per_well_provenance}'.split()],
+    Path('{output.merged_provenance}'),
+)
 "
         """

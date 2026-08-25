@@ -495,14 +495,15 @@ def cmd_frame_detections(args: argparse.Namespace) -> None:
 
 
 def cmd_validate_snip_inventory(args: argparse.Namespace) -> None:
-    import pandas as pd
-
-    from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_identity_contract import (
-        validate_snip_inventory_contract,
+    from data_pipeline.object_extraction.snip_processing.inventory_contract import (
+        read_snip_inventory,
     )
 
-    df = pd.read_csv(args.input_csv)
-    validate_snip_inventory_contract(df, scope_label=str(args.input_csv))
+    read_snip_inventory(
+        args.input_csv,
+        sidecar_path=args.provenance_json,
+        require_sidecar=True,
+    )
     args.output_flag.parent.mkdir(parents=True, exist_ok=True)
     args.output_flag.write_text("ok\n")
 
@@ -1678,6 +1679,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_si_validate = sub.add_parser("validate-snip-inventory")
     p_si_validate.add_argument("--input-csv", type=Path, required=True)
+    p_si_validate.add_argument("--provenance-json", type=Path, required=True)
     p_si_validate.add_argument("--output-flag", type=Path, required=True)
     p_si_validate.set_defaults(func=cmd_validate_snip_inventory)
 

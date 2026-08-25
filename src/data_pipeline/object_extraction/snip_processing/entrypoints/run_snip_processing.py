@@ -24,9 +24,6 @@ import pandas as pd
 import skimage.io as skio
 
 from data_pipeline.object_extraction.segmentation.masks.mask_rle import decode_binary_mask_rle
-from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_identity_contract import (
-    SNIP_INVENTORY_COLUMNS,
-)
 from data_pipeline.shared.identifiers.constructors import (
     build_embryo_id,
     build_image_id,
@@ -34,6 +31,14 @@ from data_pipeline.shared.identifiers.constructors import (
     build_snip_transform_id,
 )
 from data_pipeline.shared.identifiers.parsers import parse_image_id
+from data_pipeline.object_extraction.snip_processing.augmentation import (
+    BACKGROUND_NOISE_SEED,
+    BACKGROUND_NOISE_TRUNCATION_UPPER_STANDARD_DEVIATIONS,
+)
+from data_pipeline.object_extraction.snip_processing.inventory_contract import (
+    SNIP_INVENTORY_WRITE_COLUMNS,
+    validate_snip_inventory,
+)
 from data_pipeline.object_extraction.snip_processing.legacy_snip_paths import (
     legacy_flat_snip_path,
     link_legacy_flat_path,
@@ -44,7 +49,9 @@ from data_pipeline.object_extraction.snip_processing.snip_product_keys import (
     parse_snip_product_key,
 )
 from data_pipeline.object_extraction.snip_processing.snip_recipes import (
+    CLAHE_BLEND,
     assert_source_dtype_is_acceptable,
+    recipe_contract,
     recipe_output_dtype,
     render_snip,
 )
@@ -63,6 +70,12 @@ from data_pipeline.object_extraction.snip_processing.snip_transform_table import
     mask_content_fingerprint,
     read_snip_transform_table,
 )
+from data_pipeline.object_extraction.snip_processing.provenance import (
+    build_rendering_contract,
+    observed_mask_sources,
+    rendering_sidecar_path,
+    update_rendering_sidecar,
+)
 
 # The orientation DECISION recorded on every row, so a later yolk-aware pass knows what it replaces.
 # These are the CURRENT policy, not a configuration surface: there is exactly one orientation engine
@@ -78,6 +91,8 @@ NO_YOLK_POLICY = "fallback_mass_distribution"
 # that also holds good rows.
 
 _BACKGROUND_PIXELS_PER_IMAGE = 5000
+_BACKGROUND_FRAME_SAMPLE_COUNT = 50
+_BACKGROUND_SAMPLE_SEED = 309
 
 
 def _is_seahub_frame(inventory_row: pd.Series) -> bool:
@@ -243,11 +258,112 @@ def _source_frames_for_product(
     return matched.set_index("image_id")
 
 
+def _source_rows_for_masks(
+    valid_masks: pd.DataFrame,
+    inventory_index: pd.DataFrame,
+    *,
+    source_channel_id: str,
+    source_image_product_key: str,
+) -> dict[object, tuple[str, pd.Series, float]]:
+    """Join every renderable mask to a calibrated row of its requested product.
+
+    This is a job-level preflight, before background estimation or pixel writes.
+    Missing, null, non-numeric, non-finite, and non-positive calibrations are
+    contract failures rather than per-snip invalid rows.
+    """
+
+    if inventory_index.index.has_duplicates:
+        duplicates = sorted(
+            {
+                str(value)
+                for value in inventory_index.index[
+                    inventory_index.index.duplicated(keep=False)
+                ]
+            }
+        )
+        raise ValueError(
+            "snip_processing: source product "
+            f"{source_image_product_key!r} has duplicate image_id rows: {duplicates[:10]}"
+        )
+
+    resolved: dict[object, tuple[str, pd.Series, float]] = {}
+    failures: list[str] = []
+    for row_index, mask_row in valid_masks.iterrows():
+        well_id = str(mask_row["well_id"])
+        mask_image_id = str(mask_row["image_id"])
+        _, _mask_channel_id, time_index = parse_image_id(mask_image_id)
+        source_image_id = build_image_id(well_id, source_channel_id, int(time_index))
+        if source_image_id not in inventory_index.index:
+            failures.append(
+                f"image_id={source_image_id!r}: no frame_inventory row for source product "
+                f"{source_image_product_key!r} (sibling of mask frame {mask_image_id!r})"
+            )
+            continue
+
+        inventory_row = inventory_index.loc[source_image_id]
+        raw_scale = inventory_row.get("image_micrometers_per_pixel", pd.NA)
+        try:
+            source_scale = float(raw_scale)
+        except (TypeError, ValueError):
+            source_scale = float("nan")
+        if not np.isfinite(source_scale) or source_scale <= 0:
+            failures.append(
+                f"image_id={source_image_id!r}, source product "
+                f"{source_image_product_key!r}: image_micrometers_per_pixel={raw_scale!r}; "
+                "expected a finite positive value from frame_inventory"
+            )
+            continue
+        resolved[row_index] = (source_image_id, inventory_row, source_scale)
+
+    if failures:
+        raise ValueError(
+            "snip_processing source-calibration preflight failed before writing pixels:\n  "
+            + "\n  ".join(failures[:10])
+        )
+    return resolved
+
+
+def _assert_transform_write_policy(
+    transform_rows_by_id: dict[str, Any],
+    *,
+    expected_target_micrometers_per_pixel: float,
+    expected_output_shape: tuple[int, int],
+    snip_product_key: str,
+) -> None:
+    """Ensure the persisted geometry and this renderer declare one output grid."""
+
+    target = float(expected_target_micrometers_per_pixel)
+    if not np.isfinite(target) or target <= 0:
+        raise ValueError(
+            f"snip_processing: target_pixel_size_um for {snip_product_key!r} must be "
+            f"finite and positive; got {expected_target_micrometers_per_pixel!r}."
+        )
+    for transform_id, transform_row in transform_rows_by_id.items():
+        canonical = canonical_from_row(transform_row)
+        observed_target = float(canonical.grid.default_output_um_per_px_yx[0])
+        observed_shape = tuple(canonical.grid.default_output_shape_yx)
+        if not np.isclose(observed_target, target, rtol=0.0, atol=1e-12):
+            raise ValueError(
+                f"snip_processing: {transform_id!r} targets {observed_target} um/px, but "
+                f"product {snip_product_key!r} was invoked with {target} um/px. Regenerate "
+                "snip_geometry and render with the same output-grid policy."
+            )
+        if observed_shape != tuple(expected_output_shape):
+            raise ValueError(
+                f"snip_processing: {transform_id!r} targets output shape {observed_shape}, "
+                f"but product {snip_product_key!r} was invoked with "
+                f"{tuple(expected_output_shape)}. Regenerate snip_geometry and render with "
+                "the same output-grid policy."
+            )
+
+
 def _estimate_background(
     valid_masks: pd.DataFrame,
     inventory_index: pd.DataFrame,
-    n_samples: int = 50,
-    seed: int = 309,
+    *,
+    source_rows_by_mask: dict[object, tuple[str, pd.Series, float]] | None = None,
+    n_samples: int = _BACKGROUND_FRAME_SAMPLE_COUNT,
+    seed: int = _BACKGROUND_SAMPLE_SEED,
 ) -> tuple[float, float]:
     """Sample background pixels (outside embryo mask) to estimate mean/std.
 
@@ -255,8 +371,10 @@ def _estimate_background(
     5,000 full-frame pixels outside the embryo mask. SeaHub frames are centered
     on a large constant canvas, so that prefix is almost always padding. For
     SeaHub, remove the declared ``canvas_fill_value`` and draw up to 5,000
-    genuine outside-mask pixels uniformly without replacement. Both frame and
-    pixel sampling are deterministic under ``seed``.
+    genuine outside-mask pixels uniformly without replacement. When rendering a
+    sibling product (for example RFP from a BF mask), ``source_rows_by_mask``
+    selects that product's own frame rather than looking up the mask's BF
+    ``image_id``. Both frame and pixel sampling are deterministic under ``seed``.
     """
     # Preserve the legacy global seed contract: downstream background-noise
     # generation uses ``np.random`` too, so the full snip run remains
@@ -274,11 +392,17 @@ def _estimate_background(
     saw_seahub_frame = False
     for i in sample_idx:
         row = valid_masks.loc[i]
-        image_id = str(row["image_id"])
-        if image_id not in inventory_index.index:
-            continue
         try:
-            inventory_row = inventory_index.loc[image_id]
+            if source_rows_by_mask is None:
+                image_id = str(row["image_id"])
+                if image_id not in inventory_index.index:
+                    continue
+                inventory_row = inventory_index.loc[image_id]
+            else:
+                source_row = source_rows_by_mask.get(i)
+                if source_row is None:
+                    continue
+                _source_image_id, inventory_row, _source_scale = source_row
             src = Path(str(inventory_row["image_path"]))
             img = skio.imread(str(src))
             if img.ndim == 3:
@@ -360,6 +484,50 @@ def run_snip_processing(
     inventory_index = _source_frames_for_product(
         frame_inventory, source_image_product_key=_source_image_product_key
     )
+    source_rows_by_mask = _source_rows_for_masks(
+        valid_masks,
+        inventory_index,
+        source_channel_id=source_channel_id,
+        source_image_product_key=_source_image_product_key,
+    )
+
+    experiment_ids = sorted(
+        {
+            str(value)
+            for table in (frame_masks, frame_inventory)
+            if "experiment_id" in table.columns
+            for value in table["experiment_id"].dropna().tolist()
+        }
+    )
+    if len(experiment_ids) != 1:
+        raise ValueError(
+            "snip_processing is a per-well, single-experiment writer; expected exactly "
+            f"one experiment_id for provenance, found {experiment_ids}."
+        )
+    well_ids = sorted(
+        {
+            str(value)
+            for table in (frame_masks, inventory_index)
+            if "well_id" in table.columns
+            for value in table["well_id"].dropna().tolist()
+        }
+    )
+    if len(well_ids) != 1:
+        raise ValueError(
+            "snip_processing is a per-well writer; expected exactly one well_id for "
+            f"provenance, found {well_ids}."
+        )
+
+    mask_sources = observed_mask_sources(
+        valid_masks,
+        source_column="segmentation_backend",
+        version_column="segmentation_model_id",
+    )
+    source_scopes = (
+        sorted({str(value) for value in inventory_index["source_scope"].dropna()})
+        if "source_scope" in inventory_index.columns
+        else []
+    )
 
     # Identity is JOINED from the registry, never minted here. A valid mask whose track has no
     # registry row is a contract violation (the registry is built from frame_masks, so it must
@@ -373,7 +541,11 @@ def run_snip_processing(
     # Every alias created this run, for debugging external breakage without archaeology.
     legacy_alias_manifest: list[dict[str, str]] = []
 
-    _bg_mean, _bg_std = _estimate_background(valid_masks, inventory_index)
+    _bg_mean, _bg_std = _estimate_background(
+        valid_masks,
+        inventory_index,
+        source_rows_by_mask=source_rows_by_mask,
+    )
     background_mean = background_noise_scale * _bg_mean
     background_std = background_noise_scale * _bg_std
 
@@ -395,13 +567,114 @@ def run_snip_processing(
             physical_embryo_id_by_track=physical_embryo_id_by_track,
             scope_label=f"{Path(frame_masks_csv).stem} / {snip_product_key}",
         )
+        _assert_transform_write_policy(
+            transform_rows_by_id,
+            expected_target_micrometers_per_pixel=float(target_pixel_size_um),
+            expected_output_shape=(int(output_height_px), int(output_width_px)),
+            snip_product_key=snip_product_key,
+        )
+
+    is_clahe_blend = snip_recipe == CLAHE_BLEND
+    declared_dtype = recipe_contract(snip_recipe).output_dtype or "source_dtype"
+    rendering_contract = build_rendering_contract(
+        snip_product_key=snip_product_key,
+        source_image_product_key=_source_image_product_key,
+        snip_recipe=snip_recipe,
+        target_micrometers_per_pixel=float(target_pixel_size_um),
+        blend_radius_micrometers=float(blend_radius_um),
+        blend_radius_applied=is_clahe_blend,
+        frame_shape=(int(output_height_px), int(output_width_px)),
+        mask_contract={
+            "artifact": "frame_masks",
+            "payload_column": "mask_rle",
+            "source_column": "segmentation_backend",
+            "version_column": "segmentation_model_id",
+            "geometry_mask_policy": "decoded binary frame mask, unchanged",
+            "render_mask_policy": {
+                "default": "decoded binary frame mask",
+                "seahub": (
+                    "eight-connected largest component followed by binary hole fill"
+                ),
+            },
+        },
+        orientation_contract={
+            "policy": ORIENTATION_POLICY,
+            "evidence_source": ORIENTATION_SOURCE_MASS_DISTRIBUTION,
+            "no_yolk_policy": NO_YOLK_POLICY,
+            "derivation_stage": "snip_geometry",
+        },
+        clahe_enabled=is_clahe_blend and bool(apply_clahe),
+        background_contract={
+            "estimated_for_job": True,
+            "applied_to_pixels": is_clahe_blend,
+            "model": "per-well source-frame pixels outside the current embryo mask",
+            "estimator": (
+                "entrypoints.run_snip_processing._estimate_background with SeaHub "
+                "canvas-fill exclusion"
+            ),
+            "frame_sample_count": _BACKGROUND_FRAME_SAMPLE_COUNT,
+            "frame_sample_seed": _BACKGROUND_SAMPLE_SEED,
+            "maximum_pixels_per_frame": _BACKGROUND_PIXELS_PER_IMAGE,
+            "noise_scaling": float(background_noise_scale),
+            "noise_distribution": {
+                "implementation": "scipy.stats.truncnorm",
+                "lower_intensity": 0.0,
+                "upper_standard_deviations": (
+                    BACKGROUND_NOISE_TRUNCATION_UPPER_STANDARD_DEVIATIONS
+                ),
+                "seed": BACKGROUND_NOISE_SEED,
+            },
+        },
+        resampling_contract={
+            "source_calibration_column": "image_micrometers_per_pixel",
+            "calibration_scope": "selected source image product row",
+            "chain": [
+                {
+                    "step": "resize",
+                    "implementation": "cv2.resize via image_geometry.TransformChain",
+                    "image_downscale_kernel": "INTER_AREA",
+                    "image_upscale_or_identity_kernel": "INTER_LINEAR",
+                    "mask_kernel": "INTER_NEAREST",
+                    "anti_alias": True,
+                },
+                {
+                    "step": "rotate_center",
+                    "implementation": "cv2.warpAffine via image_geometry.TransformChain",
+                    "image_kernel": "INTER_LINEAR",
+                    "mask_kernel": "INTER_NEAREST",
+                    "border_mode": "constant",
+                    "border_value": 0.0,
+                    "centering": CENTERING_LATCHED,
+                },
+            ],
+        },
+        file_encoding={
+            "processed_snip": {
+                "format": "PNG inferred from extension",
+                "extension": ".png",
+                "dtype": declared_dtype,
+                "color_mode": "2-D grayscale",
+                "writer": "skimage.io.imsave",
+                "writer_options": {"check_contrast": False},
+                "encoder_parameters": "library defaults",
+            },
+            "embryo_mask_reference": {
+                "producer": "snip_geometry",
+                "format": "PNG inferred from extension",
+                "dtype": "uint8",
+                "values": [0, 255],
+                "writer": "skimage.io.imsave",
+                "writer_options": {"check_contrast": False},
+            },
+        },
+    )
 
     rows: list[dict[str, Any]] = []
     # Collected inside the loop, reconciled after it. Reconciliation is keyed by snip_transform_id so
     # sibling products of one embryo-time collapse onto ONE row — that collapse is the mechanism
     # that makes duplicate (and therefore driftable) geometry unrepresentable.
 
-    for _, mask_row in valid_masks.iterrows():
+    for mask_row_index, mask_row in valid_masks.iterrows():
         image_id = str(mask_row["image_id"])
         track_id = str(mask_row["track_id"])
         mask_id = str(mask_row["mask_id"])
@@ -424,6 +697,7 @@ def run_snip_processing(
         # Channel-INDEPENDENT: the transform is a fact about the animal at a time, not about a
         # channel, so every sibling product of this embryo-time resolves to this same id.
         snip_transform_id = build_snip_transform_id(physical_embryo_id, int(time_index))
+        _source_image_id, inv_row, pixel_size_um = source_rows_by_mask[mask_row_index]
 
         out: dict[str, Any] = {
             "snip_id": snip_id,
@@ -436,7 +710,7 @@ def run_snip_processing(
             "channel_id": channel_id,
             "mask_id": mask_id,
             "track_id": track_id,
-            "image_path": None,
+            "image_path": str(inv_row["image_path"]),
             "processed_snip_path": None,
             # Product identity is known BEFORE rendering, so a failed row still says which product
             # it was trying to be -- otherwise a failure is unattributable once several products
@@ -460,7 +734,7 @@ def run_snip_processing(
             # every existing downstream consumer) uses. Kept rather than dropped in favour of the
             # _um_per_px spelling: renaming a published column is a separate, deliberate migration,
             # and until it happens a column the contract requires must not arrive as all-NaN.
-            "source_micrometers_per_pixel": None,
+            "source_micrometers_per_pixel": pixel_size_um,
             "snip_micrometers_per_pixel": float(target_pixel_size_um),
             "is_valid_snip": False,
             "error_message": None,
@@ -496,24 +770,7 @@ def run_snip_processing(
         }
 
         try:
-            # THE MASK'S image_id IS ALWAYS BF. Detection and segmentation are BF-only, so
-            # frame_masks contains BF rows exclusively; a non-BF product must translate to its own
-            # SIBLING frame of the same well and timepoint. That translation is a pure id
-            # construction, not a persisted mapping -- which is what lets an RFP job run in parallel
-            # with the BF one instead of waiting on any of its artifacts.
-            source_image_id = build_image_id(well_id, source_channel_id, int(time_index))
-            if source_image_id not in inventory_index.index:
-                raise KeyError(
-                    f"image_id {source_image_id!r} (source product "
-                    f"{_source_image_product_key!r}, sibling of mask frame {image_id!r}) not found "
-                    "in frame_inventory"
-                )
-            inv_row = inventory_index.loc[source_image_id]
-
             image_path = Path(str(inv_row["image_path"]))
-            pixel_size_um = float(inv_row["image_micrometers_per_pixel"])
-            out["image_path"] = str(inv_row["image_path"])
-            out["source_micrometers_per_pixel"] = pixel_size_um
 
             # Decode RLE mask from frame_masks row.
             rle = json.loads(str(mask_row["mask_rle"]))
@@ -768,12 +1025,40 @@ def run_snip_processing(
     # with EmptyDataError. Force the schema so an empty well still writes a valid, headered,
     # zero-row snip_inventory — the file itself IS the provenance record ("processed, found
     # nothing"); backtrack to that well's frame_masks/frame_detections shards to see why.
-    result_df = pd.DataFrame(rows, columns=list(SNIP_INVENTORY_COLUMNS))
+    result_df = pd.DataFrame(rows, columns=list(SNIP_INVENTORY_WRITE_COLUMNS))
+    validate_snip_inventory(
+        result_df,
+        require_rendering_provenance=True,
+        scope_label=str(output_csv),
+    )
     output_csv = Path(output_csv)
     output_csv.parent.mkdir(parents=True, exist_ok=True)
     result_df.to_csv(output_csv, index=False)
 
-    # Reconcile the per-embryo-time transforms and write the well's table. Sibling products derive
-    # the SAME recipe (the transform reads the mask, never image pixels), so a second arrival must
-    # match the first exactly; a mismatch means the derivation is not channel-independent and the
-    # snips would not be pixel-registerable, which is a contract violation rather than a bad row.
+    observation = {
+        "mask_sources_and_versions": mask_sources,
+        "source_scope_values": source_scopes,
+        "source_micrometers_per_pixel_values": sorted(
+            {float(value[2]) for value in source_rows_by_mask.values()}
+        ),
+        "background_source_mean": float(_bg_mean),
+        "background_source_std": float(_bg_std),
+        "background_noise_mean": float(background_mean),
+        "background_noise_std": float(background_std),
+        "pixel_dtypes": sorted(
+            {
+                str(value)
+                for value in result_df.loc[
+                    result_df["pixel_dtype"].notna(), "pixel_dtype"
+                ]
+            }
+        ),
+        "rendered_snip_count": int(result_df["is_valid_snip"].astype(bool).sum()),
+        "inventory_row_count": int(len(result_df)),
+    }
+    update_rendering_sidecar(
+        rendering_sidecar_path(output_csv),
+        fixed_contract=rendering_contract,
+        snip_product_key=snip_product_key,
+        well_observations={well_id: observation for well_id in well_ids},
+    )

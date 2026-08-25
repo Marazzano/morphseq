@@ -17,6 +17,10 @@ from data_pipeline.object_extraction.snip_processing.defaults import (
 )
 
 
+BACKGROUND_NOISE_SEED = 42
+BACKGROUND_NOISE_TRUNCATION_UPPER_STANDARD_DEVIATIONS = 4.0
+
+
 def apply_clahe(image: np.ndarray) -> np.ndarray:
     """
     Apply Contrast Limited Adaptive Histogram Equalization.
@@ -36,7 +40,7 @@ def generate_background_noise(
     shape: Tuple[int, int],
     background_mean: float,
     background_std: float,
-    seed: int = 42,
+    seed: int = BACKGROUND_NOISE_SEED,
 ) -> np.ndarray:
     """
     Generate truncated normal noise matching background statistics.
@@ -60,7 +64,7 @@ def generate_background_noise(
 
     # Generate truncated normal distribution (no negative values)
     a = -background_mean / background_std  # Lower bound in standard deviations
-    b = 4  # Upper bound (4 std above mean)
+    b = BACKGROUND_NOISE_TRUNCATION_UPPER_STANDARD_DEVIATIONS
 
     noise_normalized = truncnorm.rvs(
         a, b,
