@@ -1,0 +1,916 @@
+# Frame Inventory Handoff Contract — the drop-in seam (🟢 TARGET)
+
+**Status:** active spec, mdcolon 2026-06-04. Defines the **one explicit contract** for the
+stitched-image handoff so an external dataset can be organized and pushed through the pipeline
+from segmentation onward — the way any standard image-processing pipeline declares its input
+format.
+**Companion to:** `front_end_naming_and_frame_inventory_flow.md` (the front-end ingest + fan spec — this doc is
+its post-fan "drop-in here" counterpart); `per_well_throughline_findings.md` (the north-star
+findings doc; the stitched image tree is **off-registry** there); and
+`external_dataset_handoff_target.md` (**how arbitrary external data reaches this seam** — the
+biology + manifest on-ramp and the strict per-well gate).
+**Upstream counterpart:** `acquisition_inventory_flow.md` — the **pre-stitch, microscope-specific**
+record of *what was physically acquired* (per `raw_acquisition_unit`, scope-shaped). The
+**acquisition inventory** is a different kind of information from the **frame inventory**: the
+former is upstream/scope-specific/per-raw-unit (it feeds the scope stitcher); this doc's frame
+inventory is downstream/agnostic/per-stitched-frame (it feeds segmentation). The stitcher is the
+boundary between them — see that doc's "Acquisition inventory ≠ frame inventory."
+**Scope of THIS doc:** the stitched-image **directory tree** (the pixel store), the
+**`frame_inventory`** table that travels with it, the **immutable frame key**, the **strict
+shared validator** (`validate_frame_inventory_well`), and a **worked walkthrough** of both
+producers — native microscope ingest **and** external drop-in.
+
+> **Migration note (2026-07-10): core frame inventory describes the materialized image on disk.**
+> The core contract is being migrated away from ambiguous `source_*` image fields. The required
+> image columns are the facts downstream needs to open and interpret the materialized image:
+> `image_path`, `image_width_px`, `image_height_px`, `image_micrometers_per_pixel`,
+> `image_file_format`, `pixel_dtype`, `downsample_factor`, and `downsample_method`.
+> `jpeg_quality` is format-conditional: required only for JPEG rows, null/absent otherwise.
+> Raw acquisition facts are optional provenance, not core frame identity. Keyence may carry
+> `raw_tile_path`/`raw_tile_manifest_path`, `raw_tile_width_px`, `raw_tile_height_px`, `raw_tile_count`, and
+> `raw_micrometers_per_pixel`; YX1 may carry `raw_image_source_path`, `raw_image_width_px`,
+> `raw_image_height_px`, and `raw_micrometers_per_pixel`. The old `source_image_path` core name
+> is mechanically a materialized image path today and should migrate to `image_path` with a
+> compatibility fallback during code migration.
+
+> **Migration order (pipeline-first).** First fix native materialization so it writes correct
+> images: stitch from canonical tile coordinates, remove legacy crop/pad canvas behavior, and let
+> write policy optionally orient the final array as `horizontal` or `vertical`. Only after the
+> materialized Keyence/YX1 rows validate should the broader contract rename land everywhere
+> downstream (`source_image_path` -> `image_path`, raw/source facts -> optional `raw_*` columns).
+> This check is required for **both** native producers: Keyence must record tiled raw provenance,
+> and YX1 must record the ND2 `raw_image_source_path` plus raw image dimensions/calibration while
+> still deriving the required core fields from the final writer-policy output.
+
+### Migration Plan — materialized-image truth first
+
+The implementation migration must land in small verified commits. The first priority is making the
+native pipeline write correct images; broad column renames come only after that is proven. Do not
+add compatibility readers: migrate the contract directly, update call sites, update fixtures, and
+commit each stage after focused verification.
+
+Verification should be narrow. A stage is allowed to prove the native path on **one target well per
+scope** (one Keyence well and one YX1 well) rather than rematerializing whole experiments. The point
+is to prove that the writer boundary, frame-inventory row shape, validator, and downstream consumer
+path work end-to-end for each microscope family; full-experiment generalization can follow once the
+contract path is correct.
+
+#### Stage 1 — writer policy owns only final presentation and bytes
+
+Change:
+
+- `src/data_pipeline/acquisition/image_materialization/materialized_image_write_policy.py`
+  - add `orientation: none | horizontal | vertical` to `ImageWritePolicy`;
+  - add an orientation transform that rotates only when needed to satisfy horizontal/vertical;
+  - apply orientation inside `prepare_image_for_write` before/with downsample/dtype conversion;
+  - remove `source_image_width_px` / `source_image_height_px` from
+    `MATERIALIZED_IMAGE_WRITE_POLICY_COLUMNS`;
+  - keep `jpeg_quality` format-conditional, not a universal required core fact.
+
+Tests:
+
+- `tests/data_pipeline/acquisition/image_materialization/test_materialized_image_write_policy.py`
+  - add orientation cases (`none`, already-horizontal, rotate-to-horizontal, rotate-to-vertical);
+  - update expected `ImageWritePolicy(...)` constructors and policy-column expectations.
+
+Commit this stage alone after the write-policy unit tests pass.
+
+#### Stage 2 — Keyence constructs from coordinates, writer orients
+
+Change:
+
+- `src/data_pipeline/acquisition/image_building/utils/frame_tiler.py`
+  - remove/retire legacy crop/pad canvas fitting from the native Keyence path;
+  - render the canonical mosaic from tile coordinates/bounds;
+  - keep tile coordinates as the geometry source of truth, not the orientation string;
+  - normalize stitch2d failures so master coordinates can be used when appropriate.
+- `src/data_pipeline/acquisition/image_materialization/scope/keyence/materialize_well_keyence.py`
+  - call the shared writer policy instead of raw `skio.imsave`;
+  - write `image_path`, `image_width_px`, `image_height_px`,
+    `image_micrometers_per_pixel`, `image_file_format`, `pixel_dtype`,
+    `downsample_factor`, and `downsample_method` from the final written file;
+  - populate Keyence optional raw provenance: `raw_tile_path` or `raw_tile_manifest_path`,
+    `raw_tile_width_px`, `raw_tile_height_px`, `raw_tile_count`, and
+    `raw_micrometers_per_pixel`;
+  - keep focus-index-map provenance aligned to the final written orientation/shape.
+- `src/data_pipeline/acquisition/image_materialization/scope/keyence/build_keyence_stitch_map.py`
+  - ensure generated master params/coordinate records do not encode stale orientation as truth.
+
+Tests:
+
+- `tests/data_pipeline/acquisition/image_building/utils/test_frame_tiler.py`
+- `tests/data_pipeline/acquisition/image_materialization/scope/keyence/test_build_keyence_stitch_map.py`
+- add/update Keyence materializer tests if present or create focused coverage for final written
+  dimensions and raw-tile provenance.
+
+Verification:
+
+- run a focused Keyence candidate materialization on a known previously bad well;
+- inspect the written file header and assert `image_width_px` / `image_height_px` match it.
+
+Commit this stage alone after the Keyence smoke and focused tests pass.
+
+#### Stage 3 — YX1 uses the same writer boundary
+
+Change:
+
+- `src/data_pipeline/acquisition/image_materialization/scope/yx1/materialize_well_yx1.py`
+  - keep product construction as-is, but route projection and z-stack writes through the shared
+    writer policy;
+  - compute `image_width_px` / `image_height_px` from the final written image, not raw ND2 shape
+    and not `expected_downsampled_dims` over source columns;
+  - write core fields: `image_path`, `image_micrometers_per_pixel`, `image_file_format`,
+    `pixel_dtype`, `downsample_factor`, `downsample_method`, and conditional `jpeg_quality`;
+  - write optional raw provenance: `raw_image_source_path`, `raw_image_width_px`,
+    `raw_image_height_px`, and `raw_micrometers_per_pixel`.
+
+Tests:
+
+- `tests/data_pipeline/acquisition/image_materialization/scope/yx1/test_materialize_well_yx1.py`
+  - update expected columns and row assertions;
+  - add/check ND2 raw provenance;
+  - assert written dimensions come from the writer output.
+
+Verification:
+
+- run a focused YX1 materialization smoke for projection and z-stack products;
+- validate the product frame-inventory shard with source/image checks enabled.
+
+Commit this stage alone after the YX1 smoke and focused tests pass.
+
+#### Stage 4 — frame-inventory contract and validators become image-core-first
+
+Change:
+
+- `src/data_pipeline/acquisition/image_materialization/frame_inventory_contract.py`
+  - replace required core `source_image_path` with `image_path`;
+  - replace required `source_micrometers_per_pixel` with `image_micrometers_per_pixel`;
+  - remove `source_image_width_px` / `source_image_height_px` from required/write-policy columns;
+  - update `DOWNSTREAM_FRAME_IDENTITY_BLOCK` and `_FRAME_IDENTITY_CARRIED_COLUMNS` to carry
+    `image_path`, `image_width_px`, and `image_height_px`;
+  - keep optional `raw_*` provenance out of the core required-column tuple.
+- `src/data_pipeline/acquisition/metadata_ingest/frame_inventory/frame_inventory_validation_rules.py`
+  - rename `validate_sources` semantics/messages to validate `image_path`;
+  - open `image_path`, check suffix vs `image_file_format`, and check header dimensions against
+    `image_width_px` / `image_height_px`;
+  - require `image_micrometers_per_pixel > 0`;
+  - stop recomputing dimensions from `source_image_width_px` / `source_image_height_px`;
+  - keep JPEG quality conditional.
+- `src/data_pipeline/acquisition/metadata_ingest/frame_inventory/frame_inventory_validation.py`
+  - update names/messages only as needed.
+- `src/data_pipeline/acquisition/metadata_ingest/frame_inventory/scaffold_dropin_inventory.py`
+  - emit `image_path`, `image_micrometers_per_pixel` placeholder, and final image dims;
+  - stop scaffolding `source_image_width_px` / `source_image_height_px`.
+- `src/data_pipeline/acquisition/image_materialization/product_shard_assembly.py`
+  - update any expected-column or drift checks if they assume old source columns.
+
+Tests:
+
+- `tests/data_pipeline/acquisition/image_materialization/test_frame_inventory_contract.py`
+- `tests/data_pipeline/acquisition/metadata_ingest/test_frame_inventory.py`
+- `tests/data_pipeline/acquisition/metadata_ingest/test_frame_inventory_strict_gate.py`
+- `tests/data_pipeline/acquisition/metadata_ingest/frame_inventory/test_scaffold_dropin_inventory.py`
+- `tests/data_pipeline/acquisition/image_materialization/test_product_shard_assembly.py`
+- `tests/data_pipeline/acquisition/image_materialization/test_product_shard_merge_integration.py`
+
+Commit this stage alone after the frame-inventory contract/validator tests pass.
+
+#### Stage 5 — materialized-image readers and image consumers use `image_path`
+
+Change:
+
+- `src/data_pipeline/acquisition/image_materialization/materialized_image_readers.py`
+  - rename resolver/helpers/docstrings from `source_image_path` to `image_path`.
+- `src/data_pipeline/pipeline_orchestrator/tasks.py`
+  - update frame-preview / RGB conversion code that reads `row["source_image_path"]`.
+- Detection:
+  - `src/data_pipeline/object_extraction/detection/run_frame_detection.py`
+  - `src/data_pipeline/object_extraction/detection/kept_frame_detections.py`
+  - detection validators/contracts/tests that carry frame identity.
+- Segmentation:
+  - `src/data_pipeline/object_extraction/segmentation/sam2_video/sam2_frame_view.py`
+  - `src/data_pipeline/object_extraction/segmentation/backends/sam2_video/adapt_sam2_output.py`
+  - `src/data_pipeline/object_extraction/segmentation/frame_masks_contract.py`
+  - `src/data_pipeline/object_extraction/segmentation/validate_frame_masks.py`
+  - `src/data_pipeline/object_extraction/segmentation/physical_embryo_registry/snip_identity_contract.py`
+- Snip processing:
+  - `src/data_pipeline/object_extraction/snip_processing/contract.py`
+  - `src/data_pipeline/object_extraction/snip_processing/pipelines/snip_processing.py`
+  - `src/data_pipeline/object_extraction/snip_processing/entrypoints/run_snip_processing.py`
+  - `src/data_pipeline/object_extraction/snip_processing/ops.py`
+- Feature/QC/viz consumers:
+  - `src/data_pipeline/feature_extraction/mask_geometry/compute.py`
+  - `src/data_pipeline/feature_extraction/shared/feature_table_utils.py`
+  - `src/data_pipeline/quality_control/focus_qc/compute.py`
+  - `src/data_pipeline/quality_control/motion_blur_qc/*`
+  - `src/data_pipeline/viz/render_well.py`
+
+Tests:
+
+- update all fixtures that currently author `source_image_path` or
+  `source_micrometers_per_pixel`, especially:
+  - `tests/data_pipeline/acquisition/image_materialization/test_materialized_image_readers.py`
+  - `tests/data_pipeline/object_extraction/detection/*`
+  - `tests/data_pipeline/object_extraction/segmentation/*`
+  - `tests/data_pipeline/object_extraction/snip_processing/*`
+  - `tests/data_pipeline/quality_control/*`
+  - `tests/data_pipeline/viz/test_render_well.py`
+  - `tests/test_frame_snapshot_hash.py`
+
+Commit this stage alone after downstream unit tests for detection/segmentation/snip/QC/viz pass.
+
+#### Stage 6 — docs/config cleanup and final grep gate
+
+Change:
+
+- `docs/data_pipeline/PIPELINE_OVERVIEW.md`
+- `src/data_pipeline/pipeline_orchestrator/config.yaml` comments
+- related front-end specs that still describe old core fields:
+  - `docs/data_pipeline/specs/target/specs/front_end/external_dataset_handoff_target.md`
+  - `docs/data_pipeline/specs/target/specs/front_end/keyence_wire_through.md`
+  - `docs/data_pipeline/specs/target/specs/front_end/z_stack_materialization_wire_through.md`
+  - `docs/data_pipeline/specs/target/specs/front_end/magterialization_policy_plan.md`
+
+Final grep gate:
+
+```text
+rg "source_image_path|source_micrometers_per_pixel|source_image_width_px|source_image_height_px" src tests
+```
+
+Expected result: no live code/tests use old core fields. Any remaining mentions must be archival
+docs or explicitly raw/acquisition contexts. Commit this cleanup separately.
+
+> **Vocabulary note (2026-06-04):** this doc adopts **`frame_inventory`** as the name of the
+> per-well validated table, replacing the older `frame_contract`. The code rename
+> (`frame_contract` → `frame_inventory`: 37 Snakefile refs + 3 Python modules + schema) is a
+> **Scope-2 migration**, logged in Refactor Items — **not** executed in this doc pass.
+
+---
+
+## 🎯 WHY THIS DOC EXISTS — the one un-named handoff
+
+Every other handoff in this refactor was made an **explicit, named contract**:
+`scope_metadata_mapped.csv`, `discovered_wells.txt`, the per-well shards, the `STAGES` registry.
+The **stitched image tree is the exception** — by design it is *off-registry* (an image
+directory, not a tabular artifact; findings doc, Lean MVP Contract), so it has had no written
+contract. Its layout lives only as an opaque-string path builder in code (`stitched_ff_builder.py`).
+
+That is the gap this doc closes. The stitched seam is the **natural drop-in point** because it
+is the **first microscope-agnostic artifact** in the pipeline:
+
+```
+  per-microscope ingest ──► FAN ──►  STITCHED HANDOFF  ──► segmentation ─► snips ─► features ─► QC
+   (yx1 / keyence,                    (this doc:           (everything downstream is
+    raw reads)                         agnostic, drop-in)   microscope-agnostic already)
+```
+
+> **The load-bearing claim:** everything **upstream** of the stitched tree is
+> microscope-specific (raw reads, series→well mapping). Everything **downstream** of the
+> `frame_inventory` is microscope-agnostic and already consumes it. So a user who can produce
+> **(1) a stitched tree + (2) a valid frame inventory** can run the pipeline from segmentation —
+> *without* a Keyence or YX1 microscope, without our ingest stages.
+
+---
+
+## 🧱 THE FOUR THINGS — what each artifact answers (lock this vocabulary)
+
+The stitched image tree **is not the contract and not the metadata. It is the pixel store.**
+Keeping these four roles distinct is what makes the seam legible:
+
+| Thing | Answers | What's actually in it |
+|---|---|---|
+| **stitched image tree** = **`image_id`s on disk** | *Where are the image files?* | one image file per `image_id` (`{well_id}_{channel_id}_t{time_index:04d}.{ext}`). The path/filename **encodes the frame key** — the tree IS the set of `image_id`s realized on disk. Pixels only; no calibration, no timing. |
+| **scope metadata** (`scope_metadata_mapped.csv`) | *What frames did the front-end EXPECT, with what facts?* | one experiment-grain table (native only): one row per expected frame, carrying the frame-key atoms **plus** the facts pixels can't hold — `source_micrometers_per_pixel`, dims, channel. |
+| **`frame_inventory.csv`** (built → validated) | *What per-frame image rows do we trust?* | one **per-well** table: the frame-key atoms + `source_image_path` + calibration + dims + derived `image_id`. = expected facts JOINED to observed image files. **This is the only thing segmentation reads.** |
+| **`.validated` sentinel** | *Has this well's inventory passed the gate?* | a near-empty flag file; its *existence* = passed. Carries no detail (detail goes to the fail-only errors file). |
+
+Mental model: **`image_id`s on disk (pixels) → expected facts table → joined+trusted per-frame
+table.** There is **one** per-frame table per well (`frame_inventory`); its validation status is a
+**sentinel**, not a different filename. (We do **not** keep a separate "candidate" file — see
+One-File Model.)
+
+---
+
+## 🪨 THE IMMUTABLE FRAME KEY — the invariant in stone letters
+
+> **The frame key is the four RAW ATOMS, immutable after scope-metadata mapping:**
+> **`experiment_id + well_index + channel_id + time_index`**
+> **Every stage may CHECK, ENRICH, or FILTER-BY-FAILING-LOUDLY. No stage may silently
+> reassign, renumber, infer a different time axis, change `channel_id`, change a well's
+> `well_index`, drop an expected frame, or mint an inconsistent `well_id`/`image_id`.**
+
+**The key is the raw atoms; `well_id` and `image_id` are DERIVED compositions of them** — not
+extra key fields. (Listing `well_id` *and* `experiment_id` in the key would be redundant:
+`well_id` already contains `experiment_id`.)
+
+```
+well_id  = {experiment_id}_{well_index}                  # composition of two atoms
+image_id = {well_id}_{channel_id}_t{time_index:04d}      # = {experiment_id}_{well_index}_{channel_id}_t{time_index:04d}
+```
+
+> **Naming caveat (mdcolon).** It is the *combination of the four raw atoms* that is unique —
+> `image_id` is the composed **name** for that combination, a convenience, not a separate
+> identity. The atoms are the truth; the composed ids are derived labels.
+
+The validator checks that any composed id present (`well_id`, `image_id`) agrees with the atoms;
+if absent it derives and writes them into the validated `frame_inventory`. This invariant is *why*
+the same validator can serve both producers: it never trusts a producer to have composed the ids
+correctly — it recomputes them from the atoms and fails loud on disagreement. (Generalizes the
+`validate_well_id` fail-loud rule — `well_id_throughline_refactor_plan.md`, Scope 2 — to the whole
+per-frame key.)
+
+### Product-set grain — orchestration stays per-well
+
+`materialize_well[well_id]` is the orchestration unit. It does **not** fan out by channel,
+projection method, or z-slice. Inside that one well job, the materializer writes the configured
+image-product set and records the exact products as rows in `frame_inventory`.
+
+Step 6 promotes the already accepted single-product subset:
+
+| channel_id | image_product_type | projection_method | z_index |
+|---|---|---|---|
+| `BF` | `projection` | `focus_stack` | null |
+
+The frame-inventory schema is allowed to carry the future product dimensions
+(`image_product_type`, `projection_method`, `z_index`) so the manifest can represent:
+
+| Example product | Row grain |
+|---|---|
+| BF focus projection | one row per `well_id × time_index × BF × projection × focus_stack` |
+| fluorescence max projection | one row per `well_id × time_index × channel_id × projection × max_projection` |
+| z-stack slices | one row per `well_id × time_index × channel_id × z_stack × z_index` |
+
+Expansion guardrail: the current composed `image_id` names only `well_id + channel_id + time_index`.
+That is sufficient for the Step 6 single-product subset. Before enabling multiple products that
+share the same well/channel/time, extend the identity/path contract so `image_id` or the path
+distinguishes `image_product_type`, `projection_method`, and/or `z_index`. Until then, no fallback
+or silent overwrite: the product config must stay collision-free.
+
+---
+
+## ⭐ NORTH STAR — submission surface vs. operational spine
+
+The **public contract wants to be one dataset-level thing** ("here is my dataset"), but the
+**DAG spine is per-well**. These are not in conflict once you separate the two levels:
+
+> **A stitched handoff may be authored as a dataset-level submission, but the pipeline converts
+> it at the gate into per-well validated `frame_inventory` shards. Those shards — not the
+> submission file — are the post-fan DAG spine.**
+
+| Level | What it is | Who reads it |
+|---|---|---|
+| **Submission surface** (ergonomic) | the stitched image tree **+ one dataset-level `dropin_frame_inventory.csv`** (all wells) | the **gate only** — `discover_wells_from_handoff` + `build_frame_inventory_well` |
+| **Operational spine** (correct) | **per-well** validated `{well_id}_frame_inventory.csv` shards | **everything downstream** — segmentation reads its well's shard, never the big file |
+
+**The rule:** *big file allowed at the door; per-well shards required inside the house.* The
+dataset-level file is **ingress-only** — read only by discovery and the per-well build, never by
+a well-local compute stage (that would recreate the merge-wall the per-well spine exists to avoid
+— findings doc, "spine rule ☠️").
+
+---
+
+## 📦 THE CONTRACT — submission surface (two components) → per-well spine
+
+The **submission surface** has two required **components** (a directory tree is not a single
+"artifact" like a CSV — hence *components*). The gate fans them into per-well **artifacts**.
+
+### (1) The stitched image tree — `image_id`s on disk (off-registry, keyed on `well_id`)
+
+Each file **is an `image_id`**: the filename is the composed frame key, so the tree is just the
+set of `image_id`s realized as pixels on disk.
+
+```
+{output_root}/built_image_data/{exp}/stitched_ff_images/{well_id}/{channel}/{well_id}_{channel}_t{time_index:04d}.{ext}
+                                                          └─ GLOBAL well_id   └─ BF, GFP…   └─────────── image_id ───────────┘.{ext}
+                                                                                            (= {well_id}_{channel}_t{time_index:04d})
+```
+
+> **Recommended layout vs. source of truth (decided 2026-06-04).** The tree above is the
+> **recommended** layout (portable, browsable, self-describing). But the **validator's source of
+> truth is `source_image_path`** in the inventory — images may live anywhere that path resolves
+> (absolute or relative to `image_root`). An external user need **not** reorganize into this exact
+> tree. Filename mismatch against the derived `image_id` is a **warning**, not a hard failure.
+
+| Rule | Value | Why |
+|---|---|---|
+| **One image per `(well_id, channel, time_index)`** | a single flat-field-corrected, stitched image | one file = one frame |
+| **Image format is flexible** | **TIFF, PNG, or JPEG** — preferred TIFF/PNG | the loader keys on `source_image_path`, not a fixed suffix (see Image Format) |
+| **`well_id` is GLOBAL, per well** | `{experiment_id}_{well}` e.g. `20250912_B01` | segmentation keys on `well_id` — strict, non-negotiable |
+| **`channel` is a controlled token** | `BF`, `GFP`, … | used in the frame key + joins |
+| **`time_index` is the T dimension** | contiguous, 0-based, `_t{n:04d}` | microscopy convention; matches the on-disk filename |
+| **Per-well `.done` sentinel** | **native stitcher only** — NOT user-authored | a drop-in user authors zero dotfiles (see Sentinels) |
+
+> **🖼️ Image Format.** Input images can be **TIFF, PNG, or JPEG** — preferred TIFF/PNG. The
+> pipeline is *not* TIFF-only; `source_image_path` carries the actual extension. **The pipeline's
+> own main image OUTPUT is PNG** (viewable directly in a VS Code session over the cluster).
+
+This tree is **off-registry** — its own path helper, not a `STAGES` row, keyed on `well_id`
+(`front_end_naming_and_frame_inventory_flow.md`, Decision 7).
+
+### (2) The frame inventory (the per-frame table the pixels can't carry)
+
+The pixels do **not** know their calibration, timing, or biology. The `frame_inventory` is the
+per-frame table that does. **This table IS the metadata** — there is no separate metadata file
+travelling alongside; the inventory is the per-frame scope metadata joined to the image paths.
+
+> **🔑 The drop-in file is the SAME TABLE the native pipeline builds internally.** This is the
+> clearest way to understand the contract: a `dropin_frame_inventory.csv` is *exactly* what
+> `build_frame_inventory_well` produces in the native path — the frame-key atoms + image path +
+> calibration + dims. The native pipeline **derives** it (join `scope_metadata_mapped` to the
+> stitched tree); a drop-in user **authors** it directly. Same columns, same meaning, same
+> validator. The only difference is *who filled it in*. So "what does a drop-in dataset look
+> like?" = "what does the native pipeline's per-well inventory look like, written by hand?"
+
+**At ingress (drop-in) it is ONE dataset-level file (all wells):**
+```
+dropin_frame_inventory.csv      ← user authors this: rows for ALL wells, the submission surface
+                                  (identical schema to the native per-well inventory, just unsplit)
+```
+**The gate fans it into per-well spine artifacts (what the DAG consumes):**
+```
+frame_inventory/{exp}/per_well/{well_id}/{well_id}_frame_inventory.csv            ← per-well shard (well_id IN the filename)
+frame_inventory/{exp}/per_well/{well_id}/{well_id}_frame_inventory.csv.validated  ← sentinel: PASSED the gate (existence = trusted)
+frame_inventory/{exp}/per_well/{well_id}/{well_id}_frame_inventory.errors.md      ← ONLY on FAILURE (what broke); absent on pass
+frame_inventory/{exp}/{exp}_frame_inventory.csv                                   ← merged view (off-spine; nothing downstream reads it)
+```
+
+> **`well_id` in the filename (decided 2026-06-04).** The shard is `{well_id}_frame_inventory.csv`,
+> not just `frame_inventory.csv` under a `{well_id}/` dir. The file **names itself** — grep a
+> `well_id` across the tree and every artifact for that well (csv, sentinel, report) carries the
+> tag. Matches the front-end doc's "a `well_id` is the same string in a log, a filename, a row, or
+> a path." It also lets **build** and **validate** be separate rules without an output collision
+> (see One-File Model).
+
+> **Segmentation reads `…/{well_id}/{well_id}_frame_inventory.csv` — NOT `dropin_frame_inventory.csv`.**
+> The big file is ingress-only; it never appears as a well-local `input:`.
+
+(`frame_inventory/` is the leaning family name; today's code writes under `experiment_metadata/`
+— findings #5, family choice still open.)
+
+**Required core columns** (the minimal set — everything else is enrichment):
+
+**The user authors ATOMS + calibration + dims. The pipeline DERIVES the composed ids** (`well_id`,
+`image_id`) — exactly like the native path, where the user never composes an id either. This keeps
+the drop-in file the *same table* the native pipeline builds internally.
+
+| Column | Meaning | User authors? | Source when WE generate it |
+|---|---|---|---|
+| `experiment_id` | global experiment id — **atom** | ✅ | constant per run |
+| `well_index` | local well label (`B01`) — **atom** | ✅ | from scope metadata |
+| `channel_id` | controlled channel token — **atom** | ✅ | from scope metadata |
+| `time_index` | the **T dimension** (0-based, contiguous) — **atom** | ✅ | from scope metadata (was `frame_index`/`time_int` — see Naming) |
+| `image_path` | materialized image path (TIFF/PNG/JPEG); **absolute OR relative to `image_root`** | ✅ | written by materialization |
+| `image_micrometers_per_pixel` | materialized-image calibration (µm/px) — **required, > 0** | ✅ | from acquisition calibration after write policy |
+| `image_width_px` | materialized image width on disk | ✅ | from the written image header |
+| `image_height_px` | materialized image height on disk | ✅ | from the written image header |
+| `image_file_format` | written image encoding (`png`, `jpg`, `tif`) | ✅ | from write policy |
+| `pixel_dtype` | encoder/read-back dtype, not raw acquisition dtype | ✅ | from write policy |
+| `downsample_factor` | write-policy downsample factor (`1` = identity) | ✅ | from write policy |
+| `downsample_method` | write-policy downsample method (`none` for identity) | ✅ | from write policy |
+| `jpeg_quality` | JPEG quality; required only for JPEG rows | ⬚ conditional | from write policy |
+| `elapsed_time_s` | the time block — **drop-in conditional** (see below) | ✅ (multi-timepoint) | from scope metadata timing |
+| `acquisition_time_s` | raw/source timing provenance — **not** the timing contract | ⬚ optional | from scope metadata timing |
+| `well_id` *(derived)* | `{experiment_id}_{well_index}` | ⛔ **do not author** | composed + written by the build step |
+| `image_id` *(derived)* | `{well_id}_{channel_id}_t{time_index:04d}` | ⛔ **do not author** | composed + written by the build step |
+
+> **The time block is drop-in conditional.** A well with **more than one distinct `time_index`**
+> (multi-timepoint) **requires `elapsed_time_s`** — you cannot order or Δ frames without it. A
+> **single-timepoint well may omit it.** The rule is temporal, not a frame/`image_id` count (BF +
+> fluorescence at one timepoint is still single-timepoint). `acquisition_time_s`, when present, is raw
+> source-timing provenance and is **not** the downstream timing contract. See the
+> `external_dataset_handoff_target.md` companion for the per-well grain rule that enforces this.
+
+> **`well_id` and `image_id` are derived AND written, never authored.** The build step composes both
+> from the atoms and writes them into the shard. **If the user *does* supply one** (e.g. pastes a
+> `well_id` column), the validator **recomputes it from the atoms and fails loud on disagreement** —
+> it never *trusts* a user-supplied composed id. So the contract asks for atoms only; supplying a
+> composed id is tolerated-but-checked, not required.
+
+> **Why dims are required despite being derivable:** `image_width_px`/`image_height_px` are
+> **intentionally duplicated** from the written image header so the validator can detect mismatches
+> (header says 2048x2048 but the manifest claims 2048x1024 -> fail loud). They are a self-check,
+> not new information, and they always describe the materialized image downstream will open.
+
+> **`image_micrometers_per_pixel` is the materialized-image pixel size** after write policy. Raw
+> acquisition calibration, when carried, is optional provenance named `raw_micrometers_per_pixel`.
+> Do not use `source_*` dimensions/calibration as required core fields: Keyence raw input is tiled,
+> so there is no single raw source image width/height for a materialized frame.
+
+> **Relative vs. absolute paths (accept both, prefer relative).** `image_path` may be
+> absolute *or* relative to an `image_root` (see `StitchedHandoffSpec`). Relative makes the dataset
+> **portable**; the validator **canonicalizes to absolute** in the shard, so the spine is always
+> unambiguous. Validation errors if a path is relative and `image_root` is `None`, or if a given
+> `image_root` doesn't exist.
+
+**Enrichment columns** (genotype, treatment, medium, temperature, start_age_hpf, timing) come from
+the **plate lineage** and join far downstream at `consolidate_features` — **not** part of this
+handoff, **not** required for a drop-in segmentation run (`front_end_naming_and_frame_inventory_flow.md`: the plate
+lineage is a separate root).
+
+#### Format: CSV all the way through this seam (decided 2026-06-04)
+
+**Decision: CSV in, CSV out.** The user authors a CSV; the per-well shard is
+`{well_id}_frame_inventory.csv`. **Grounded in the code:** `build_frame_contract` writes `.csv`,
+the Snakefile wires `.csv` (37 refs), and segmentation's reader (`run_per_well.py:27-29`) is
+format-agnostic (`if .parquet → read_parquet else read_csv`). **CSV is the pipeline's standard for
+contract tables** (parquet only for the big binary snip manifest). A small inspectable text table
+at a contract boundary is worth far more than a parquet micro-optimization — debugging a handoff
+failure means *reading the shard*. Parquet stays a free future swap (segmentation already accepts
+it). *This supersedes the earlier "CSV-in / parquet-internal (leaning)" note.*
+
+---
+
+## 🔁 THE ONE-FILE MODEL — built vs. validated by sentinel, not by name
+
+There is **one** per-well inventory file. Its validation status is carried by a **sentinel**, not
+by a second filename. (We do **not** write a separate "candidate" file — that would duplicate the
+per-frame key across two near-identical tables.) This matches the convention the codebase already
+uses everywhere: `X.csv` + `.X.validated`.
+
+```
+build_frame_inventory_well[well_id]
+    → {well_id}_frame_inventory.csv                 (built; not yet validated — no sentinel)
+
+validate_frame_inventory_well[well_id]              ← THE shared gate (native + drop-in, identical)
+    reads {well_id}_frame_inventory.csv
+    → {well_id}_frame_inventory.csv.validated       (on PASS — sentinel only)
+    → {well_id}_frame_inventory.errors.md + raises  (on FAIL — the report exists ONLY when useful)
+
+segment_and_track_per_well[well_id]
+    depends on the .validated sentinel → reads only {well_id}_frame_inventory.csv
+```
+
+**Two rules, not one** (build → validate), and validate writes **only the sentinel** (on pass) or
+**an errors report + raise** (on fail) — it never rewrites the csv. This keeps the validator its own
+**exposed DAG node** (the drawbridge — it can be inspected and reused), gives clean per-well
+staleness, and avoids the Snakemake "two rules can't share one output" collision (the `{well_id}_`
+filename makes each well's file distinct; build owns the `.csv`, validate owns the `.validated`).
+
+> **Why fail-only report, not an always-written one (mdcolon's complexity rule).** The validator
+> already *computes* every failure reason — dumping them to `{well_id}_frame_inventory.errors.md`
+> before raising is ~2 lines and is the whole "drop-in user sees what broke" value. A *success*
+> report is formatting nobody reads + an extra happy-path output to wire. So: errors file on
+> failure (cheap, useful), sentinel on success (the flag), no redundant success `.md`.
+
+> **The validator is the promotion step.** An inventory with no `.validated` sentinel is *built
+> but untrusted*. The sentinel is the only thing that marks it safe. The filename stays neutral
+> (`frame_inventory`, not `validated_frame_inventory`); the sentinel records status.
+
+---
+
+## 🔀 TWO PRODUCERS, ONE VALIDATOR — native and drop-in
+
+The **only** divergence is **who builds `frame_inventory.csv`**. After the build, the pipeline
+cannot tell which producer ran — that is the design goal, and it realizes the locked requirement:
+*the same validator runs end-to-end (microscope) or drop-in.*
+
+**Native ingest (pipeline-generated images):**
+```
+scope_metadata_mapped.csv  (expected: well/channel/time/calibration — METADATA-ONLY, no images)
+   ↓  discover_wells_from_metadata (checkpoint) → discovered_wells.txt
+   ⟱ FAN ⟱   (fan is metadata-only, so active_wells exists BEFORE stitching — findings #13)
+   ↓  materialize_well[well_id]  →  images on disk  +  .well_{well_id}.done
+   ↓  build_frame_inventory_well[well_id]:  join expected scope rows + OBSERVE the stitched tree
+   │      → {well_id}_frame_inventory.csv
+   ↓  validate_frame_inventory_well[well_id]            ◄── shared gate
+   ↓  segment_and_track_per_well[well_id]
+```
+
+**External drop-in (user already has images; no stitcher runs):**
+```
+dropin_frame_inventory.csv  (one big file, ALL wells — the user's expected+observed in one)
+   ↓  discover_wells_from_handoff (checkpoint):
+   │      • exactly one experiment_id (else RAISE)
+   │      • every well_id global (else RAISE)
+   │      → discovered_wells.txt
+   ⟱ FAN ⟱   (NO stitch step — user already has images)
+   ↓  build_frame_inventory_well[well_id]:  SELECT this well's rows from the big file
+   │      → {well_id}_frame_inventory.csv
+   ↓  validate_frame_inventory_well[well_id]            ◄── SAME shared gate, no source branch
+   ↓  segment_and_track_per_well[well_id]
+```
+
+> **Same `discovered_wells.txt`, same build output, same gate, same shards, same segmentation.**
+> `discover_wells_from_handoff` is the **drop-in twin** of `discover_wells_from_metadata` — both
+> read a **table** (never images) and emit the identical `discovered_wells.txt`, so `active_wells`
+> exists before any per-well work and **run-one-well-at-a-time works identically in both paths.**
+
+**Why discovery is metadata-only (load-bearing for per-well):** the fan must produce the well list
+*before* image work, or you can't fan until stitching finishes and single-well runs get worse.
+Verified locked (findings #13): `discover_wells_from_metadata` reads `scope_metadata_mapped.csv`,
+"canonical metadata, no images." The drop-in twin reads the user's table — also no images at
+discovery. The **stitched tree is observed at `build_frame_inventory_well`, not at discovery.**
+
+**Snakemake input-declaration note:** Snakemake can't declare "every path inside a CSV" as an
+`input:` before reading the CSV. Fine — the **build + gate are the declared DAG nodes**; they open
+every file and fail loud. Individual images are validated *inside* the gate, not declared as graph
+edges.
+
+**Do we wait for all stitching? (native only.)** If the stitcher loops all wells in one job
+(`execution=single`, findings doc), native validation waits for that job's per-well `.done`
+sentinels, then fans. Drop-in has no stitch job, so it fans immediately after discovery. (The
+`fanout` vs `execution` distinction: same per-well `fanout`, different `execution`.)
+
+> **The build/validate split is NOT post-MVP — it is the design.** Earlier drafts called the
+> candidate/validate split "post-MVP." That's superseded: `build_frame_inventory_well` (per
+> producer) → `validate_frame_inventory_well` (shared) is the MVP shape, because it's exactly what
+> makes one validator serve both producers. What *is* deferred: making the native `build` itself
+> richer (e.g. a separate observed-inventory table) — see Open.
+
+---
+
+## 🔒 THE SHARED VALIDATOR — `validate_frame_inventory_well` (STRICT, file-level)
+
+One validator, used identically by both producers. It is **strict and file-level**, not
+schema-only — an external dataset has had none of our upstream guarantees, and "check the deck
+going in" is the whole point.
+
+> **Today there is exactly ONE shared validator and it is weak:** `io/validators.py::
+> validate_dataframe_schema` checks only (1) required columns present, (2) no nulls. No stage
+> opens images or checks dims/calibration/contiguity. This gate = that existing structural check
+> **plus** a new shared file-level check. Promoting it is the work (Refactor Items).
+
+```
+validate_frame_inventory_well[well_id]:   (operates on the RAW ATOMS: experiment_id, well_index, channel_id, time_index)
+  [x] schema — required columns present, correct dtypes        (existing validate_dataframe_schema)
+  [x] per-well purity — exactly one experiment_id and one well_index, matching the rule wildcard
+  [x] uniqueness — one row per (well_index, channel_id, time_index)
+  [x] well_id (derived) recomputes to {experiment_id}_{well_index}; reject a bare local label (B01)
+  [x] image_id (if present) matches the recomputed key; else derive + write it
+  [x] BF present AND contiguous 0..N-1 (BF defines the segmentation timeline)
+  [x] all channels share the SAME time_index set (rectangular — see Channel Sync)
+  [x] every source_image_path EXISTS (resolved via image_root if relative)
+  [x] every image OPENS (TIFF/PNG/JPEG) and real dims == declared (image_width_px/height_px)
+  [x] source_micrometers_per_pixel present and > 0 for every row
+  [~] WARN if source_image_path basename != derived image_id (recommended layout, not required)
+  → on PASS: writes .validated sentinel (no report)
+  → on FAIL: writes {well_id}_frame_inventory.errors.md, then RAISES (no sentinel) — fail loud
+```
+
+- **Sentinel on pass, errors report only on fail.** On success the `.validated` sentinel is the
+  whole signal; on failure a human gets `{well_id}_frame_inventory.errors.md` (what broke) and the
+  rule raises. No redundant success report (mdcolon's complexity rule).
+- **Channel rule:** BF is **required** and contiguous (defines the timeline). Other channels are
+  optional, but **if present** must be contiguous **and rectangular** — see Channel Sync.
+- **`well_id` strictness is load-bearing:** segmentation keys on global `well_id`; a bare `B01` is
+  rejected here (mirrors `validate_well_id` — Scope 2).
+- **One experiment per submission:** discovery already raised if the drop-in file mixed
+  experiments; the validator re-asserts single-experiment purity per well.
+
+### 🔁 Channel sync — all channels same length (decided 2026-06-04, stricter)
+
+**Every present channel must have the SAME `time_index` set** (rectangular: BF 0..N, GFP 0..N — not
+BF 0..100 / GFP 0..80). This is **stricter** than "BF-only contiguous," chosen deliberately: it is
+**more defensive and honest** — if the user *claims* a channel exists, a ragged time span is almost
+always a mistake (a dropped or mis-numbered frame), and failing loud at the door beats a silent
+misalignment deep in a multi-channel stage. *(If a future stage genuinely needs ragged channels,
+relax this then — but default to honest.)*
+
+---
+
+## 📐 WORKED WALKTHROUGH — how an OUTSIDE USER drops in (no microscope)
+
+The user starts **after** the fan. They never touch raw files or microscope code.
+
+**Step 1 — lay out images (recommended layout; PNG shown).** Any resolvable location works, but
+the recommended self-describing tree is:
+```
+.../stitched_ff_images/my_experiment_B01/BF/my_experiment_B01_BF_t0000.png
+.../stitched_ff_images/my_experiment_B01/BF/my_experiment_B01_BF_t0001.png
+```
+- The recommended folder name uses the **derived** `well_id` (`my_experiment_B01`) as a
+  self-describing label on disk — but that's just the folder name; in the **manifest** the user
+  authors the atom `well_index` (`B01`) and `experiment_id`, and the pipeline composes `well_id`.
+- `time_index` = 0-based frame order.
+
+**Step 2 — author ONE dataset-level `dropin_frame_inventory.csv`** (rows for ALL wells). **Author
+the atoms only** — no `well_id`, no `image_id` (the pipeline derives both):
+```csv
+experiment_id,well_index,channel_id,time_index,source_image_path,source_micrometers_per_pixel,image_width_px,image_height_px
+my_experiment,B01,BF,0,stitched_ff_images/my_experiment_B01/BF/my_experiment_B01_BF_t0000.png,3.25,2048,2048
+my_experiment,B01,BF,1,stitched_ff_images/my_experiment_B01/BF/my_experiment_B01_BF_t0001.png,3.25,2048,2048
+```
+(paths shown relative to an `image_root`; absolute also accepted). The only genuinely new fact the
+user supplies is `source_micrometers_per_pixel`; everything else is an atom or a file coordinate.
+The pipeline composes `well_id = my_experiment_B01` and `image_id` from these rows.
+
+**Step 3 — run the pipeline.** `discover_wells_from_handoff` splits the file → `discovered_wells.txt`;
+`build_frame_inventory_well` selects each well's rows → `{well_id}_frame_inventory.csv`;
+`validate_frame_inventory_well` checks every file and, on pass, writes `.validated` (on failure it
+writes `{well_id}_frame_inventory.errors.md` and raises). **`.validated` present → segmentation runs.**
+One big file in, per-well validated shards out, fail-loud at the door.
+
+> **Why this is reasonable:** the required core is tiny — the four frame-key **atoms**
+> (`experiment_id`, `well_index`, `channel_id`, `time_index`), the image path, calibration, and
+> dims. Most are file coordinates or encoded in the path/filename; `well_id`/`image_id` are
+> **derived** (the user never composes them). The user authors **one scientific fact**
+> (`micrometers_per_pixel`) and gets the **atoms** right. The strict gate turns "did I organize it
+> correctly?" into a single pass/fail at the door instead of a deep segmentation failure.
+
+---
+
+## 🧱 SMALL DATACLASSES — clipboards, not a mayor
+
+Encode the contract at the boundary with **small, frozen dataclasses that hold expectations and
+locate files** — *not* a "dataset brain" that runs the pipeline.
+
+> **A dataclass here is a clipboard, not a mayor.** It carries what-is-required and
+> where-things-live. It must NOT grow `discover()`, `validate()`, `segment()`, `merge()` methods.
+
+```python
+# What the USER must author: atoms + image path + calibration + dims.
+# well_id / image_id are DERIVED (composed + written by build) — NOT in this required set.
+REQUIRED_FRAME_INVENTORY_COLUMNS: tuple[str, ...] = (   # a TUPLE — never a mutable default
+    "experiment_id", "well_index", "channel_id", "time_index",   # the four frame-key atoms
+    "source_image_path", "source_micrometers_per_pixel",
+    "image_width_px", "image_height_px",
+)
+DERIVED_FRAME_INVENTORY_COLUMNS: tuple[str, ...] = ("well_id", "image_id")  # composed from atoms; checked-if-supplied
+
+@dataclass(frozen=True)
+class StitchedHandoffSpec:           # the dataset-level INPUT (ingress)
+    experiment_id: str
+    manifest_path: Path              # the dataset-level dropin_frame_inventory.csv
+    image_root: Path | None = None   # resolves relative source_image_path; None ⇒ paths must be absolute
+
+@dataclass(frozen=True)
+class FrameInventorySpec:             # what a valid inventory REQUIRES
+    required_columns: tuple[str, ...] = REQUIRED_FRAME_INVENTORY_COLUMNS
+    allowed_image_suffixes: tuple[str, ...] = (".tif", ".tiff", ".png", ".jpg", ".jpeg")
+    required_channel: str = "BF"
+
+@dataclass(frozen=True)
+class WellHandoff:                    # ONE well's operational unit (the important one)
+    experiment_id: str
+    well_id: str
+    image_root: Path | None
+    candidate_manifest_path: Path     # input to the gate ({well_id}_frame_inventory.csv, pre-sentinel)
+    validated_frame_inventory_path: Path
+    report_path: Path
+    validated_sentinel_path: Path
+```
+
+- The per-row schema is **constants**, not a per-row dataclass — the validator is dataframe-centric,
+  so a `FrameInventoryRow` would be instantiated per-row for no gain (keep it only as doc if useful).
+- `WellHandoff` **receives** `well_id`, never mints it (minting stays in `identifiers/`). It carries
+  **both** the input (`candidate_manifest_path`) and outputs, so it's the single object a per-well
+  entrypoint needs.
+- **Explicit signatures, no globals** (consistent with the findings-doc "no haunted globals" rule):
+  ```python
+  def validate_frame_inventory_well(*, well: WellHandoff, spec: FrameInventorySpec) -> None: ...
+  ```
+
+### Where this lives — a real data contract, not just orchestration
+
+```
+data_pipeline/stitched_handoff/                 # 'stitched' = the product (already-stitched images), not the act
+    __init__.py
+    contract.py     # REQUIRED_FRAME_INVENTORY_COLUMNS, FrameInventorySpec, derive_image_id(), normalize_source_paths()
+    paths.py        # stitched_image_path(), stitched_well_done_path(), WellHandoff  (OFF-registry image paths)
+    validate.py     # validate_frame_inventory_well()  — the SHARED gate
+    build.py        # build_frame_inventory_well() (native: join+observe; drop-in: select-rows)
+    split.py        # split_dropin_inventory_by_well(), discover_wells_from_handoff()
+```
+
+**Kingdom boundaries:**
+- `identifiers/` mints/validates `well_id`, `image_id`. `stitched_handoff/` **imports** them.
+- `pipeline_orchestrator/lib/paths.py` = the registry for **tabular** artifacts (the per-well
+  `frame_inventory` shard path comes from there). **Off-registry image paths** live in
+  `stitched_handoff/paths.py` (findings-doc "image trees are off-registry").
+- `stitched_handoff/` is its own module (not in `lib/`) because *"what a valid external stitched
+  dataset looks like"* is a real **data contract**, not workflow glue.
+
+---
+
+## ✅ DECISIONS (this doc)
+1. **Stitched seam = the public drop-in point** — first microscope-agnostic artifact.
+2. **Four distinct roles:** pixel tree / scope metadata / `frame_inventory` / `.validated` sentinel.
+3. **Immutable frame key = four RAW ATOMS** `experiment_id + well_index + channel_id + time_index`;
+   `well_id`/`image_id` are **derived compositions**, not key fields. Check/enrich/fail-loud, never
+   silently reassign; the validator recomputes the derived ids from the atoms.
+4. **Submission surface vs. operational spine** — one dataset-level file in, per-well shards out;
+   the big file is **ingress-only**.
+5. **One-file model:** one `{well_id}_frame_inventory.csv` per well; **validatedness = sentinel**,
+   not a separate "candidate" file. Build and validate are **two rules** (validation stays an
+   exposed DAG step); validate writes **`.validated` on pass, `.errors.md` + raise on fail** — no
+   always-written success report.
+6. **`well_id` in the filename** (`{well_id}_frame_inventory.csv`) — self-describing; also avoids the
+   build/validate output collision.
+7. **CSV all the way** through this seam (grounded: code writes/reads CSV; standard for contract
+   tables). Parquet = free future swap. *Supersedes the old "parquet-internal" lean.*
+8. **One shared validator** for native + drop-in; the only divergence is `build_frame_inventory_well`.
+9. **Discovery is metadata-only** (both producers) → `active_wells` exists before stitching;
+   run-one-well works in both paths.
+10. **User authors ATOMS only** (`experiment_id`, `well_index`, `channel_id`, `time_index` + path/
+    calibration/dims); **`well_id` and `image_id` are derived + written, never authored** (if a user
+    supplies one, the validator recomputes from atoms and fails loud on mismatch). `well_id` is
+    strict/global/per-well as a derived id.
+11. **Manifest is truth; layout recommended** — images resolve via `source_image_path`
+    (abs or rel to `image_root`); filename mismatch = warning.
+12. **Paths absolute OR relative-to-`image_root`** (prefer relative); validator canonicalizes.
+13. **One experiment per submission** (mixed experiments → raise at discovery).
+14. **All channels same `time_index` set** (rectangular); BF required + contiguous.
+15. **`.done` sentinel is native-stitcher only** — drop-in users author zero dotfiles.
+16. **Small dataclasses** (`StitchedHandoffSpec`, `FrameInventorySpec`, `WellHandoff`) — clipboards;
+    schema as a **tuple** constant; explicit signatures, no globals.
+17. **New module `data_pipeline/stitched_handoff/`** (contract/paths/validate/build/split).
+18. **Adopt `frame_inventory`** as the validated-table name (rename from `frame_contract`).
+19. **`time_index` is canonical** — the T dimension; collapse `frame_index`+`time_int`.
+
+## 🪧 OPEN (carried, not decided here)
+- **Family name** for the inventory: dedicated `frame_inventory/` vs today's `experiment_metadata/`
+  (findings #5, leaning dedicated).
+- **`.validated` sentinel suffix** (leading vs trailing dot) — front-end-doc audit; normalize before
+  wiring `validated_path`.
+- **Native `build` richness:** observe the tree **inline** in `build_frame_inventory_well` (lean,
+  default) vs. a **separate per-well observed-inventory table** (more inspectable, finer image
+  staleness, but another table — the duplication mdcolon flagged). Drop-in tips lean: the user file
+  *is* the observation. **Leaning inline; revisit if image-staleness granularity matters.**
+- **Per-well `.done` location:** `built_image_data/{exp}/.well_{well_id}.done` (flat, today) vs
+  `…/stitched_ff_images/{well_id}/.done` (self-contained). Leaning self-contained; confirm against
+  sentinel-handling code first.
+
+## 🧪 UPSTREAM CAPABILITY TO TRANSFER — heterogeneous tile counts & Z-depth (native stitch)
+
+> **Added mdcolon 2026-06-06, from a live Keyence run.** This is **upstream** of the seam (the
+> native FF/stitch producer, not the drop-in contract), but it is a **real capability the current
+> code has that the new `materialize_well` stage must reproduce** — otherwise the migrated pipeline will
+> crash on experiments the legacy one handles. Recording it here so it isn't silently dropped when
+> stitching is reimplemented per-well.
+
+**What the legacy producer tolerates.** Today's Keyence builder
+(`src/build/build01A_compile_keyence_torch.py::build_ff_from_keyence`) batches per-well z-stacks
+through a `torch` `DataLoader` to compute the flat-field (LoG focus) projection **before** stitching.
+Real plates are **not shape-uniform across wells**:
+
+- **Tile count varies** — most wells have N tiles, some have 2N (e.g. 3-tile wells alongside a
+  6-tile well in `20260331_b9d2_18hpf_plate01`).
+- **Z-depth varies** — wells in the *same* experiment can be imaged with different numbers of
+  z-planes (e.g. `20260416_cep290_30to48hpf_plate01_t02`: well A01 has **15** planes, the rest
+  **14**).
+
+The dataset pads Z only **within** a sample (to that sample's `max_z`), never **across** samples.
+So a multi-sample batch contains differently-shaped `(n_tiles, Z, H, W)` tensors, and collation
+fails two distinct ways:
+
+| Heterogeneity | Failure mode | Mechanism |
+|---|---|---|
+| tile count (3 vs 6) | `RuntimeError: stack expects each tensor to be equal size` | `default_collate` → `torch.stack` on unequal dim-0 |
+| Z-depth (14 vs 15) | `RuntimeError: Trying to resize storage that is not resizable` | with `pin_memory=True`, the collate `out=` buffer is sized from the first sample and can't resize for the next |
+
+There is **also** a correctness trap beyond the crash: the per-batch save loop reads a single
+`n_tiles = len(meta_dict["tile_zpaths"])` for filename composition, so a *mixed-tile* batch that
+somehow collated would **mislabel** saved tiles.
+
+**The legacy fix (the capability, stated portably).** Detect heterogeneity cheaply from the sample
+list (`{len(s["tile_zpaths"])}` for tiles, `{len(zp) for ...}` for Z — no image loads) and **force
+`batch_size=1`** when either tiles **or** Z vary. One-at-a-time processing sidesteps both collation
+failures and the mislabeling, at a throughput cost only for the affected experiments.
+
+**What the new per-well stitch must guarantee (transfer target).** In the target design, stitching
+is **already per-well** (`materialize_well[well_id]`), which structurally avoids cross-well batching — so
+the *tile-count* hazard largely dissolves. But the **within-well, across-tile / across-time**
+shape variation must still be handled explicitly. Carry these requirements into `materialize_well` /
+`build_frame_inventory_well`:
+
+- **Do not assume uniform Z or tile count** across the frames a single well contributes; pad/handle
+  per-frame rather than per-batch, or process one frame at a time.
+- **A varying Z-depth is a legitimate input, not an error** — it must not abort the FF projection.
+- This dovetails with the validator's existing **dims self-check** (`image_width_px/height_px`,
+  Channel Sync rectangularity): those checks are about the **stitched output** frames being
+  rectangular per channel/time. The heterogeneity here is about **raw pre-stitch z-stacks**, which
+  live *upstream* of the seam — so the new stitcher owns it, and the `frame_inventory` the seam
+  validates should already be shape-clean. **Capability ownership: native `materialize_well`, not the
+  shared gate.**
+
+---
+
+## 🔧 REFACTOR ITEMS (this doc surfaces)
+- **Rename `frame_contract` → `frame_inventory`** (Scope-2): **37 Snakefile refs**, 3 Python modules
+  (`auxiliary_masks/inference.py`, `materialize_auxiliary_masks.py`, `…/frame_contract/build_frame_contract.py`),
+  `schemas/frame_contract.py`, and the `frame_contract/` module dir. Regenerate artifacts.
+- **Collapse `frame_index` + `time_int` → `time_index`** across schemas + builders (Scope-2).
+- **Split `build_frame_contract` (build+validate fused, experiment-grain) into per-well
+  `build_frame_inventory_well` + shared `validate_frame_inventory_well`.**
+- **Promote the shared validator** from `validate_dataframe_schema` (columns+nulls only) to strict
+  file-level (paths exist, images open, dims match, µm/px>0, BF + rectangular channels, purity,
+  recompute-derived-ids-from-atoms; `.validated` on pass, `.errors.md` + raise on fail).
+- **Add `discover_wells_from_handoff`** — drop-in twin of `discover_wells_from_metadata`, reading the
+  dataset-level CSV → `discovered_wells.txt`; enforce single-experiment.
+- **Create `data_pipeline/stitched_handoff/`** (contract/paths/validate/build/split) with the small
+  dataclasses + `split_dropin_inventory_by_well()`.
+- **Preserve heterogeneous-shape tolerance in native `materialize_well`** (see *Upstream Capability*
+  section): the FF/focus-projection step must not assume uniform tile count or Z-depth across a
+  well's frames. Legacy guard = force `batch_size=1` on heterogeneity
+  (`build01A_compile_keyence_torch.py`); per-well stitching removes the cross-well case but must
+  still handle within-well varying Z (e.g. 14 vs 15 planes) without aborting. Verified on
+  `20260331_b9d2_18hpf_plate01` (tiles) and `20260416_cep290_30to48hpf_plate01_t02` (Z).
+
+## 🔗 RELATED-DOC UPDATES NEEDED
+- `data_output_structure.md`: `frame_manifest.csv`/`frame_contract` → `frame_inventory`; fix path/
+  calibration column names to match code; add this drop-in contract to "Practical Flow for Scientists."
+- `front_end_naming_and_frame_inventory_flow.md`: rename `validate_frame_contract_well` →
+  `validate_frame_inventory_well`; cross-link this doc from the post-fan flow as the "drop-in here"
+  companion.
+- `per_well_throughline_findings.md`: note `frame_contract` → `frame_inventory` vocabulary; the
+  immutable-frame-key invariant; the build→validate(sentinel) per-well rhythm.

@@ -3,7 +3,7 @@
 Validators are the guard rails: they FAIL LOUDLY when an identifier does not
 match the contract, so malformed/stale data cannot silently flow downstream.
 
-See docs/refactors/streamline-snakemake/identifier_and_wildcard_contract.md.
+See docs/data_pipeline/specs/identifier_and_wildcard_contract.md.
 """
 
 from __future__ import annotations

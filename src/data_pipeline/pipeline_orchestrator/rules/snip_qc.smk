@@ -15,7 +15,7 @@ DAG shape per well:
        output: {well_id}_snip_qc.parquet
   3. validate_snip_qc_for_well  →  merge_snip_qc
 
-See: docs/refactors/streamline-snakemake/target/specs/quality_control/snip_qc_verdict_and_flag_resolver.md
+See: docs/data_pipeline/specs/target/specs/quality_control/snip_qc_verdict_and_flag_resolver.md
 """
 
 import json as _json

@@ -9,7 +9,7 @@ deserialized from the tracked resolved_sources JSON artifact). For each source:
   - coerces to pandas nullable boolean (fails loud on NA or unknown value)
 Then merges all sources one-to-one on snip_id.
 
-See: docs/refactors/streamline-snakemake/target/specs/quality_control/snip_qc_verdict_and_flag_resolver.md
+See: docs/data_pipeline/specs/target/specs/quality_control/snip_qc_verdict_and_flag_resolver.md
 """
 
 from __future__ import annotations

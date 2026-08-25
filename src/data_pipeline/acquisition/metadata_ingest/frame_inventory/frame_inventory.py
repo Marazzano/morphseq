@@ -9,7 +9,7 @@ The legacy ``build_frame_inventory_for_well`` adapter (which split the old ``fra
 into per-well shards) was strangled in Step 7 — it was off-DAG and superseded by the live
 ``materialize_well`` producer, which emits the per-well shard directly.
 
-AUDIT (2026-06-07): docs/refactors/streamline-snakemake/target/frame_inventory_well_runner_audit.md
+AUDIT (2026-06-07): docs/data_pipeline/specs/target/frame_inventory_well_runner_audit.md
 records the open gaps — finding #4: merge_frame_inventory_shards duplicates
 well_runner.concat_well_shards_to_file. (Finding #2 — the weak validator — is being resolved by the
 strict-gate growth in frame_inventory_validation.py.)

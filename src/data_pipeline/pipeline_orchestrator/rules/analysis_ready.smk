@@ -7,7 +7,7 @@ no per-well build/validate/merge chain of its own. snip_qc remains the proven th
 terminal; analysis_ready is NOT part of `through_line` or `rule all` — it is requested by its own
 named target (see below), mirroring how `reports` is opt-in.
 
-See docs/refactors/streamline-snakemake/target/specs/analysis_ready_assemble_plan.md.
+See docs/data_pipeline/specs/target/specs/analysis_ready_assemble_plan.md.
 """
 
 ANALYSIS_READY_STEP = "analysis_ready"

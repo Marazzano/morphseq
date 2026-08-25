@@ -12,7 +12,7 @@ Given requested flag columns (SNIP_QC_EXCLUSION_FLAGS or a config override), ret
 with concrete per-well artifact paths. Used at DAG planning time to declare Snakemake inputs
 and serialized as JSON so the runtime task receives the exact same plan.
 
-See: docs/refactors/streamline-snakemake/target/specs/quality_control/snip_qc_verdict_and_flag_resolver.md
+See: docs/data_pipeline/specs/target/specs/quality_control/snip_qc_verdict_and_flag_resolver.md
 """
 
 from __future__ import annotations

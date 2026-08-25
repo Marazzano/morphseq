@@ -10,7 +10,7 @@ SAM2 masks from real, small/thin embryos, so this is a deliberate, imperfect tra
 fix. Chosen to clear the round-blob population out of the passing bands (verified empirically),
 at the explicit cost of also losing real thin/dorsal-pose embryos (accepted: less information
 content than a bad mask, per product call). See
-docs/refactors/streamline-snakemake/target/specs/tech_debt/surface_area_qc_pose_confound.md.
+docs/data_pipeline/specs/target/specs/tech_debt/surface_area_qc_pose_confound.md.
 """
 
 from __future__ import annotations

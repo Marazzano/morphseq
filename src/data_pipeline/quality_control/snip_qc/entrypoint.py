@@ -7,7 +7,7 @@ done at DAG planning time by flag_input_resolver.py and persisted to JSON.
 Flow: load snip_universe + registry → load + verify flag inputs (inputs.py) →
       build verdict (build.py) → validate (contract.py) → write.
 
-See: docs/refactors/streamline-snakemake/target/specs/quality_control/snip_qc_verdict_and_flag_resolver.md
+See: docs/data_pipeline/specs/target/specs/quality_control/snip_qc_verdict_and_flag_resolver.md
 """
 
 from __future__ import annotations

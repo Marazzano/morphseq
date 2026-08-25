@@ -9,7 +9,7 @@ Identifier strings are opaque outside ``shared/identifiers``. Code outside this
 package must use constructors and parsers — never string splitting, regex matching,
 or f-string minting. Tiny fence, giant moat.
 
-See docs/refactors/streamline-snakemake/identifier_and_wildcard_contract.md.
+See docs/data_pipeline/specs/identifier_and_wildcard_contract.md.
 
 Canonical model (the sign on the door):
     experiment_id       = 20240418
@@ -33,7 +33,7 @@ BREAKING CHANGE (snip world update):
     NEW: build_physical_embryo_id(well_id, local_embryo_index)
 
     Production callers using the old signatures fail loudly at import time and must migrate.
-    See docs/refactors/streamline-snakemake/target/specs/detect-seg-track/targets/snip_world.md.
+    See docs/data_pipeline/specs/target/specs/detect-seg-track/targets/snip_world.md.
 
 Compositional grammar — every id is ``parent_id + local_token``. ``build_well_id``
 is the ONE join point where ``experiment_id`` and ``well_index`` meet; every id

@@ -3,7 +3,7 @@
 Each ``QC_REPORT_SPECS`` entry names the RAW metric column and the actual scalar cutoff that
 judges it — the histogram plots the raw metric with the true cutoff value drawn on it, so axis
 values mean what they say. Products without a persisted continuous metric (``mask_quality_qc``,
-``snip_qc``) are deliberately omitted — see docs/refactors/streamline-snakemake/target/specs/viz/
+``snip_qc``) are deliberately omitted — see docs/data_pipeline/specs/target/specs/viz/
 for why.
 
 ``surface_area_qc`` does NOT fit the single-scalar-cutoff shape: its real threshold is a
