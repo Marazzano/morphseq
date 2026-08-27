@@ -1,20 +1,49 @@
+> **ARCHIVED — superseded dispatch. Do not dispatch from this file.**
+>
+> Briefs for the 2026-08-26 overnight threads. Those threads have run; their doc-reorg task (T1)
+> was completed on 2026-08-27 and the layout it describes no longer matches the tree.
+>
+> **It also propagates the confabulation**: the T5 brief states "Phase 1 is implemented and
+> unit-tested". It was not. Several paths are wrong (`docs/refactor/evidence/` — note the missing
+> `s`), and `plans/THREAD_BRIEFS.md` no longer exists.
+>
+> **Verification:** `../reports/GROUND_TRUTH_2026-08-27.md`.
+
 # Dispatch briefs — 2026-08-25
 
-Six threads fire now; one is gated. Each brief is standalone — paste as-is. Branch per thread.
+Six threads fire now; one is gated. Branch per thread.
 
-**A document restructure (T1) is running concurrently.** Every brief below names reference documents
-by **filename**, not path. Locate them under `docs/` by name; do not assume a directory. If a
-document is missing entirely, say so and continue — do not reconstruct it.
-Fill `<PIPELINE_OUTPUT_ROOT>`, `<REPO>`, `<TRAINING_ENV>` before sending.
+**Verified layout (2026-08-25).** The refactor docs root is **`docs/refactors/core-model/`**, with
+`AGENTS.md`, `DECISIONS.md`, `OUTSTANDING_PIPELINE_ISSUES.md`, `SNIP_IMAGE_REGRESSION_STATUS.md`,
+`TRAINING_READINESS_REMAINDER.md`, `UPSTREAM_PIPELINE_STATE.md` at that level, plus `audits/`,
+`contracts/MANIFEST_SCHEMA.md`, `plans/`, and `reports/` (including `reports/recon_tables/*.csv`).
+`docs/refactors/seahub/` is a sibling; the pipeline's own docs are at `docs/data_pipeline/`.
+
+**`PROJECT_STATUS.md`, `PIPELINE_TASKS.md` and `PREFLIGHT_DATA_CHECKS.md` do not exist and are
+retired.** Their content now lives in `PLAN.md` and `DECISIONS.md`. If any brief below still names
+one, ignore that reference — do not reconstruct the file.
+
+**T1 is moving four documents into `evidence/` concurrently**, so if a path fails, look for the file
+by name before concluding it is missing.
+
+**How to dispatch:** point each agent at this file and name its thread — e.g. *"Read
+`docs/refactors/core-model/plans/THREAD_BRIEFS.md`. You are T3. Read the header, then execute the T3
+section only. Stay inside T3's file-ownership fence."* Everything an agent needs is in this file;
+nothing else needs pasting.
+
+**Paths are pre-filled** for the workstation mount
+(`/media/nick/gs_cluster/projects/data/morphseq/pipeline/output`, env `morphseq-env`). If an agent
+runs on the cluster, correct the root in its instruction. Single-experiment work uses
+`20250612_24hpf_ctrl_atf6` — 97 snips, all four artifacts, 93 through the combined gate.
 
 | id | thread | data? | branch | owns |
 |---|---|---|---|---|
-| T1 | Doc restructure + status script | no | `thread/status-system` | `docs/**` **except `reports/` and `contracts/`**, `scripts/status.py`, `conftest.py` marker |
+| T1 | Archive four docs + build status script | no | `thread/status-system` | `docs/refactors/core-model/evidence/` (new), `scripts/status.py`, `conftest.py` marker — **not** `reports/`, `contracts/`, `audits/` |
 | T2a | Pipeline preprocessing provenance | no | `thread/snip-provenance` | `src/data_pipeline/object_extraction/snip_processing/**` |
 | T3 | Metric unblock + hardenings + acceptance | yes | `thread/phase1-accept` | `src/core/**`, `tests/core/**` |
-| S1 | Study: QC / `sa_outlier_flag` | yes | `study/qc-sa-outlier` | `reports/**` only |
-| S2 | Study: stage estimation lineage | yes | `study/stage-lineage` | `reports/**` only |
-| A1 | Audit: regeneration scope + timing | yes | `audit/regen-scope` | `reports/**` only |
+| S1 | Study: QC / `sa_outlier_flag` | yes | `study/qc-sa-outlier` | `docs/refactors/core-model/reports/**` only |
+| S2 | Study: stage estimation lineage | yes | `study/stage-lineage` | `docs/refactors/core-model/reports/**` only |
+| A1 | Audit: regeneration scope + timing | yes | `audit/regen-scope` | `docs/refactors/core-model/reports/**` only |
 | **T2b** | **Rerender + legacy comparison** | yes | gated on T2a **and** the F3 check | — |
 
 **Run first, by hand, in five minutes:** do legacy snips for `20250612_30hpf_ctrl_atf6` still exist on
@@ -30,36 +59,25 @@ shape and should not be planned around.
 > at least one wrong claim to propagate through three documents unchecked. Your job is to replace
 > hand-maintained status with computed status.
 >
-> **1. Restructure — discover before you move.** Start by mapping what exists:
-> `find docs -name "*.md" | sort`, plus the directory tree. **Report the current layout in your
-> summary before changing anything.** Prior planning assumed a flat `docs/refactor/` layout that does
-> not match reality — treat every path in this brief and in the documents themselves as unverified.
+> **1. Archive only — the written-document restructure is already done.** `PLAN.md`, `DECISIONS.md`,
+> and `AGENTS.md` have been reconciled and placed. Your only structural task is to create
+> `docs/refactors/core-model/evidence/` and move these four narrative state documents into it, updating
+> cross-references in whatever still points at them: `OUTSTANDING_PIPELINE_ISSUES.md`,
+> `SNIP_IMAGE_REGRESSION_STATUS.md`, `UPSTREAM_PIPELINE_STATE.md`, `TRAINING_READINESS_REMAINDER.md`.
+> Also move `plans/AGENT_BRIEFS_PHASE1.md` there — that thread has landed. Leave `audits/`,
+> `contracts/`, and `reports/` exactly as they are. Delete nothing.
 >
-> Then apply these principles to whatever you find, changing as little as possible:
+> **Before anything else:** diff the incoming `DECISIONS.md` against the previous version in git and
+> **report any decision the old file contained that the new one does not.** The new ledger was
+> reconciled outside the repo and may have dropped something.
 >
-> - **Written and generated never mix in one file.** Written = things a human decided (plan,
->   decisions, contracts). Generated = facts about the world, script-produced, never hand-edited.
->   `PROJECT_STATUS.md` violates this today and is the main thing to fix.
-> - **One plan, one decision ledger, one generated status.** Split `PROJECT_STATUS.md`: decisions into
->   the existing `DECISIONS.md`, plan/issues/next-steps into `PLAN.md`, computed facts dropped
->   entirely — the script regenerates them. Fold `PIPELINE_TASKS.md`'s issues into `PLAN.md`.
-> - **Narrative state documents get archived, not consulted.** Move `OUTSTANDING_PIPELINE_ISSUES`,
->   `SNIP_IMAGE_REGRESSION_STATUS`, `UPSTREAM_PIPELINE_STATE`, `TRAINING_READINESS_REMAINDER` and the
->   audits into an `evidence/` directory, following whatever naming convention already exists.
-> - **Briefs expire.** Agent briefs live in `plans/` while active, move to `evidence/` once their
->   thread lands.
-> - **`contracts/` and `reports/` are off limits.** `MANIFEST_SCHEMA.md` is referenced by other
->   documents and possibly by code — do not move it. `reports/` is being written *right now* by three
->   concurrent study threads and holds generated output, not prose — do not reorganise it.
->
-> **Do not delete anything** — move it, and update cross-references in the documents you keep. Where a
-> principle would break existing references, keep the existing structure and say so in your summary.
->
-> **2. `scripts/status.py`.** Writes `docs/refactor/STATUS.md`. Sections:
+> **2. `scripts/status.py`.** Writes `docs/refactors/core-model/STATUS.md`. Create `scripts/` if absent. Sections:
 > - **Git:** current branch, HEAD, dirty tree, unpushed commits (`git log @{u}..HEAD`). For a
 >   configured list of commits of interest, whether each is an ancestor of HEAD and of `origin/main`.
 > - **Tests:** run pytest, record pass/fail counts and duration.
-> - **Decisions:** cross-reference `DECISIONS.md` against pytest markers (below). Report
+> - **Decisions:** cross-reference `DECISIONS.md` against pytest markers (below). **Use the decision
+>   IDs already in the repo's `DECISIONS.md`** — do not renumber. If an external ledger disagrees,
+>   report the divergence rather than merging blind. Report
 >   `N decisions · M with tests (K passing) · unverified: [ids]`. **The unverified list is the most
 >   important line in the file** — make it prominent.
 > - **Environment:** python version, whether `pyarrow` imports, key package versions.
@@ -182,6 +200,13 @@ shape and should not be planned around.
 > Read-only. Write to `reports/STUDY_qc_sa_outlier.md` plus tables under `reports/study_tables/`.
 > Modify nothing in `src/`.
 >
+>
+> **Read these two first — they exist and are directly on point:**
+> `docs/data_pipeline/specs/target/specs/tech_debt/surface_area_qc_pose_confound.md` and
+> `docs/data_pipeline/specs/target/specs/quality_control/snip_qc_verdict_and_flag_resolver.md`.
+> The first is a standing tech-debt note about surface-area QC being confounded — read it before
+> forming any hypothesis, and report whether the confound it documents is pose, phenotype, or both.
+>
 > `sa_outlier_flag` appears in **69.6% of all QC failures** (241,274 of 346,698 failing snips, 2.36
 > flags per failure) and is the only *morphometric* criterion in an otherwise acquisition/segmentation
 > flag set. Strict QC removes 65.2% of the corpus. If the flag is a population-level outlier test, it
@@ -213,7 +238,9 @@ shape and should not be planned around.
 
 ## S2 — study: stage estimation lineage
 
-> Read-only. Write to `reports/STUDY_stage_lineage.md`. Modify nothing in `src/`.
+> Read-only. Write to `reports/STUDY_stage_lineage.md`. Modify nothing in `src/`. Check
+> `docs/core/metric_loss_overview.md`, `docs/architecture/training_guide.md`, and
+> `docs/data_pipeline/METADATA_AUDIT.md` for prior treatment of stage semantics.
 >
 > Metric pairing is built entirely on stage deltas within `time_window`. Legacy core consumed
 > `age_key.csv`'s `inferred_stage_hpf_reg`; the new pipeline emits `predicted_stage_hpf` with a
@@ -240,7 +267,9 @@ shape and should not be planned around.
 
 ## A1 — audit: regeneration scope and timing
 
-> Read-only except `reports/AUDIT_regeneration_scope.md`. Read
+> Read-only except `reports/AUDIT_regeneration_scope.md`. Also read
+> `docs/data_pipeline/PLANNED_REVISIONS.md` (the canonical pipeline tracker) and
+> `docs/data_pipeline/RAW_DATASET_INVENTORY.md`. Read
 > `docs/refactor/evidence/SNIP_IMAGE_REGRESSION_STATUS.md` first — it states that upstream image
 > materialization and native-resolution segmentation do **not** need to rerun, and the required chain
 > is snip processing → snip auxiliary masks and QC → fraction-alive/viability → legacy embeddings →
@@ -250,7 +279,9 @@ shape and should not be planned around.
 > 1. **Scope.** Confirm which stages must rerun and which need only verification. Biggest lever — get
 >    this right before timing anything.
 > 2. **Per-stage wall clock** on one representative plate, measured not estimated.
-> 3. **Resident model servers.** Measured at 2.88× for `snip_auxiliary_masks` and ~3× for
+> 3. **Resident model servers.** `docs/data_pipeline/MODEL_SERVER_WIRING.md` and
+>    `docs/data_pipeline/MODEL_LOAD_BENCHMARKS.md` already exist — read both before timing anything;
+>    the benchmark work may already answer part of this. Measured at 2.88× for `snip_auxiliary_masks` and ~3× for
 >    `frame_detections`, both toggles default **off** pending end-to-end validation. Time one plate
 >    with them off and once on. This is plausibly the difference between a day and a week.
 > 4. **GPU scheduling.** Rules declare `resources: gpu=1`, inert without `--resources gpu=1` on the
@@ -276,7 +307,7 @@ shape and should not be planned around.
 
 > **Inputs**
 > - legacy snips: `/net/trapnell/vol1/home/nlammers/projects/data/morphseq/training_data/bf_embryo_snips/`
-> - pipeline output root: `<PIPELINE_OUTPUT_ROOT>`
+> - pipeline output root: `/media/nick/gs_cluster/projects/data/morphseq/pipeline/output`
 > - experiment: `20250612_30hpf_ctrl_atf6` — chosen because a 93-well paired legacy baseline already
 >   exists for it in the root-cause analysis
 > - checkpoint for the model gate: `20241107_ds_sweep01_optimum`

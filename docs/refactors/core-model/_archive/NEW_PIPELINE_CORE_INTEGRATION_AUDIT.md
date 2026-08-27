@@ -1,3 +1,14 @@
+> **ARCHIVED — historical. Do not use for current state.**
+>
+> Accurate **when written**: verified against `6f6e0f3f^`. The import-path and `src.run.*`
+> findings were closed by `6f6e0f3f` (2026-08-18).
+>
+> **STILL OPEN — the one live Phase 0 bug:** `contrastive_transform(target_size=...)` accepts the
+> argument and ignores it (`src/core/data/data_transforms.py:12`), while `run_utils.py:484,491`
+> pass it. Untested. Tracked in `PLAN.md`.
+>
+> **Verification:** `reports/GROUND_TRUTH_2026-08-27.md`, Claims 3a, 3c, 6.
+
 # New-pipeline to core model integration audit
 
 **Date:** 2026-08-13  

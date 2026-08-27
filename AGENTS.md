@@ -1,8 +1,12 @@
 # AGENTS.md — MorphSeq latent morphology model
 
-Location: `docs/refactors/core-model/AGENTS.md`. Binding on every agent.
-Companions in the same folder: `DECISIONS.md` (ledger), `PLAN.md` (scope, issues, threads),
-`STATUS.md` (generated — do not edit), `contracts/MANIFEST_SCHEMA.md` (binding interface).
+Location: repo root `AGENTS.md`, symlinked as `CLAUDE.md`. Binding on every agent.
+Companions in `docs/refactors/core-model/`: `README.md` (index), `DECISIONS.md` (ledger),
+`PLAN.md` (scope, issues, order of operations), `STATUS.md` (generated — do not edit),
+`contracts/MANIFEST_SCHEMA.md` (binding interface).
+
+**Nothing in `docs/refactors/core-model/_archive/` describes current state.** Do not cite an
+archived document as evidence for a claim about code.
 
 **Evidence convention.** Every factual claim in a written document carries its source inline — a
 command, a `file:line`, or a measurement date — or is explicitly marked as inference. A claim that
@@ -12,7 +16,13 @@ cannot carry a source belongs in generated `STATUS.md`, not in prose.
 
 We are migrating `src/core` off a legacy `ImageFolder` + CSV-bundle training layout onto a
 **manifest-backed dataset** built from `src/data_pipeline` outputs. Design rationale:
-`NEW_PIPELINE_CORE_INTEGRATION_AUDIT.md`, in this folder. Ratified decisions: `DECISIONS.md`.
+`docs/refactors/core-model/_archive/NEW_PIPELINE_CORE_INTEGRATION_AUDIT.md` (archived — rationale
+still sound, state claims stale). Binding interface: `docs/refactors/core-model/contracts/MANIFEST_SCHEMA.md`.
+Ratified decisions: `docs/refactors/core-model/DECISIONS.md`.
+
+**Phase 1 (the manifest data layer) is not built.** A prior status report claimed otherwise across
+four commits that do not exist. Verify before building on any claim of implementation state:
+`docs/refactors/core-model/reports/GROUND_TRUTH_2026-08-27.md`.
 If this file and another document disagree, this file wins — and report the disagreement.
 
 ## Invariants

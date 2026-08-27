@@ -1,116 +1,69 @@
-# MorphSeq / Latent Morphology Model — Consolidated Decision Record
+# Decision ledger — core-model refactor
 
-**Updated:** 2026-08-18 · **Supersedes:** the recovered "MorphSeq Refactor — Decision Synopsis"
-**Sources:** Phase 0 audit (file:line cited) · `NEW_PIPELINE_CORE_INTEGRATION_AUDIT.md` (2026-08-13) · session decisions
-**Tags:** [NICK] approved · [CLAUDE] proposed, unratified · [AUDIT] externally verified
+**Updated:** 2026-08-25 · **Location:** `docs/refactors/core-model/DECISIONS.md`
 
-> Written to the project so no future session starts from zero again. If a chat contains a decision
-> not recorded here, it is invisible to future sessions — put it here.
+This is the ledger of things a human decided. It contains no computed facts — those live in
+`STATUS.md`, which is script-generated. Plan, issues, and next steps live in `PLAN.md`.
+
+**Every claim in a written document carries its source inline** — a command, a `file:line`, or a
+measurement date — or is explicitly marked as inference. Claims that cannot carry a source belong in
+generated `STATUS.md`.
+
+⚠️ **Before replacing the previous version of this file, diff it and report anything it contained
+that is not carried over here.** This ledger was reconciled outside the repo and may not include
+decisions recorded only in the prior copy.
 
 ---
 
-## 1. Verified facts (Phase 0 audit, with citations)
+## Ratified
 
-- **Metric path is MIS-WIRED, not missing.** `src.core.data` NTXent machinery works. Two root causes:
-  (a) `model_configs.py:8` imports `NTXentDataConfig` from the empty `src/data` shim;
-  (b) metric hydra config sets `dataconfig.target: "BasicDataset"` → `metricVAE.forward` takes the
-  vanilla branch → loss's `unbind(dim=1)` fails. **Both must be fixed; either alone leaves it dead.**
-- `initialize_model` does **not** throw on missing `metric_array` — `hasattr`-guarded (`run_utils.py:339-340`).
-- Loader reads a legacy table (`dataset_utils.py:29-38`) and re-derives `embryo_id` via `snip_id[:-6]`.
-- `_pixel_scale` is a literal `128*288`, independent of `input_dim` (`loss_functions.py:185-187`).
-- Metadata dies at the snip→ImageFolder boundary (`dataset_classes.py:84-154`).
-- Interface is `load_encoder` + `arch_spec.json`. Pipeline `latent_embeddings` uses a third path and
-  emits flat `z_mu_*`, not `z_mu_b_*`.
-- `metric_array`: `(P,P)`, `+1`/`0`/`−1`, built offline in `build04`, **no serialization consumers**.
-- Optical covariates present: `micrometers_per_pixel`, `objective_magnification`, `microscope_id`,
-  `z_position`. `numerical_aperture` absent.
-- **Signed δ must be BUILT** — only a per-pixel LoG-argmax map exists.
-- FF vs slice derivable from `image_product_type`/`projection_method`; no typed boolean.
-- Hygiene: `tv_weight` computed but never summed; `accumulate_grad_batches` never passed to Trainer
-  and ignored under manual optimization; `logvar` clamp in `VAE` missing in `metricVAE`;
-  `src/vae` dead for `src/core` but **live for `src/analyze`**.
-
-## 2. Pipeline contract (new integration audit)
-
-- Canonical snip `(H, W) = (576, 256)`, 8-bit non-interlaced grayscale PNG.
-- Identity spine: `experiment_id → well_id → physical_embryo_id → embryo_id → snip_id`, with
-  `physical_embryo_id = {well_id}_e{n}`, `embryo_id = {pid}_{channel_id}`, `snip_id = {embryo_id}_t{t}`.
-  **No focus axis in the grammar.**
-- Sources: `snip_inventory` (paths/identity), `stage_predictions`, `snip_qc`, `plate_metadata`.
-- `is_valid_snip` (materialised) ≠ `use_snip` (QC verdict).
-- Plate guarantees only `genotype`, `start_age_hpf`, `temperature`, `medium`. **`short_pert_name` not guaranteed.**
-- Masks are colocated with their snips (naming convention to be discovered).
-
-## 3. Decisions — approved
-
-| # | Decision | Note |
+| # | Decision | Verified by |
 |---|---|---|
-| D1 | `analysis_ready` is **not** the training boundary | manifest built from the four sources above [NICK] |
-| D2 | Replace `metric_array` with a **rule-based relation function**, class×class | curation revision pending [NICK] |
-| D3 | Carry **optical covariates** through the manifest | non-model-facing in phase one [NICK] |
-| D4 | Carry **`image_product_type`**; phase one filters **FF-only** via an explicit list | no ID-format change [NICK] |
-| D5 | Fix **both** metric mis-wiring causes | [NICK] |
-| D6 | Keep **288×128** default; image size becomes a **config parameter** | [NICK] |
-| D7 | Derive `_pixel_scale` from `input_dim` | forced by D6 [NICK] |
-| D8 | **On-the-fly** downsampling; no exported training set | cache only if measurement demands it [NICK] |
-| D9 | Delete the **margin term** from metric loss (confirmed inert) | [NICK] |
-| D10 | Delete `accumulate_grad_batches` (dead config) | [NICK] |
-| D11 | Splits **group-disjoint at `physical_embryo_id`**, persisted by ID | [AUDIT] |
-| D12 | Decoder δ-pathway: **thin, injected late** | [NICK] |
-| D13 | Predictive z-slice reconstruction: **excluded** | [NICK] |
-| D14 | Microscope/optical conditioning: **add explicitly** | [NICK] |
-| D15 | Metric path made functional now; **metric policy revisited separately** | [NICK] |
-| D16 | **Run provenance = one directory per run**: `resolved_config.yaml`, gzipped `snip_ids`, `split_assignments.csv` keyed by `physical_embryo_id`, `metric_group_map.csv`, `sources.json` (path/size/mtime/row-count per source artifact), `cohort_report.json` (counts by filter and exclusion reason), plus the adapter's git SHA. **Not** the full manifest — IDs + config regenerate it, `sources.json` detects when they can't | [NICK] |
-| D17 | **Provenance bundle is a W&B Artifact**; the local directory is a staging area addressed by one config key (`run_artifacts_dir`). No coupling to Hydra cwd or Lightning internals, so the folder layout can be redesigned without touching provenance code | [NICK] |
-| D18 | Manifest carries the **individual QC flag columns**, not just `use_snip`, so cohort policy is a named predicate over flags. Default strict for the first end-to-end run; per-flag policy is a first-class alternative to settle before any science run | [CLAUDE, pending] |
-| D19 | Do **not** hash image content (≈28 GB, hours). Hash source artifacts only (~500 MB, seconds) plus the sorted `snip_id` list | [NICK] |
+| D1 | `analysis_ready` is **not** the training boundary; the manifest is built from `snip_inventory` + `stage_predictions` + `snip_qc` + `plate_metadata` | — |
+| D2 | Replace `metric_array` with a **rule-based relation function** at class×class granularity; curation revision pending | — |
+| D4 | Carry `image_product_type`; phase one filters FF-only via an explicit list. **No ID-format change** — product type and z belong in columns, never in `snip_id` | — |
+| D5 | Fix both metric mis-wiring causes: the `src/data` shim import at `model_configs.py:8`, **and** `dataconfig.target: "BasicDataset"` in the metric Hydra config | — |
+| D6 | Keep `[1, 288, 128]` as the default model input; image size becomes a config parameter | — |
+| D7 | Derive `_pixel_scale` from `input_dim` rather than the literal `128*288` at `loss_functions.py:185-187`. Forced by D6 | — |
+| D8 | **On-the-fly** downsampling at the dataset boundary; no exported training set. A cache only if a real-host I/O measurement demands it | — |
+| D9 | Delete the margin term from the metric loss entirely — confirmed inert (shared across all logits, cancels in the softmax) | — |
+| D10 | Delete `accumulate_grad_batches` — never passed to Trainer, ignored under manual optimization | — |
+| D11 | Splits group-disjoint at `physical_embryo_id`, **content-hash based** (`blake2b`), stable under cohort growth, persisted by ID. Ratio tolerance asserted; empty required split fails unconditionally | — |
+| D12 | Decoder δ-pathway: thin, injected late | — |
+| D13 | Predictive z-slice reconstruction: **excluded** ("not worth the lift") | — |
+| D15 | Metric path wired now; metric **policy** revisited separately | — |
+| D16 | Run provenance = one directory per run: `resolved_config.yaml`, gzipped `snip_ids`, `split_assignments.csv` keyed by `physical_embryo_id`, `metric_group_map.csv`, `sources.json` (path/size/mtime/row-count per source artifact), `cohort_report.json`, plus the adapter's git SHA. **Not** the full manifest — IDs + config regenerate it, `sources.json` detects when they can't | — |
+| D17 | The provenance bundle is a **W&B Artifact**; the local directory is staging, addressed by one config key (`run_artifacts_dir`). No coupling to Hydra's cwd or Lightning's internals | — |
+| D18 | The manifest carries the **individual QC flag columns**, not just `use_snip`; cohort policy is a named, versioned predicate over flags | — |
+| D19 | Do **not** hash image content (~28 GB, hours). Hash source artifacts (~500 MB, seconds) plus the sorted `snip_id` list | — |
+| D20 | `ImageFolder` is **deleted**, not deprecated. Datasets are plain `torch.utils.data.Dataset` over manifest rows; view generation lives in `__getitem__`, which holds the whole row including `embryo_mask_snip_path`. No separate abstraction layer | — |
+| D21 | **6.5 µm/px and 75 µm blend radius are the compatibility baseline.** Pre-August stored snips are not checkpoint-compatible inputs | — |
+| D22 | **Absence is never failure.** `qc_status` and `stage_status` are three-state. `no_artifact` ≠ failed QC (28 experiments, 167,603 snips); `unavailable` ≠ failed staging (2 experiments, 20,219 snips with finite stage and no status column) | — |
+| D23 | Adopt SupCon **`L_out`** (sum over positives outside the log) rather than `L_in`. Decided previously and relitigated through documentation entropy — treat as settled. Requires a λ_metric/τ retune | — |
+| D24 | Test holdout supports an explicit `test_experiments` list: listed experiments go wholesale to test, the remainder hash-assigns into train/eval. Tolerance targets computed over the unpinned pool | — |
+| D25 | Decode failures are **non-fatal**: log the `snip_id`, resample from the same split, count, and fail the run only above a configured threshold. Counts and IDs go into the cohort report | — |
 
-**Augmentations:** wanted — embryo rescaling ~50%± FOV-constrained; brightness/contrast;
-reflections/rotations FOV-constrained (believed implemented). Dirt-speck texture **tabled**.
-Mild segmentation-error mimicry **included but discuss-first**.
+`verified by` is filled in by the pytest `decision` marker. An empty cell means **asserted but
+unproven** — the count of empty cells is the headline line in generated `STATUS.md`.
 
-**Corrected this session:** deriving `_pixel_scale` from `input_dim` makes λ transfer *better*
-across geometries, not worse. The earlier synopsis recorded the opposite; it was wrong. At 288×128
-the derived value equals the literal, so no existing run is invalidated.
+## Superseded
 
-**Struck:** the 7.8 µm/px figure. Do not propagate. Mixed-scale detection across the cohort is still
-a required check.
+**D3 / D14 — carry optical covariates, add explicit optical conditioning.** Not actionable.
+`micrometers_per_pixel`, `microscope_id`, `objective_magnification`, and `z_position` exist in legacy
+metadata but in **no pipeline schema** — *verified 2026-08-19, `reports/PIPELINE_RECON.md` §9*.
+Reserve the names; never derive, default, or impute. Revives only if the pipeline emits them.
 
-## 4. Open — needs Nick
+**O9 — "FF is done" convergence criterion.** Deleted permanently.
 
-1. Metric relation policy + curation revision (blocks anything consuming relation semantics).
-2. ImageFolder boundary / where view-generation sits and how the mask reaches it. *Discuss-first.*
-3. Mask-jitter design (magnitudes, asymmetry, boundary-only erosion, desync from `area_um2`). *Discuss-first.*
-4. "FF is done" convergence criterion for staged FF training (staged-vs-joint itself is pinned).
-5. Whether to adopt SupCon `L_out` and accept the λ_metric/τ retune. [CLAUDE, unratified]
-6. Run-artifact layout / experiment tracker convention.
-7. Phase-one experiment ID list.
-8. Checkpoint compatibility requirement.
+## Corrections to prior records
 
-## 4b. Cohort reality (measured 2026-08-19)
+**The 7.8 µm/px figure was struck in error on 2026-08-18 and is reinstated.** 7.8 was the value the
+replacement pipeline was actually writing; the 6.5→7.8 drift together with the 75→20 blend-radius
+drift *is* the snip regression. The earlier strike would have caused a reader to dismiss the most
+important open issue in the project.
 
-699,505 inventory rows → 531,902 with QC → 185,204 pass `use_snip` → **176,466 survive the combined
-metric gate (25.2%)**. QC pass rate 34.8%, and biased by experiment length: >10k-snip experiments
-average 34.9%, ≤1k-snip experiments 77.0%. `is_valid_snip` is True for every row, so the strict gate
-reduces to `use_snip` alone. Intensity η² by experiment is concentrated at the black end
-(`min` 0.477, `zero_fraction` 0.242) rather than saturation (0.047) — brightness augmentation must
-be **additive-offset-with-clipping**, not multiplicative, to span it.
+**Optical covariates were recorded inconsistently** — "present" was true of legacy metadata,
+"absent" true of pipeline output, and no document said which it meant. See Superseded.
 
-## 5. Unverified — repo/data checks
-
-- `contrastive_transform` per-view augmentation independence; whether FOV-constrained ±50% rescaling exists.
-- Mask file naming convention and coverage.
-- `image_product_type` / `projection_method` value sets; whether `snip_id` stays unique if both appear.
-- Actual µm/px consistency across the cohort.
-- Read+decode throughput off the real mount (decides D8's cache question).
-- Whether `src.data_pipeline` path helpers import cleanly in the training env.
-- I/O throughput on the **real training host** — the recon measured a workstation over a virtual
-  mount, so read latency is not representative. CPU-side numbers (decode 1.14 ms, resize 0.30 ms)
-  are valid anywhere and cap the benefit of pre-downsampling at ~24%; only the sharding question
-  is open.
-
-## 6. Deferred
-
-Temporal↔atemporal exchange rate · latent distillation · free bits · eval-suite design ·
-tree/hyperbolic prior · dirt-speck augmentation (only via real-background harvesting) ·
-pipeline embedding interface · native 576×256 training.
+**Two closed items sat in the open list**: the ImageFolder boundary (closed by D20) and run-artifact
+layout (closed by D16/D17).

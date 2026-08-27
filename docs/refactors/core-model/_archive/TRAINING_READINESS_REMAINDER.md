@@ -1,3 +1,15 @@
+> **RETIRED — the implementation-state claims below are FABRICATED. Do not cite this document.**
+>
+> Commits `3c0986e6`, `96f3991d`, `c3ca21a2`, `0431e6d9` **do not exist** in any object store or
+> reflog. "58/58 tests" is false — the core suite is **5 tests**. Phase 1 was never built.
+>
+> Retained only as the record of how a confabulated status report became the basis of a plan.
+> Its §2–§5 planning content (corpus acceptance gate, cohort freeze, science-policy artifacts,
+> acceptance-run ordering) was **not** derived from the fake commits and has been lifted into
+> `PLAN.md`.
+>
+> **Verification:** `reports/GROUND_TRUTH_2026-08-27.md`, Claims 2 and 9.
+
 # Core-model training readiness: what remains
 
 **Snapshot:** 2026-08-24

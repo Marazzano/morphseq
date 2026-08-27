@@ -1,3 +1,11 @@
+> **PRE-MERGE — needs refresh.** Written 2026-08-24 against the tree *before* `origin/main` was
+> merged on 2026-08-27 (`19061cbf`), which brought **116 `src/data_pipeline` commits**, including a
+> snip-rendering rewrite (`snip_transform.py`, `snip_recipes.py`, product keys, product-aware
+> inventory, `{physical_embryo_id}/{snip_product_key}/` layout).
+>
+> Structurally still the right content; specific file/line and behaviour claims are unverified
+> against the merged tree. **Refresh before dispatching work from it.**
+
 # Upstream pipeline state — what the core-model refactor is building on
 
 Snapshot: 2026-08-24. Assembled from the pipeline's own written record, not from a fresh run.

@@ -34,6 +34,12 @@ from data_pipeline.shared.identifiers.constructors import (
     build_snip_transform_id,
 )
 from data_pipeline.shared.identifiers.parsers import parse_image_id
+from data_pipeline.object_extraction.snip_processing.defaults import (
+    DEFAULT_BACKGROUND_MEAN,
+    DEFAULT_BACKGROUND_STD,
+    DEFAULT_BLEND_RADIUS_UM,
+    DEFAULT_TARGET_PIXEL_SIZE_UM,
+)
 from data_pipeline.object_extraction.snip_processing.legacy_snip_paths import (
     legacy_flat_snip_path,
     link_legacy_flat_path,
@@ -328,11 +334,11 @@ def run_snip_processing(
     output_csv: Path,
     snips_dir: Path,
     output_root: Path,
-    target_pixel_size_um: float = 7.8,
+    target_pixel_size_um: float = DEFAULT_TARGET_PIXEL_SIZE_UM,
     output_height_px: int = 576,
     output_width_px: int = 256,
     background_noise_scale: float = 0.1,
-    blend_radius_um: float = 20.0,
+    blend_radius_um: float = DEFAULT_BLEND_RADIUS_UM,
     snip_transform_table_csv: Path | None = None,
     snip_product_key: str = DEFAULT_BF_SNIP_PRODUCT_KEY,
     # Only the clahe_blend recipe reads this; no_change ignores it. Kept from main, where SeaHub's
@@ -373,9 +379,13 @@ def run_snip_processing(
     # Every alias created this run, for debugging external breakage without archaeology.
     legacy_alias_manifest: list[dict[str, str]] = []
 
-    _bg_mean, _bg_std = _estimate_background(valid_masks, inventory_index)
-    background_mean = background_noise_scale * _bg_mean
-    background_std = background_noise_scale * _bg_std
+    # PEGGED, not measured. Was ``background_noise_scale * _estimate_background(...)``, which read
+    # the source frames and so drifted whenever anything upstream changed their intensity. See
+    # defaults.py for the measurement that motivated pegging. ``_estimate_background`` is retained
+    # for diagnostics; ``background_noise_scale`` is retained so existing CLI callers keep working,
+    # but neither now affects the rendered background.
+    background_mean = DEFAULT_BACKGROUND_MEAN
+    background_std = DEFAULT_BACKGROUND_STD
 
     # THE GATE'S INPUT. snip_geometry derived these once for this well; this job only resolves
     # them onto its own product grid. Optional purely so existing callers/tests that predate the

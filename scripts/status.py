@@ -43,7 +43,7 @@ DECISIONS_PATH = DOCS_ROOT / "DECISIONS.md"
 INCOMING_DECISIONS_PATH = REPO_ROOT / "DECISIONS.md"
 STATUS_PATH = DOCS_ROOT / "STATUS.md"
 TEST_TARGETS = ("tests/core",)
-TEST_TIMEOUT_SECONDS = 6.0
+TEST_TIMEOUT_SECONDS = 600.0
 REQUIRED_DATA_ARTIFACTS = (
     "snip_inventory",
     "stage_predictions",
@@ -51,11 +51,18 @@ REQUIRED_DATA_ARTIFACTS = (
     "plate_metadata",
 )
 COMMITS_OF_INTEREST = (
-    ("Phase 1 adapter", "3c0986e6"),
-    ("Phase 1 datasets", "96f3991d"),
-    ("Phase 1 integration", "c3ca21a2"),
-    ("Phase 1 completion", "0431e6d9"),
-    ("Rendering defaults restored", "37aeb639"),
+    {
+        "label": "Rendering defaults restored",
+        "revision": "37aeb639",
+        "provenance": {
+            "added_by": "Codex for task (ii)2",
+            "evidence": (
+                "`docs/refactors/core-model/reports/"
+                "GROUND_TRUTH_2026-08-27.md:639-653`"
+            ),
+            "date": "2026-08-27",
+        },
+    },
 )
 PACKAGE_DISTRIBUTIONS = (
     "pytest",
@@ -228,10 +235,11 @@ def collect_git_status() -> dict[str, Any]:
         unpushed_error = "no upstream is configured"
 
     commits = []
-    for label, revision in COMMITS_OF_INTEREST:
+    for commit in COMMITS_OF_INTEREST:
+        revision = commit["revision"]
         commits.append(
             {
-                "label": label,
+                **commit,
                 "revision": revision,
                 "head": ancestor_status(revision, "HEAD"),
                 "origin_main": ancestor_status(revision, "origin/main"),
@@ -689,13 +697,16 @@ def render_git_section(status: dict[str, Any]) -> list[str]:
         lines.extend(markdown_code_block(dirty))
     lines.extend(
         [
-            "| Commit of interest | Revision | Ancestor of HEAD | Ancestor of `origin/main` |",
-            "|---|---|---:|---:|",
+            "| Commit of interest | Revision | Provenance | Ancestor of HEAD | Ancestor of `origin/main` |",
+            "|---|---|---|---:|---:|",
         ]
     )
     for commit in status["commits"]:
+        provenance = commit["provenance"]
         lines.append(
-            f"| {commit['label']} | `{commit['revision']}` | {commit['head']} | "
+            f"| {commit['label']} | `{commit['revision']}` | "
+            f"Added by {provenance['added_by']}; evidence: {provenance['evidence']}; "
+            f"added {provenance['date']} | {commit['head']} | "
             f"{commit['origin_main']} |"
         )
     lines.append("")
@@ -710,15 +721,25 @@ def render_test_section(results: dict[str, Any]) -> list[str]:
         f"- Command: `{' '.join(results['command'][:-1])} <status-json>`",
         f"- Duration: **{results['duration_seconds']:.2f}s** "
         f"(limit {TEST_TIMEOUT_SECONDS:.1f}s)",
-        f"- Result: **{'PASS' if results['exit_code'] == 0 else 'FAIL'}** "
-        f"(pytest exit {results['exit_code']})",
-        f"- Counts: **{counts['passed']} passed · {counts['failed']} failed · "
-        f"{counts['skipped']} skipped · {counts['xfailed']} xfailed · "
-        f"{counts['xpassed']} xpassed · {counts['not_run']} not run**",
-        "",
     ]
     if results.get("timed_out"):
-        lines.extend([f"> Pytest exceeded the {TEST_TIMEOUT_SECONDS:.1f}s status budget.", ""])
+        lines.extend(
+            [
+                f"- Result: **TIMEOUT** (timed out after {TEST_TIMEOUT_SECONDS:g}s)",
+                "",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                f"- Result: **{'PASS' if results['exit_code'] == 0 else 'FAIL'}** "
+                f"(pytest exit {results['exit_code']})",
+                f"- Counts: **{counts['passed']} passed · {counts['failed']} failed · "
+                f"{counts['skipped']} skipped · {counts['xfailed']} xfailed · "
+                f"{counts['xpassed']} xpassed · {counts['not_run']} not run**",
+                "",
+            ]
+        )
     if results.get("collection_errors"):
         lines.extend(
             [f"> Collection errors: {len(results['collection_errors'])}", ""]

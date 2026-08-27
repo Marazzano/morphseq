@@ -3,7 +3,7 @@
 **Updated:** 2026-08-25 · **Location:** `docs/refactors/core-model/PLAN.md`
 **Companions:** `DECISIONS.md` (ledger) · `STATUS.md` (generated, do not edit) ·
 `contracts/MANIFEST_SCHEMA.md` (binding interface) · `AGENTS.md` (agent rules)
-**Evidence:** `evidence/` (narrative state docs, audits) · `reports/` (generated study output)
+**Evidence:** `reports/` (measured) · `pipeline/` (pipeline state, pre-merge) · `_archive/` (historical)
 
 Every factual claim below carries its source or is marked as inference.
 
@@ -11,15 +11,31 @@ Every factual claim below carries its source or is marked as inference.
 
 ## 1. Where we stand
 
-**The code is essentially done. The corpus is not.**
+**Phase 0 is done. Phase 1 was never built. The corpus is not ready.**
 
-Phase 0 and Phase 1 are implemented and unit-tested — 58/58 core tests pass at `0431e6d9`, and
-`python -m src.core.run.training --help` composes — *per `evidence/TRAINING_READINESS_REMAINDER.md`,
-2026-08-24*. The manifest adapter, datasets, transforms, loaders, Hydra data group, and provenance
-bundle all exist. What remains on the code side is four small hardenings, named run configs, and one
-real end-to-end acceptance run.
+*Corrected 2026-08-27. The previous version of this section claimed "the code is essentially done —
+58/58 core tests pass at `0431e6d9`". That was false and is the reason this plan misdirected work
+for a week. See `reports/GROUND_TRUTH_2026-08-27.md`.*
 
-What is not ready is the images. The stored corpus was written before the 2026-08-02 rendering fix
+- **Phase 0: done.** Import paths, Hydra paths, run scripts, `_pixel_scale` geometry, the inert
+  metric margin, `accumulate_grad_batches`, the `metricVAE` logvar clamp, and the metric
+  `dataconfig` target were all fixed by `6f6e0f3f` (2026-08-18). `src/core/data/` is tracked.
+  *Verified: `reports/GROUND_TRUTH_2026-08-27.md`, Claims 3–8.*
+- **Core tests: 5, all passing** — not 58. `tests/core/` holds three files, all Phase 0.
+  *Command and output: same report, Claim 2.*
+- **Phase 1: not started.** Commits `3c0986e6`, `96f3991d`, `c3ca21a2`, `0431e6d9` do not exist in
+  any object store or reflog. No manifest adapter, no pipeline-backed dataset, no Hydra data group,
+  no provenance bundle. The only surviving artifact is one untracked 348-line
+  `src/core/data/pipeline_contracts.py` in the `morphseq-phase1a` worktree.
+  *Same report, Claim 9.*
+- **One live Phase 0 bug remains:** `contrastive_transform(target_size=...)` accepts the argument
+  and ignores it (`src/core/data/data_transforms.py:12`), while `run_utils.py:484,491` pass it.
+  Any metric run at a non-native input size silently trains on unresized images. Untested.
+
+The spec to build Phase 1 against is `contracts/MANIFEST_SCHEMA.md` and
+`plans/AGENT_BRIEFS_PHASE1.md` — a valid brief that was never executed.
+
+What is also not ready is the images. The stored corpus was written before the 2026-08-02 rendering fix
 and carries no provenance proving otherwise. The 176,466-row metric cohort is almost certainly
 176,466 rows of **regressed** images.
 
@@ -38,10 +54,35 @@ Blend radius caused the clipped appearance — sigma is `blend_radius / pixel_si
 collapsed 11.54 px → 2.56 px and saturation rose **3.63×**, more saturated in 89 of 93 paired wells.
 Scale shrank embryos 16.7% per linear dimension; predicted area ratio `(6.5/7.8)² = 0.694`, measured
 0.700. Embedding effect from the *same* checkpoint: per-dimension correlation 0.687, pairwise-distance
-correlation 0.660, temperature R² 0.582 → 0.353. *Source: `evidence/SNIP_IMAGE_REGRESSION_STATUS.md`.*
+correlation 0.660, temperature R² 0.582 → 0.353. *Source: `pipeline/SNIP_IMAGE_REGRESSION_STATUS.md` (pre-merge; refresh before dispatch).*
 
 The fix touched no stored snip. Every one of the 699,505 audited snips predates it, and all 133
-readable inventories lack both scale fields — *verified 2026-08-19, `reports/PIPELINE_RECON.md`*.
+readable inventories lack both scale fields — *verified 2026-08-19, `reports/PIPELINE_RECON.md`;
+figures independently re-derived from `reports/recon_tables/*.csv` on 2026-08-27*.
+
+**Ancestry correction (2026-08-27).** `37aeb639` is on both `origin/main` and this branch. But
+before the 2026-08-27 merge, `5976f8d2` (the PR-31 snip-rendering merge) was **not** an ancestor of
+`core-model-refactor` — `git merge-base --is-ancestor` exited 1, and the merge base was `14c8ab10`.
+An earlier note dismissed this because the commit *resolved*; resolving is not the same as being an
+ancestor. The `origin/main` merge (`19061cbf`, 2026-08-27) closed the gap, landing 116
+`src/data_pipeline` commits including a snip-rendering rewrite. Any "the fix is in our ancestry"
+claim predating that merge must be re-derived per-commit.
+
+**Scale columns: current code is fine; the stored corpus is what lacks them.**
+`run_snip_processing.py:463` initialises `source_micrometers_per_pixel` to `None`, then `:520`
+populates it from the frame inventory. Verified by rendering: the 2026-08-27 gate run emitted
+`source_micrometers_per_pixel = 1.887` and `snip_micrometers_per_pixel = 6.5` on all 97 rows. The
+133 inventories that lack both fields were written *before* those columns existed — regenerating
+fixes them.
+
+*(Corrected 2026-08-27: an earlier revision of this section claimed the renderer still writes
+`None`. It does not; that line is placeholder initialisation.)*
+
+What `794adf46` still adds, and what remains unmerged, is the **rendering-contract sidecar** — the
+eight-parameter record of target um/px, blend radius, mask source, orientation policy, CLAHE,
+background model, resampling kernels, and encoding. `origin/main` has no `provenance.py` under
+`snip_processing/`. That is what lets a regenerated corpus prove *how* it was rendered, beyond the
+two scale numbers.
 
 **Restriction instead of regeneration probably isn't available.** *Inference, 2026-08-25:* across 130
 experiments, `log10(saturated_255_fraction_p95)` is unimodal and continuous (p05 −4.42, median −3.73,
@@ -100,7 +141,7 @@ calibration/routing/single-z QC semantics · stale `NotImplementedError` text fo
 
 ## 5. Threads in flight
 
-See `plans/THREAD_BRIEFS.md`. T1 status system · T2a pipeline provenance · T3 metric unblock +
+See `_archive/THREAD_BRIEFS.md` (superseded 2026-08-27; do not dispatch from it). T1 status system · T2a pipeline provenance · T3 metric unblock +
 hardenings + acceptance · S1 QC/`sa_outlier` study · S2 stage lineage study · A1 regeneration scope
 and timing. **T2b (rerender + legacy comparison) is gated on T2a.** SeaHub front-half work
 (calibration, segmentation validation) has no dependencies and can start any time; SeaHub

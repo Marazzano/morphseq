@@ -1,3 +1,12 @@
+> **ARCHIVED — historical. Do not use for current state.**
+>
+> Accurate **when written**: every finding below was verified against `6f6e0f3f^`, at the exact
+> line numbers cited. Findings 1–5 were then **closed by `6f6e0f3f` (2026-08-18)**; this document
+> was committed later (`ec1a24ae`, 2026-08-24) without revalidation.
+>
+> **Still open:** none in this document.
+> **Verification:** `reports/GROUND_TRUTH_2026-08-27.md`, Claims 3–5.
+
 # MorphSeq `src/core` Refactor — Phase 0 Audit
 
 Read-only audit. No edits made to any audited code. Every factual claim is tagged
