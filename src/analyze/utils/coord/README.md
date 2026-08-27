@@ -16,10 +16,32 @@ This package exists to keep coordinate handling explicit and auditable:
 It is used by downstream pipelines that need a consistent geometry frame, such as
 canonical OT morphometrics and other grid-based analyses.
 
+## Where the primitives live
+
+The **generic** image-coordinate primitives were promoted to the root `image_geometry` package,
+because they are infrastructure that neither the analysis stack nor the data pipeline owns — both
+are clients:
+
+```python
+from image_geometry import BoxYX, GridTransform, TransformChain, Interp
+```
+
+`image_geometry` owns pixel-coordinate boxes, image-grid transforms, affine conventions, the
+interpolation vocabulary, and transform provenance. It knows nothing about embryos, canonical grids,
+or optimal transport.
+
+What stays in **this** package is analysis-specific by construction: the canonical embryo grid, the
+yolk-aware aligner, `Frame`, and the `Canonical*` / `RegisterResult` containers.
+
+Existing imports keep working — `analyze.utils.coord` and `analyze.utils.coord.types` re-export the
+promoted names, and `analyze.utils.coord.transforms` is a compatibility shim. Prefer the canonical
+`image_geometry` path in new code.
+
 ## Package map
 
-- [types.py](types.py) — dataclasses and result containers for coordinate outputs
-- [transforms.py](transforms.py) — affine/grid transform primitives and chains
+- [types.py](types.py) — analysis result containers (`Frame`, `Canonical*`, `RegisterResult`);
+  re-exports `BoxYX` / `TransformChain` from `image_geometry`
+- [transforms.py](transforms.py) — compatibility shim → `image_geometry.transforms`
 - [register.py](register.py) — explicit Stage 2 registration into a fixed frame
 - [grids/](grids/) — canonical grid mapping utilities and grid-specific logic
 - [grids/back_direction.py](grids/back_direction.py) — yolk-centered back-point helper used by canonical alignment

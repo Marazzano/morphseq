@@ -54,6 +54,7 @@
 **/*.csv
 **/*.tsv
 **/*.json
+!20260727_gene14_clean/project_config.json
 
 # Fitted R objects / session checkpoints (large — e.g. hooke ccm .rds are ~6GB)
 **/*.rds

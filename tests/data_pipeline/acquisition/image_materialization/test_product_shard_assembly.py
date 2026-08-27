@@ -3,6 +3,9 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from data_pipeline.acquisition.image_materialization.frame_inventory_contract import (
+    REQUIRED_FRAME_INVENTORY_COLUMNS,
+)
 from data_pipeline.acquisition.image_materialization.product_shard_assembly import (
     assemble_well_frame_inventory,
     discover_product_shards_for_well,
@@ -37,7 +40,21 @@ def _projection_row(time_index: int) -> dict:
         "downsample_factor": 1,
         "downsample_method": "none",
         "jpeg_quality": pd.NA,
+        # BF products invert display polarity — see
+        # materialized_image_write_policy._PRODUCT_DEFAULTS["BF__projection__focus_stack"].
+        "flip_polarity": True,
     }
+
+
+def test_fixture_rows_match_the_canonical_frame_inventory_contract():
+    """Guard against fixture drift: these hand-built rows must carry every canonical column.
+
+    ``n_sources`` is the one legitimate omission — ``backfill_n_sources`` supplies it for legacy
+    single-acquisition inventories, so shards are allowed to omit it.
+    """
+    produced = set(_projection_row(0)) | set(_z_stack_row(0, 0))
+    missing = set(REQUIRED_FRAME_INVENTORY_COLUMNS) - produced - {"n_sources"}
+    assert not missing, f"fixture rows drifted from REQUIRED_FRAME_INVENTORY_COLUMNS: {sorted(missing)}"
 
 
 def _z_stack_row(time_index: int, z_index: int) -> dict:

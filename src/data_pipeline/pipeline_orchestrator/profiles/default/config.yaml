@@ -1,0 +1,41 @@
+# Default Snakemake profile for the morphseq pipeline.
+#
+# WHY THIS EXISTS. These flags are POLICY for every run of this pipeline, not per-invocation
+# choices, and leaving them to each caller means each caller gets them wrong differently. The
+# QUICK_RUN_READ_ME already used --keep-going in one of its five examples and omitted it from the
+# other four; the qsub templates omitted it entirely.
+#
+# Pass with:  --profile src/data_pipeline/pipeline_orchestrator/profiles/default
+# (Snakemake 7 does NOT auto-discover a workflow profile -- v8 added that -- so the flag is
+# required. Anything given explicitly on the command line still overrides what is here.)
+
+# THE ONE THAT COST A 96-WELL RUN. The DAG is per-well parallel, but Snakemake's default is to stop
+# SCHEDULING new jobs the moment any job fails: it drains what is in flight and exits with
+# "Exiting because a job execution failed". That ended a run at 812/1197 with ~70 wells NEVER
+# ATTEMPTED -- nothing blocked them, the scheduler simply stopped feeding a DAG that could have
+# continued.
+#
+# On real plates a few wells always fail (segmentation finds no embryo, a frame is corrupt). The
+# default policy converts one bad well into a dead run and discards every well that had not started.
+# With keep-going the failure is isolated to its own well, everything independent still runs, and
+# the failures are reported at the end -- which is also what turns "how many wells are bad" into
+# data instead of a crash.
+keep-going: true
+
+# gpu=1 is REQUIRED, not decorative: frame_masks declares resources gpu=1 so SAM2 holds the card for
+# its duration, but Snakemake only enforces that if the BUDGET is also supplied. Without it,
+# --cores N happily starts N SAM2 jobs on one card.
+resources:
+  - gpu=1
+
+# Re-run a job whose output is newer than its input by mtime only. The default set also includes
+# params/input/code/software-env, any of which will rebuild the world after an unrelated edit --
+# on this pipeline that means re-running SAM2 across every well because a docstring changed.
+rerun-triggers:
+  - mtime
+
+# A killed job (SGE timeout, OOM) leaves a half-written artifact that Snakemake will otherwise
+# refuse to touch on the next run.
+rerun-incomplete: true
+
+printshellcmds: true

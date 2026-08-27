@@ -21,7 +21,7 @@ Projection provenance (``focus_index_map``):
   The per-tile focus_index_map from ``focus_stack_group`` is painted onto a canvas-sized
   ``focus_index_map`` using the tile transforms from ``stitch_frame_tiles``.  The canvas map is
   written as a ``.npz`` (``focus_index_map`` + ``z_indices``) at the path returned by
-  ``materialized_image_paths.focus_index_map_path``; the ``focus_index_map_path`` column in the
+  ``materialized_image_paths.index_map_path``; the ``index_map_path`` column in the
   frame-inventory row points at this file (same contract as YX1).
 
 Import rules: imports image primitives from ``image_building/``, path helpers from
@@ -107,7 +107,8 @@ _EMITTED_COLUMNS: tuple[str, ...] = (
     "image_micrometers_per_pixel",
     "image_width_px",
     "image_height_px",
-    "focus_index_map_path",
+    "index_map_path",
+    "write_index_map",
     "raw_tile_path",
     "raw_tile_manifest_path",
     "raw_tile_width_px",
@@ -173,10 +174,14 @@ def materialize_keyence_product_for_well(
             f"{resolved_product.xy_composition!r}. Keyence is multi-tile — this indicates a resolver bug."
         )
     if resolved_product.image_product_type == "projection":
+        # EXECUTOR limit, not scope policy: only the focus-stack projection is wired for Keyence.
+        # Method GRAMMAR and general capability are checked in the resolver; this guards what THIS
+        # backend has actually implemented. Wiring max here means feeding the per-tile stacks through
+        # a max reduce and then stitch_frame_tiles, the same shape as the focus path.
         if resolved_product.projection_method != "focus_stack":
             raise ValueError(
-                f"Keyence projection materialization requires projection_method='focus_stack'; "
-                f"got {resolved_product.projection_method!r}."
+                f"Keyence projection materialization has only focus_stack wired; got "
+                f"{resolved_product.projection_method!r}. (The YX1 backend implements 'max'.)"
             )
     elif resolved_product.image_product_type == "z_stack":
         if resolved_product.projection_method is not None:
@@ -429,7 +434,8 @@ def materialize_keyence_product_for_well(
                     ),
                     "image_width_px": image_width_px,
                     "image_height_px": image_height_px,
-                    "focus_index_map_path": pd.NA,
+                    "index_map_path": pd.NA,
+                    "write_index_map": False,
                     "raw_tile_path": raw_tile_path,
                     "raw_tile_manifest_path": raw_tile_manifest_path,
                     "raw_tile_width_px": img_w,
@@ -614,7 +620,10 @@ def materialize_keyence_product_for_well(
             "image_micrometers_per_pixel": image_micrometers_per_pixel,
             "image_width_px": image_width_px,
             "image_height_px": image_height_px,
-            "focus_index_map_path": str(fim_path),
+            "index_map_path": str(fim_path),
+            # Keyence focus_stack always writes its canvas index map; when the plan gains real
+            # control here, thread resolved_product.write_index_map through instead.
+            "write_index_map": True,
             "raw_tile_path": raw_tile_path,
             "raw_tile_manifest_path": raw_tile_manifest_path,
             "raw_tile_width_px": img_w,
@@ -634,6 +643,7 @@ def materialize_keyence_product_for_well(
             log.info("  %d/%d frames written", len(rows), len(time_indices))
 
     inv_df = pd.DataFrame(rows, columns=list(_EMITTED_COLUMNS))
+
 
     missing = [c for c in _REQUIRED_IMAGE_CORE_COLUMNS if c not in inv_df.columns]
     if missing:
@@ -748,3 +758,4 @@ def _raw_tile_provenance_paths(
         encoding="utf-8",
     )
     return pd.NA, str(manifest_path)
+

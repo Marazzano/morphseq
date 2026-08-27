@@ -61,14 +61,14 @@ def test_assert_unique_on_key_detects_collision():
 def test_assert_channel_mapping_consistent():
     good = pd.DataFrame(
         {"channel_index": [0, 0, 1], "raw_channel_name": ["EYES - Dia", "EYES - Dia", "EYES - GFP"],
-         "channel": ["BF", "BF", "GFP"]}
+         "channel_id": ["BF", "BF", "GFP"]}
     )
     assert_channel_mapping_consistent(good, scope_label=_LABEL)
 
     # one index maps to two raw names → inconsistent
     bad = pd.DataFrame(
         {"channel_index": [0, 0], "raw_channel_name": ["EYES - Dia", "EYES - GFP"],
-         "channel": ["BF", "GFP"]}
+         "channel_id": ["BF", "GFP"]}
     )
     with pytest.raises(ValueError, match="inconsistent channel mapping"):
         assert_channel_mapping_consistent(bad, scope_label=_LABEL)

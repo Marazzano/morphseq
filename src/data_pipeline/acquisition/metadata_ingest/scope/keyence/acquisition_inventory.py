@@ -354,12 +354,12 @@ def _derive_elapsed_time_s(df: pd.DataFrame) -> pd.DataFrame:
     """Add ``elapsed_time_s`` (seconds since each well's first frame) via the shared helper.
 
     Reuses ``time_helpers.add_elapsed_time_columns`` pointed at the Keyence raw atom
-    ``acquisition_time_s`` and grouped per ``well_id``. The helper sorts on an internal ``time_int``
-    and emits min/hr columns; we alias ``time_index_claimed`` → ``time_int`` and keep only the
+    ``acquisition_time_s`` and grouped per ``well_id``. The helper sorts on an internal ``time_index``
+    and emits min/hr columns; we alias ``time_index_claimed`` → ``time_index`` and keep only the
     canonical ``elapsed_time_s``.
     """
     work = df.copy()
-    work["time_int"] = work["time_index_claimed"]
+    work["time_index"] = work["time_index_claimed"]
     work = add_elapsed_time_columns(
         work,
         group_cols=["well_id"],

@@ -258,11 +258,37 @@ def _configured_image_product_keys() -> tuple[str, ...]:
 
 IMAGE_PRODUCT_KEYS = _configured_image_product_keys()
 
+
+def _configured_snip_product_keys() -> tuple[str, ...]:
+    """Which snip products this run renders, resolved at DAG-BUILD time.
+
+    Computed here rather than inside a rule so an unimplemented recipe or a snip declared on an
+    unmaterialized source fails while the graph is being built -- not three hours into a run, with
+    partial output on disk. Same reason IMAGE_PRODUCT_KEYS is a module-level tuple.
+
+    Reads the SAME config block the image plan reads: a snip product is declared as a `snips:` child
+    of the image product it crops, so its source is its parent and the two cannot disagree.
+    """
+    from data_pipeline.object_extraction.snip_processing.snip_product_plan import (
+        load_snip_product_plan,
+    )
+
+    return load_snip_product_plan(config).snip_product_keys
+
+
+SNIP_PRODUCT_KEYS = _configured_snip_product_keys()
+
 PLATE_METADATA_CSV = artifact_path(
     DATA_ROOT, "ingest_plate_metadata", "csv", FRONT_END_EXPERIMENT
 )
 PLATE_METADATA_VALIDATED = validated_path(
     DATA_ROOT, "ingest_plate_metadata", "csv", FRONT_END_EXPERIMENT
+)
+# The early-DAG "what is this experiment?" fact (CLASSIFY ONCE, CONSUME EVERYWHERE). Generated for
+# EVERY experiment (inert for singles) so downstream rules can depend on it unconditionally, and
+# every disk-touching collection step READS its per-source provenance instead of re-globbing _coll.
+COLLECTION_PROVENANCE_JSON = artifact_path(
+    DATA_ROOT, "collection_provenance", "provenance", FRONT_END_EXPERIMENT
 )
 SCOPE_METADATA_CSV = artifact_path(
     DATA_ROOT,
@@ -386,6 +412,7 @@ include: str(WORKFLOW_DIR / "rules" / "mask_quality_qc.smk")
 include: str(WORKFLOW_DIR / "rules" / "focus_qc.smk")
 include: str(WORKFLOW_DIR / "rules" / "motion_blur_qc.smk")
 include: str(WORKFLOW_DIR / "rules" / "death_detection.smk")
+include: str(WORKFLOW_DIR / "rules" / "channel_intensity.smk")
 include: str(WORKFLOW_DIR / "rules" / "snip_qc.smk")
 include: str(WORKFLOW_DIR / "rules" / "stage_reports.smk")
 include: str(WORKFLOW_DIR / "rules" / "analysis_ready.smk")
@@ -460,20 +487,67 @@ elif FRONT_END_MODE == "dropin":
 
 
 
+# A COLLECTION plate ({collection}_coll_{plate}) has no per-experiment raw dir — its raw lives in
+# the _coll DIRECTORY (holding the source children). Route the rule's raw input to the _coll dir for
+# a collection, the per-experiment dir otherwise. Resolved at DAG-plan time so Snakemake finds it.
+from data_pipeline.shared.identifiers import (
+    is_collection_plate_id as _is_collection_plate_id,
+    parse_collection_name_from_plate_id as _parse_collection_name_from_plate_id,
+)
+
+def _scope_raw_input_dir(wc):
+    exp = wc.experiment
+    if _is_collection_plate_id(exp):
+        return str(RAW_IMAGES_DIR / MICROSCOPE / _parse_collection_name_from_plate_id(exp))
+    return str(RAW_IMAGES_DIR / MICROSCOPE / exp)
+
+
+rule build_collection_provenance:
+    """
+    CLASSIFY ONCE — emit the per-experiment collection-provenance artifact at the START of the DAG.
+
+    One small JSON per experiment: {is_collection, sources:[{file, raw_path, declared_hpf,
+    time_index}], start_age_by_time_index}. For a single experiment the payload is inert
+    (is_collection=false, empty sources) so consumers behave exactly as today.
+
+    This is the KEYSTONE artifact: every disk-touching collection step READS its per-source
+    provenance (files + their time_index) instead of re-globbing the _coll dir, and after
+    frame_inventory the only remaining consumer is stage_predictions (the age map).
+    """
+    output:
+        provenance_json = COLLECTION_PROVENANCE_JSON
+    params:
+        experiment_id = "{experiment}",
+        raw_root = str(RAW_IMAGES_DIR / MICROSCOPE),
+    shell:
+        """
+        {RUN} -m data_pipeline.pipeline_orchestrator.tasks build-collection-provenance \
+          --experiment "{params.experiment_id}" \
+          --raw-root "{params.raw_root}" \
+          --microscope "{MICROSCOPE}" \
+          --output-json "{output.provenance_json}"
+        """
+
+
 rule ingest_scope_metadata:
     """
-    Extract scope metadata from the configured microscope's raw image files.
+    Extract scope metadata from the microscope's raw image files → the acquisition inventory.
 
-    Reads raw metadata to extract:
-    - Micrometers per pixel (calibration)
-    - Frame interval (timing)
-    - Image dimensions
-    - Channel information
-    - Series/well mapping
-    - Timestamps
+    SINGLE experiment: one scope read of one raw dir. COLLECTION plate: read EACH source child ONCE
+    and union BOTH artifacts — the scope_metadata (per-position geometry + channel, what
+    map_positions/apply ingest) and the acquisition_inventory (image-level source paths + axes, what
+    the stitch map/materialize ingest). They are NOT interchangeable, so each keeps the columns its
+    consumer needs; both blocks are tagged with the canonical source identity
+    (source_id / source_path / time_index) read from the classify artifact.
+
+    The union is PER-SOURCE-LOSSLESS: each source keeps its OWN x/y, calibration and timing (the
+    plate is re-seated across the gap, so those legitimately differ). Step 2 recovers each source's
+    block by grouping on time_index.
     """
     input:
-        raw_images_dir = RAW_IMAGES_DIR / MICROSCOPE / "{experiment}"
+        raw_images_dir = _scope_raw_input_dir,
+        # The keystone: who-is-what (source files + their time_index). Never re-globbed.
+        provenance_json = COLLECTION_PROVENANCE_JSON,
     output:
         # Both scopes emit the maximal acquisition inventory (record-only): YX1 from its one ND2 read,
         # Keyence from a raw-plane TIFF scan. The inventory is the never-collapsed system of record.
@@ -484,19 +558,34 @@ rule ingest_scope_metadata:
         )
     params:
         experiment_id = "{experiment}",
+        raw_root = str(RAW_IMAGES_DIR / MICROSCOPE),
+        is_collection = lambda wc: _is_collection_plate_id(wc.experiment),
         acquisition_inventory_arg = (
             lambda wc, output: f'--acquisition-inventory-csv "{output.acquisition_inventory_csv}"'
             if MICROSCOPE in ("YX1", "Keyence")
             else ""
         ),
     shell:
+        # Collection → read each source child ONCE; union the REAL scope_metadata (geometry+channel)
+        # and the acquisition inventory, both artifact-driven. Single → the standard one scope read.
+        # Both paths emit scope_csv + acquisition_inventory_csv, so downstream rules are identical.
         """
-        {RUN} -m data_pipeline.pipeline_orchestrator.tasks ingest-scope-metadata \
-          --raw-images-dir "{input.raw_images_dir}" \
-          --experiment "{params.experiment_id}" \
-          --microscope "{MICROSCOPE}" \
-          --output-csv "{output.scope_csv}" \
-          {params.acquisition_inventory_arg}
+        if [ "{params.is_collection}" = "True" ]; then
+          {RUN} -m data_pipeline.pipeline_orchestrator.tasks ingest-collection-acquisition \
+            --experiment "{params.experiment_id}" \
+            --raw-root "{params.raw_root}" \
+            --microscope "{MICROSCOPE}" \
+            --provenance-json "{input.provenance_json}" \
+            --output-csv "{output.acquisition_inventory_csv}" \
+            --scope-metadata-csv "{output.scope_csv}"
+        else
+          {RUN} -m data_pipeline.pipeline_orchestrator.tasks ingest-scope-metadata \
+            --raw-images-dir "{input.raw_images_dir}" \
+            --experiment "{params.experiment_id}" \
+            --microscope "{MICROSCOPE}" \
+            --output-csv "{output.scope_csv}" \
+            {params.acquisition_inventory_arg}
+        fi
         """
 
 
@@ -510,23 +599,43 @@ rule map_positions_to_wells:
     """
     input:
         scope_csv = SCOPE_METADATA_CSV,
+        provenance_json = COLLECTION_PROVENANCE_JSON,
     output:
         mapping_csv = POSITION_WELL_MAPPING_CSV,
         provenance_json = POSITION_WELL_MAPPING_PROVENANCE,
     params:
         experiment_id = "{experiment}",
+        is_collection = lambda wc: _is_collection_plate_id(wc.experiment),
         ref_xy_csv = str(YX1_REF_XY_CSV) if YX1_REF_XY_CSV else "",
         raw_images_parent = str(RAW_IMAGES_DIR / MICROSCOPE),
+        collection_raw_dir = _scope_raw_input_dir,
     shell:
+        # COLLECTION: each source MUST be mapped independently — for YX1 the well comes from stage
+        # x/y matched to a reference, and each source is its own ND2 with its own stage frame (plate
+        # re-seated), so source-t28's position_index=1 and source-t52's are DIFFERENT acquisitions.
+        # We run the EXISTING per-scope map function once per source (unchanged), then concat into
+        # ONE plate-keyed artifact with time_index tagging each source block. SINGLE: unchanged.
         """
-        {RUN} -m data_pipeline.pipeline_orchestrator.tasks map-positions-to-wells \
-          --experiment "{params.experiment_id}" \
-          --microscope "{MICROSCOPE}" \
-          --scope-csv "{input.scope_csv}" \
-          --ref-xy-csv "{params.ref_xy_csv}" \
-          --raw-images-parent "{params.raw_images_parent}" \
-          --output-mapping-csv "{output.mapping_csv}" \
-          --output-provenance-json "{output.provenance_json}"
+        if [ "{params.is_collection}" = "True" ]; then
+          {RUN} -m data_pipeline.pipeline_orchestrator.tasks map-collection-positions-to-wells \
+            --experiment "{params.experiment_id}" \
+            --microscope "{MICROSCOPE}" \
+            --provenance-json "{input.provenance_json}" \
+            --scope-csv "{input.scope_csv}" \
+            --raw-dir "{params.collection_raw_dir}" \
+            --ref-xy-csv "{params.ref_xy_csv}" \
+            --output-mapping-csv "{output.mapping_csv}" \
+            --output-provenance-json "{output.provenance_json}"
+        else
+          {RUN} -m data_pipeline.pipeline_orchestrator.tasks map-positions-to-wells \
+            --experiment "{params.experiment_id}" \
+            --microscope "{MICROSCOPE}" \
+            --scope-csv "{input.scope_csv}" \
+            --ref-xy-csv "{params.ref_xy_csv}" \
+            --raw-images-parent "{params.raw_images_parent}" \
+            --output-mapping-csv "{output.mapping_csv}" \
+            --output-provenance-json "{output.provenance_json}"
+        fi
         """
 
 
@@ -553,38 +662,6 @@ rule apply_position_to_well_mapping:
 # ============================================================================
 # Image building + physical frame manifest
 # ============================================================================
-
-
-rule materialize_stitched_images:
-    input:
-        raw_images_dir = RAW_IMAGES_DIR / MICROSCOPE / "{experiment}",
-        mapping_csv = POSITION_WELL_MAPPING_CSV,
-        scope_csv = SCOPE_METADATA_MAPPED_CSV,
-    output:
-        stitched_index = EXPERIMENT_METADATA_DIR / "{experiment}" / "stitched_image_index.csv",
-        done = BUILT_IMAGE_DATA_DIR / "{experiment}" / ".materialize_stitched_images.done"
-    params:
-        experiment_id = "{experiment}",
-        selected_wells = lambda wc: _selected_wells_csv(wc.experiment),
-        device = lambda wc: str(config.get("image_building", {}).get("device", "cuda")),
-        overwrite = lambda wc: int(bool(config.get("image_building", {}).get("overwrite", False))),
-        z_buffer = lambda wc: int(bool(config.get("image_building", {}).get("yx1", {}).get("z_buffer", False))),
-    shell:
-        """
-        {RUN} -m data_pipeline.pipeline_orchestrator.tasks materialize-stitched \
-          --experiment "{params.experiment_id}" \
-          --microscope "{MICROSCOPE}" \
-          --raw-images-dir "{input.raw_images_dir}" \
-          --scope-csv "{input.scope_csv}" \
-          --mapping-csv "{input.mapping_csv}" \
-          --output-root "{BUILT_IMAGE_DATA_DIR}" \
-          --output-stitched-index-csv "{output.stitched_index}" \
-          --selected-wells "{params.selected_wells}" \
-          --output-image-extension "jpg" \
-          --device-preference "{params.device}" \
-          --overwrite "{params.overwrite}" \
-          --done-flag "{output.done}"
-        """
 
 
 # Native discovery checkpoint — registered ONLY in native mode. In dropin mode the

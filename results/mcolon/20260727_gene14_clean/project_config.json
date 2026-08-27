@@ -1,0 +1,12 @@
+{
+  "imaging_qc_dir": "../20260607_sci_cilia_gene14_imaging_qc",
+  "sequence_metadata": "/net/seahub_zfish/vol1/data/preprocessed/GENE14/GENE14_embryo_metadata.tsv",
+  "sequence_qc": "/net/seahub_zfish/vol1/data/BBI_dmux_sci/GENE14/260625_GENE14_run2_novaseqx/GENE14/missing_embryos_list.csv",
+  "mcclintock_cds": "/net/seahub_zfish/vol1/data/seahub_rna_processing/portal_inputs/v3.1.0/mcclintock/GENE14/run_1/filter_embryos/embryo_filtered_cds",
+  "reference_cds": "/net/seahub_zfish/vol1/data/reference_cds/v3.1.0/reference_cds",
+  "reference_expression": "/net/seahub_zfish/vol1/data/seahub_rna_processing/portal_inputs/v3.1.0/sulston/latest/precompute/ref_agr_exp_data_cell_type.tsv",
+  "zfin_human_orthologs": "../../../software/ZFIN/source/human_orthos.txt",
+  "mcclintock_coldata": "/net/seahub_zfish/vol1/data/seahub_rna_processing/portal_inputs/v3.1.0/mcclintock/GENE14/run_1/filter_embryos/embryo_filtered_cds_coldata.tsv",
+  "celltype_counts": "cell_type_counts/per_embryo_celltype_counts.tsv",
+  "morphseq_map": "0_shared/morphseq_embryo_sequence_map.csv"
+}

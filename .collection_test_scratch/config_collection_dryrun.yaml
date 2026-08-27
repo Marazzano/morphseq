@@ -1,0 +1,9 @@
+experiments:
+  - chem28c_coll_plate01
+microscope: Keyence
+front_end:
+  mode: native
+experiment_wells:
+  chem28c_coll_plate01:
+    - A01
+    - A02

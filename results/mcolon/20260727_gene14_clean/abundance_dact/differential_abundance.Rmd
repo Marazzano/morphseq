@@ -1,0 +1,555 @@
+---
+title: "Differential cell-type abundance"
+output: html_document
+params:
+  mode: "check_plan"
+  contrast_name: !r NULL
+  fit_group: !r NULL
+  overwrite_existing: false
+---
+
+This notebook asks:
+
+> Does a perturbation change the abundance of a cell type relative to its control?
+
+It can check the contrast plan, fit one contrast, fit one related group of
+contrasts, fit all contrasts, or assemble completed fits.
+
+The default mode is `check_plan`; fitting occurs only when explicitly requested.
+`fit_all` fits every missing contrast and then assembles the final table.
+
+```{r setup, message=FALSE, warning=FALSE}
+library(monocle3)
+library(hooke)
+library(platt)
+library(dplyr)
+library(readr)
+library(tibble)
+library(tidyr)
+
+# TODO after cluster jobs 23191601 and 23191602 finish:
+# Read these canonical input paths from ../project_config.json so the R and
+# Python analyses share one source of truth.
+PROJECT_DIR <- paste0(
+  "/net/trapnell/vol1/home/mdcolon/proj/morphseq/results/",
+  "mcolon/20260727_gene14_clean"
+)
+ABUNDANCE_DIR <- file.path(PROJECT_DIR, "abundance_dact")
+
+CELLTYPE_COUNTS_FILE <- file.path(
+  PROJECT_DIR,
+  "cell_type_counts",
+  "per_embryo_celltype_counts.tsv"
+)
+MORPHSEQ_MAP_FILE <- file.path(
+  PROJECT_DIR,
+  "0_shared",
+  "morphseq_embryo_sequence_map.csv"
+)
+MCCLINTOCK_CDS <- paste0(
+  "/net/seahub_zfish/vol1/data/seahub_rna_processing/portal_inputs/",
+  "v3.1.0/mcclintock/GENE14/run_1/filter_embryos/embryo_filtered_cds"
+)
+
+OUTPUT_DIR <- file.path(ABUNDANCE_DIR, "output")
+RAW_MODEL_RESULTS_DIR <- file.path(OUTPUT_DIR, "raw_model_results")
+FINAL_OUTPUT_FILE <- file.path(OUTPUT_DIR, "differential_abundance.tsv")
+
+source(file.path(ABUNDANCE_DIR, "contrast_plan.R"))
+source(file.path(ABUNDANCE_DIR, "cell_type_gate_policy.R"))
+
+allowed_modes <- c(
+  "check_plan",
+  "fit_one",
+  "fit_group",
+  "fit_all",
+  "assemble"
+)
+if (!params$mode %in% allowed_modes) {
+  stop("mode must be one of: ", paste(allowed_modes, collapse = ", "))
+}
+if (params$mode == "fit_one" && is.null(params$contrast_name)) {
+  stop("fit_one mode requires a contrast_name.")
+}
+if (params$mode == "fit_group" && is.null(params$fit_group)) {
+  stop("fit_group mode requires a fit_group.")
+}
+
+dir.create(RAW_MODEL_RESULTS_DIR, recursive = TRUE, showWarnings = FALSE)
+```
+
+## Step 1: Load the embryo cell counts
+
+This table contains one row per embryo and cell type. A zero means that no
+retained sequenced cells from that embryo were assigned to that cell type.
+
+```{r load-counts}
+celltype_counts <- readr::read_tsv(
+  CELLTYPE_COUNTS_FILE,
+  show_col_types = FALSE
+)
+
+# Keep one preferred MorphSeq phenotype label per sequencing embryo.
+phenotype_labels <- readr::read_csv(
+  MORPHSEQ_MAP_FILE,
+  col_select = c(
+    pred_seq_embryo_ID,
+    predicted_phenotype,
+    is_preferred_morphseq_embryo,
+    in_mcclintock
+  ),
+  col_types = readr::cols(
+    pred_seq_embryo_ID = readr::col_character(),
+    predicted_phenotype = readr::col_character(),
+    is_preferred_morphseq_embryo = readr::col_logical(),
+    in_mcclintock = readr::col_logical()
+  )
+) |>
+  dplyr::filter(
+    .data$is_preferred_morphseq_embryo %in% TRUE,
+    .data$in_mcclintock %in% TRUE,
+    !is.na(.data$predicted_phenotype)
+  ) |>
+  dplyr::transmute(
+    embryo_ID = .data$pred_seq_embryo_ID,
+    predicted_phenotype = .data$predicted_phenotype
+  )
+
+if (anyDuplicated(phenotype_labels$embryo_ID)) {
+  stop("Each sequencing embryo must have at most one preferred phenotype.")
+}
+
+celltype_counts <- celltype_counts |>
+  dplyr::left_join(phenotype_labels, by = "embryo_ID") |>
+  dplyr::mutate(
+    # Controls keep their sequencing perturbation name. Phenotyped mutants use
+    # their MorphSeq label, such as High_to_Low or CE.
+    phenotype_group = dplyr::coalesce(
+      .data$predicted_phenotype,
+      .data$perturbation
+    )
+  )
+
+cat(
+  dplyr::n_distinct(celltype_counts$embryo_ID), "embryos x",
+  dplyr::n_distinct(celltype_counts$cell_type), "cell types\n"
+)
+```
+
+## Step 2: Check every planned contrast
+
+For each contrast, we confirm that:
+
+- The perturbation and control both exist.
+- Both groups have enough embryos.
+- Each group has one RT block.
+- The observed cross-block status matches the plan.
+
+The function is defined here because it is used immediately below.
+
+```{r define-contrast-audit}
+audit_one_contrast <- function(celltype_counts, contrast) {
+  contrast_name <- contrast$contrast_name
+  perturbation_name <- contrast$perturbation
+  control_name <- contrast$control
+  timepoint_hpf <- contrast$timepoint
+  group_column <- contrast$group_column
+
+  if (!group_column %in% names(celltype_counts)) {
+    stop("The cell-type counts are missing group column: ", group_column)
+  }
+
+  embryos <- celltype_counts |>
+    dplyr::filter(
+      .data$timepoint == .env$timepoint_hpf,
+      .data[[group_column]] %in%
+        c(.env$perturbation_name, .env$control_name)
+    ) |>
+    dplyr::distinct(
+      .data$embryo_ID,
+      analysis_group = .data[[group_column]],
+      .data$rt_block
+    )
+
+  # This is a within-embryo check. Each embryo must have one analysis group and
+  # one RT block. The perturbation and control arms may still use different RT
+  # blocks; that cross-block comparison is checked separately below.
+  metadata_rows_per_embryo <- embryos |>
+    dplyr::count(.data$embryo_ID, name = "n_metadata_rows")
+  embryos_with_conflicting_metadata <- metadata_rows_per_embryo |>
+    dplyr::filter(.data$n_metadata_rows != 1)
+
+  if (nrow(embryos_with_conflicting_metadata) > 0) {
+    stop(
+      contrast_name,
+      " contains an embryo assigned to multiple groups or RT blocks."
+    )
+  }
+
+  perturbation_embryos <- embryos |>
+    dplyr::filter(.data$analysis_group == .env$perturbation_name)
+  control_embryos <- embryos |>
+    dplyr::filter(.data$analysis_group == .env$control_name)
+
+  perturbation_rt_blocks <- unique(
+    stats::na.omit(perturbation_embryos$rt_block)
+  )
+  control_rt_blocks <- unique(
+    stats::na.omit(control_embryos$rt_block)
+  )
+
+  if (length(perturbation_rt_blocks) != 1L) {
+    stop(contrast_name, " must have one perturbation RT block.")
+  }
+  if (length(control_rt_blocks) != 1L) {
+    stop(contrast_name, " must have one control RT block.")
+  }
+
+  n_perturbation_embryos <- dplyr::n_distinct(
+    perturbation_embryos$embryo_ID
+  )
+  n_control_embryos <- dplyr::n_distinct(
+    control_embryos$embryo_ID
+  )
+
+  if (n_perturbation_embryos < MINIMUM_EMBRYOS_PER_ARM) {
+    stop(contrast_name, " has too few perturbation embryos.")
+  }
+  if (n_control_embryos < MINIMUM_EMBRYOS_PER_ARM) {
+    stop(contrast_name, " has too few control embryos.")
+  }
+
+  perturbation_rt_block <- perturbation_rt_blocks[[1]]
+  control_rt_block <- control_rt_blocks[[1]]
+  is_cross_rt_block <- perturbation_rt_block != control_rt_block
+
+  if (is_cross_rt_block != contrast$expected_cross_rt_block) {
+    stop(
+      contrast_name,
+      " expected cross-RT-block = ",
+      contrast$expected_cross_rt_block,
+      ", but observed ",
+      perturbation_rt_block,
+      " versus ",
+      control_rt_block,
+      "."
+    )
+  }
+
+  tibble::tibble(
+    contrast_name = contrast_name,
+    fit_group = contrast$fit_group,
+    group_column = group_column,
+    perturbation = perturbation_name,
+    control = control_name,
+    timepoint = timepoint_hpf,
+    control_note = contrast$control_note,
+    perturbation_rt_block = perturbation_rt_block,
+    control_rt_block = control_rt_block,
+    is_cross_rt_block = is_cross_rt_block,
+    n_perturbation_embryos = n_perturbation_embryos,
+    n_control_embryos = n_control_embryos
+  )
+}
+```
+
+Now apply that check to every row of `contrast_plan`.
+
+```{r run-contrast-audit}
+contrast_audit_rows <- vector("list", nrow(contrast_plan))
+
+for (i in seq_len(nrow(contrast_plan))) {
+  contrast_audit_rows[[i]] <- audit_one_contrast(
+    celltype_counts = celltype_counts,
+    contrast = contrast_plan[i, ]
+  )
+}
+
+contrast_audit <- dplyr::bind_rows(contrast_audit_rows)
+contrast_audit
+```
+
+When `mode = "check_plan"`, the notebook stops here.
+
+## Step 3: Fit differential abundance
+
+This step runs only in `fit_one`, `fit_group`, or `fit_all` mode.
+
+Existing raw model checkpoints are skipped unless `overwrite_existing = true`.
+
+### Step 3A: Choose the contrasts
+
+First, show exactly which contrasts will be fitted. A fit group contains related
+contrasts that can reuse one loaded cell-type CDS.
+
+```{r select-contrasts, eval=params$mode %in% c("fit_one", "fit_group", "fit_all")}
+if (params$mode == "fit_one") {
+  contrasts_to_fit <- contrast_audit |>
+    dplyr::filter(.data$contrast_name == params$contrast_name)
+
+  if (nrow(contrasts_to_fit) != 1L) {
+    stop("Unknown contrast_name: ", params$contrast_name)
+  }
+} else if (params$mode == "fit_group") {
+  contrasts_to_fit <- contrast_audit |>
+    dplyr::filter(.data$fit_group == params$fit_group)
+
+  if (nrow(contrasts_to_fit) == 0L) {
+    stop("Unknown fit_group: ", params$fit_group)
+  }
+} else {
+  contrasts_to_fit <- contrast_audit
+}
+
+contrasts_to_fit |>
+  dplyr::select(
+    contrast_name,
+    fit_group,
+    group_column,
+    perturbation,
+    control,
+    timepoint
+  )
+```
+
+### Step 3B: Load the model input
+
+This is the large single-cell dataset. It is loaded only when fitting was
+explicitly requested.
+
+```{r load-model-input, eval=params$mode %in% c("fit_one", "fit_group", "fit_all")}
+message("Loading McClintock CDS...")
+cds <- monocle3::load_monocle_objects(MCCLINTOCK_CDS)
+
+# Attach the same preferred phenotype labels used in the embryo count table.
+phenotype_group <- phenotype_labels$predicted_phenotype[
+  match(colData(cds)$embryo_ID, phenotype_labels$embryo_ID)
+]
+phenotype_group <- dplyr::coalesce(
+  phenotype_group,
+  as.character(colData(cds)$perturbation)
+)
+colData(cds)$phenotype_group <- phenotype_group
+
+# Platt requires a batch column. We intentionally fit no batch effect here:
+# every sample receives the same level, so batch_one is a no-op covariate.
+colData(cds)$batch_one <- "one_batch"
+
+message("Building Hooke cell-count set...")
+cell_count_set <- hooke::new_cell_count_set(
+  cds,
+  sample_group = "embryo_ID",
+  cell_group = "cell_type"
+)
+
+rm(cds)
+invisible(gc())
+
+num_threads <- suppressWarnings(
+  as.integer(Sys.getenv("NSLOTS", "3"))
+)
+if (is.na(num_threads) || num_threads < 1L) {
+  num_threads <- 3L
+}
+```
+
+### Step 3C: Fit the requested contrasts
+
+The important model calls remain visible in the loop:
+
+```text
+fit_genotype_ccm()
+get_perturbation_effects()
+```
+
+```{r fit-contrasts, eval=params$mode %in% c("fit_one", "fit_group", "fit_all")}
+for (i in seq_len(nrow(contrasts_to_fit))) {
+  contrast <- contrasts_to_fit[i, ]
+  saved_result <- file.path(
+    RAW_MODEL_RESULTS_DIR,
+    paste0(contrast$contrast_name, ".tsv")
+  )
+
+  if (file.exists(saved_result) && !params$overwrite_existing) {
+    message("Already complete: ", contrast$contrast_name)
+    next
+  }
+  if (file.exists(saved_result)) {
+    message("Recomputing: ", contrast$contrast_name)
+  }
+
+  sample_metadata <- colData(cell_count_set)
+  keep <- (
+    sample_metadata$timepoint == contrast$timepoint &
+    sample_metadata[[contrast$group_column]] %in%
+      c(contrast$perturbation, contrast$control)
+  )
+  contrast_ccs <- cell_count_set[, keep]
+
+  message(
+    "Fitting ", contrast$contrast_name, ": ",
+    contrast$perturbation, " versus ", contrast$control,
+    " at ", contrast$timepoint, " hpf"
+  )
+
+  model <- platt:::fit_genotype_ccm(
+    genotype = contrast$perturbation,
+    ccs = contrast_ccs,
+    perturbation_col = contrast$group_column,
+    ctrl_ids = contrast$control,
+    interval_col = "timepoint",
+    batch_col = "batch_one",
+    vhat_method = "sandwich_var",
+    num_threads = num_threads
+  )
+
+  model_results <- platt:::get_perturbation_effects(
+    model,
+    interval_col = "timepoint"
+  )
+
+  rm(model)
+  invisible(gc())
+
+  required_columns <- c(
+    "cell_group",
+    "log_abund_x",
+    "log_abund_y",
+    "delta_log_abund",
+    "delta_p_value",
+    "delta_q_value"
+  )
+  missing_columns <- setdiff(required_columns, names(model_results))
+  if (length(missing_columns) > 0L) {
+    stop(
+      contrast$contrast_name,
+      " model output is missing: ",
+      paste(missing_columns, collapse = ", ")
+    )
+  }
+
+  # Platt defines x = control, y = perturbation, and delta = y - x.
+  model_results <- model_results |>
+    dplyr::rename(
+      cell_type = cell_group,
+      log_abundance_control = log_abund_x,
+      log_abundance_perturbation = log_abund_y,
+      log_abundance_difference = delta_log_abund,
+      p_value = delta_p_value,
+      q_value_all = delta_q_value
+    ) |>
+    dplyr::mutate(
+      contrast_name = contrast$contrast_name,
+      fit_group = contrast$fit_group,
+      group_column = contrast$group_column,
+      perturbation = contrast$perturbation,
+      control = contrast$control,
+      timepoint = contrast$timepoint,
+      control_note = contrast$control_note,
+      perturbation_rt_block = contrast$perturbation_rt_block,
+      control_rt_block = contrast$control_rt_block,
+      is_cross_rt_block = contrast$is_cross_rt_block,
+      n_perturbation_embryos = contrast$n_perturbation_embryos,
+      n_control_embryos = contrast$n_control_embryos,
+      .before = 1
+    )
+
+  readr::write_tsv(model_results, saved_result)
+  message("Wrote ungated model result: ", saved_result)
+}
+```
+
+## Step 4: Add reliability to each completed contrast
+
+This step runs in `assemble` or `fit_all` mode.
+
+The ungated model output stays unchanged on disk. Reliability is added to a copy
+that will become the final combined table.
+
+```{r assemble-results, eval=params$mode %in% c("assemble", "fit_all")}
+expected_files <- file.path(
+  RAW_MODEL_RESULTS_DIR,
+  paste0(contrast_audit$contrast_name, ".tsv")
+)
+missing_files <- expected_files[!file.exists(expected_files)]
+
+if (length(missing_files) > 0L) {
+  stop(
+    "Cannot assemble the final table. Missing model results:\n  ",
+    paste(basename(missing_files), collapse = "\n  ")
+  )
+}
+
+assembled_results <- vector("list", nrow(contrast_audit))
+
+for (i in seq_len(nrow(contrast_audit))) {
+  contrast <- contrast_audit[i, ]
+  model_results <- readr::read_tsv(
+    expected_files[[i]],
+    show_col_types = FALSE
+  )
+
+  expected_identity <- list(
+    contrast_name = contrast$contrast_name,
+    fit_group = contrast$fit_group,
+    group_column = contrast$group_column,
+    perturbation = contrast$perturbation,
+    control = contrast$control,
+    timepoint = contrast$timepoint
+  )
+  for (column_name in names(expected_identity)) {
+    observed_values <- unique(model_results[[column_name]])
+    values_match <- (
+      length(observed_values) == 1L &&
+      isTRUE(
+        all.equal(
+          observed_values[[1]],
+          expected_identity[[column_name]],
+          check.attributes = FALSE
+        )
+      )
+    )
+    if (!values_match) {
+      stop(
+        basename(expected_files[[i]]),
+        " does not match the current contrast plan."
+      )
+    }
+  }
+
+  detection_summary <- summarize_celltype_detection(
+    celltype_counts = celltype_counts,
+    group_column = contrast$group_column,
+    perturbation_name = contrast$perturbation,
+    control_name = contrast$control,
+    timepoint_hpf = contrast$timepoint
+  )
+
+  assembled_results[[i]] <- add_celltype_reliability(
+    model_results = model_results,
+    detection_summary = detection_summary
+  )
+}
+```
+
+## Step 5: Write the final table
+
+One row represents one contrast and one cell type. No modeled cell types are
+removed.
+
+```{r write-final-results, eval=params$mode %in% c("assemble", "fit_all")}
+differential_abundance <- dplyr::bind_rows(assembled_results) |>
+  dplyr::arrange(.data$contrast_name, .data$cell_type)
+
+readr::write_tsv(
+  differential_abundance,
+  FINAL_OUTPUT_FILE
+)
+
+cat(
+  "Wrote", nrow(differential_abundance),
+  "contrast x cell-type rows to\n",
+  FINAL_OUTPUT_FILE,
+  "\n"
+)
+```

@@ -1,0 +1,96 @@
+{
+  "channel_id": "BF",
+  "experiment_id": "chem28c_coll_plate01",
+  "schema_version": 1,
+  "tiles": [
+    {
+      "source_tiff_paths": [
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00001_Z001_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00001_Z002_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00001_Z003_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00001_Z004_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00001_Z005_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00001_Z006_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00001_Z007_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00001_Z008_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00001_Z009_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00001_Z010_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00001_Z011_CH1.tif"
+      ],
+      "tile_id": "1",
+      "z_indices": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ]
+    },
+    {
+      "source_tiff_paths": [
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00002_Z001_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00002_Z002_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00002_Z003_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00002_Z004_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00002_Z005_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00002_Z006_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00002_Z007_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00002_Z008_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00002_Z009_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00002_Z010_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00002_Z011_CH1.tif"
+      ],
+      "tile_id": "2",
+      "z_indices": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ]
+    },
+    {
+      "source_tiff_paths": [
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00003_Z001_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00003_Z002_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00003_Z003_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00003_Z004_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00003_Z005_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00003_Z006_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00003_Z007_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00003_Z008_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00003_Z009_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00003_Z010_CH1.tif",
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf/XY02/embryo__XY02_00003_Z011_CH1.tif"
+      ],
+      "tile_id": "3",
+      "z_indices": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ]
+    }
+  ],
+  "time_index": 1,
+  "well_id": "chem28c_coll_plate01_A02"
+}

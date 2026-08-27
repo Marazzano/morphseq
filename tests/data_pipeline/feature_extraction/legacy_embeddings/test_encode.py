@@ -28,9 +28,10 @@ LATENT_DIM = 8
 class _FakeEncoder:
     """Minimal EncoderProtocol implementation for tests — no torch.nn.Module needed."""
 
-    def __init__(self, latent_dim: int, emit_logvar: bool = True):
+    def __init__(self, latent_dim: int, emit_logvar: bool = True, nuisance_indices: list[int] | None = None):
         self.latent_dim = latent_dim
         self.emit_logvar = emit_logvar
+        self.nuisance_indices = nuisance_indices
 
     def encode_batch(self, x: torch.Tensor) -> dict[str, torch.Tensor | None]:
         B = x.shape[0]
@@ -145,3 +146,66 @@ class TestZSigmaColumns:
         df = encode_snips(snip_inputs, encoder=enc, model_input_shape=MODEL_INPUT_SHAPE)
         z_sigma_cols = [c for c in df.columns if c.startswith("z_sigma_")]
         assert z_sigma_cols == [], f"Expected no z_sigma columns, got {z_sigma_cols}"
+
+
+class TestBiologicalNuisanceSplit:
+    """Disentangled encoders (non-empty nuisance_indices) split columns into z_mu_b_*/z_mu_n_*."""
+
+    def test_flat_naming_when_nuisance_indices_none(self, tmp_path):
+        snip_inputs = _make_snip_inputs(2, tmp_path)
+        enc = _FakeEncoder(LATENT_DIM, nuisance_indices=None)
+        df = encode_snips(snip_inputs, encoder=enc, model_input_shape=MODEL_INPUT_SHAPE)
+        assert "z_mu_00" in df.columns
+        assert not any(c.startswith("z_mu_b_") or c.startswith("z_mu_n_") for c in df.columns)
+
+    def test_flat_naming_when_nuisance_indices_empty(self, tmp_path):
+        snip_inputs = _make_snip_inputs(2, tmp_path)
+        enc = _FakeEncoder(LATENT_DIM, nuisance_indices=[])
+        df = encode_snips(snip_inputs, encoder=enc, model_input_shape=MODEL_INPUT_SHAPE)
+        assert "z_mu_00" in df.columns
+        assert not any(c.startswith("z_mu_b_") or c.startswith("z_mu_n_") for c in df.columns)
+
+    def test_splits_into_biological_and_nuisance_by_raw_index(self, tmp_path):
+        snip_inputs = _make_snip_inputs(2, tmp_path)
+        enc = _FakeEncoder(LATENT_DIM, nuisance_indices=[0, 1, 2])
+        df = encode_snips(snip_inputs, encoder=enc, model_input_shape=MODEL_INPUT_SHAPE)
+        assert [c for c in df.columns if c.startswith("z_mu_n_")] == ["z_mu_n_00", "z_mu_n_01", "z_mu_n_02"]
+        assert [c for c in df.columns if c.startswith("z_mu_b_")] == [
+            f"z_mu_b_{j:02d}" for j in range(3, LATENT_DIM)
+        ]
+        assert not any(c.startswith("z_mu_00") for c in df.columns)
+
+    def test_z_sigma_split_mirrors_z_mu_split(self, tmp_path):
+        snip_inputs = _make_snip_inputs(2, tmp_path)
+        enc = _FakeEncoder(LATENT_DIM, emit_logvar=True, nuisance_indices=[0, 1, 2])
+        df = encode_snips(snip_inputs, encoder=enc, model_input_shape=MODEL_INPUT_SHAPE)
+        assert [c for c in df.columns if c.startswith("z_sigma_n_")] == [
+            "z_sigma_n_00", "z_sigma_n_01", "z_sigma_n_02",
+        ]
+        assert [c for c in df.columns if c.startswith("z_sigma_b_")] == [
+            f"z_sigma_b_{j:02d}" for j in range(3, LATENT_DIM)
+        ]
+
+    def test_empty_input_respects_nuisance_split(self, tmp_path):
+        enc = _FakeEncoder(LATENT_DIM, nuisance_indices=[0, 1, 2])
+        df = encode_snips([], encoder=enc, model_input_shape=MODEL_INPUT_SHAPE)
+        assert df.empty
+        assert [c for c in df.columns if c != "snip_id" and c.startswith("z_mu_n_")] == [
+            "z_mu_n_00", "z_mu_n_01", "z_mu_n_02",
+        ]
+        assert [c for c in df.columns if c.startswith("z_mu_b_")] == [
+            f"z_mu_b_{j:02d}" for j in range(3, LATENT_DIM)
+        ]
+
+    def test_encoder_without_nuisance_indices_attribute_falls_back_to_flat(self, tmp_path):
+        """Encoders that don't declare nuisance_indices at all (getattr default) still work."""
+        class _EncoderNoNuisanceAttr:
+            latent_dim = LATENT_DIM
+
+            def encode_batch(self, x):
+                B = x.shape[0]
+                return {"mu": torch.zeros(B, LATENT_DIM), "logvar": None}
+
+        snip_inputs = _make_snip_inputs(2, tmp_path)
+        df = encode_snips(snip_inputs, encoder=_EncoderNoNuisanceAttr(), model_input_shape=MODEL_INPUT_SHAPE)
+        assert "z_mu_00" in df.columns

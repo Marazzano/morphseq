@@ -190,7 +190,7 @@ def process_snip_row(
     image_id = str(row["image_id"])
     embryo_id = str(row["embryo_id"])
     mask_type = str(row.get("mask_type", "embryo"))
-    time_int = int(row["time_int"])
+    time_index = int(row["time_index"])
 
     image_abs = resolve_from_root(str(row["image_path"]), output_root=output_root)
     embryo_mask_abs = resolve_from_root(str(row["exported_mask_path"]), output_root=output_root)
@@ -219,7 +219,7 @@ def process_snip_row(
         "well_index": row.get("well_index"),
         "image_id": image_id,
         "embryo_id": embryo_id,
-        "time_int": time_int,
+        "time_index": time_index,
         "image_path": str(row["image_path"]),
         "exported_mask_path": str(row["exported_mask_path"]),
         "yolk_mask_path": yolk_mask_rel,

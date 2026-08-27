@@ -1,0 +1,339 @@
+---
+title: "Which cilia modules describe distinct cell-type patterns?"
+output: html_document
+---
+
+This analysis asks whether the cilia modules provide different information or
+mostly rank cell types in the same way.
+
+We use one median score per cell type. This means a cell type with thousands
+of cells does not dominate the correlation simply because it is abundant.
+Cell types represented by fewer than 50 cells are left out because their
+median scores are unstable.
+
+```{r setup, message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(readr)
+library(ggplot2)
+
+PROJECT_DIR <- paste0(
+  "/net/trapnell/vol1/home/mdcolon/proj/morphseq/results/",
+  "mcolon/20260727_gene14_clean"
+)
+MODULE_DIR <- file.path(PROJECT_DIR, "cilia_gene_module")
+OUTPUT_DIR <- file.path(MODULE_DIR, "output")
+FIGURE_DIR <- file.path(MODULE_DIR, "figures")
+
+CELLTYPE_SCORES_FILE <- file.path(
+  OUTPUT_DIR,
+  "cell_type_cilia_scores.tsv"
+)
+MODULE_COVERAGE_FILE <- file.path(
+  MODULE_DIR,
+  "data",
+  "cilia_module_mapping_coverage.tsv"
+)
+
+CORRELATION_FILE <- file.path(
+  OUTPUT_DIR,
+  "module_correlations_by_cell_type.tsv"
+)
+DATASET_AGREEMENT_FILE <- file.path(
+  OUTPUT_DIR,
+  "module_reference_gene14_agreement.tsv"
+)
+MODULE_SUMMARY_FILE <- file.path(
+  OUTPUT_DIR,
+  "cilia_module_comparison_summary.tsv"
+)
+
+MINIMUM_CELLS_PER_CELL_TYPE <- 50L
+```
+
+## Step 1: Read the cell-type scores
+
+These scores were produced by `cilia_gene_module.Rmd`. Each row describes one
+dataset, cell type, and cilia module.
+
+```{r read-scores}
+cell_type_scores <- readr::read_tsv(
+  CELLTYPE_SCORES_FILE,
+  show_col_types = FALSE
+)
+
+required_columns <- c(
+  "dataset",
+  "cell_type",
+  "module_id",
+  "n_cells",
+  "median_score"
+)
+missing_columns <- setdiff(required_columns, names(cell_type_scores))
+if (length(missing_columns) > 0L) {
+  stop(
+    "The cell-type score table is missing: ",
+    paste(missing_columns, collapse = ", ")
+  )
+}
+
+cell_types_used <- cell_type_scores |>
+  dplyr::filter(.data$n_cells >= MINIMUM_CELLS_PER_CELL_TYPE) |>
+  dplyr::distinct(.data$dataset, .data$cell_type) |>
+  dplyr::count(.data$dataset, name = "n_cell_types")
+
+cell_types_used
+```
+
+## Step 2: Put modules beside one another
+
+The resulting table has one row per cell type and one column per module. This
+is the table used for every correlation below.
+
+```{r build-score-matrices}
+make_cell_type_matrix <- function(dataset_name) {
+  cell_type_scores |>
+    dplyr::filter(
+      .data$dataset == .env$dataset_name,
+      .data$n_cells >= MINIMUM_CELLS_PER_CELL_TYPE
+    ) |>
+    dplyr::select(
+      cell_type,
+      module_id,
+      median_score
+    ) |>
+    tidyr::pivot_wider(
+      names_from = module_id,
+      values_from = median_score
+    ) |>
+    dplyr::arrange(.data$cell_type)
+}
+
+gene14_matrix <- make_cell_type_matrix("gene14")
+reference_matrix <- make_cell_type_matrix("reference")
+
+gene14_matrix
+```
+
+## Step 3: Correlate module rankings across cell types
+
+Spearman correlation asks whether two modules rank cell types similarly. It
+does not require their numerical score scales to match.
+
+```{r calculate-correlations}
+correlate_modules <- function(score_matrix, dataset_name) {
+  correlation_matrix <- stats::cor(
+    dplyr::select(score_matrix, -cell_type),
+    method = "spearman",
+    use = "pairwise.complete.obs"
+  )
+
+  as.data.frame(as.table(correlation_matrix)) |>
+    tibble::as_tibble() |>
+    dplyr::rename(
+      module_1 = Var1,
+      module_2 = Var2,
+      spearman_correlation = Freq
+    ) |>
+    dplyr::mutate(dataset = dataset_name, .before = 1)
+}
+
+module_correlations <- dplyr::bind_rows(
+  correlate_modules(gene14_matrix, "gene14"),
+  correlate_modules(reference_matrix, "reference")
+)
+
+readr::write_tsv(module_correlations, CORRELATION_FILE)
+
+# Show every unique GENE14 module pair, from most to least correlated.
+gene14_module_pairs <- module_correlations |>
+  dplyr::filter(
+    .data$dataset == "gene14",
+    as.character(.data$module_1) < as.character(.data$module_2)
+  ) |>
+  dplyr::arrange(dplyr::desc(.data$spearman_correlation))
+
+gene14_module_pairs
+```
+
+Cluster the modules using GENE14, then apply that same order to both datasets.
+This makes disagreements between the two heatmaps easy to see.
+
+```{r correlation-heatmap, fig.width=11, fig.height=5.5}
+gene14_correlation_matrix <- stats::cor(
+  dplyr::select(gene14_matrix, -cell_type),
+  method = "spearman"
+)
+
+module_order <- stats::hclust(
+  stats::as.dist(1 - gene14_correlation_matrix)
+)$labels
+
+correlation_plot_data <- module_correlations |>
+  dplyr::mutate(
+    module_1 = factor(.data$module_1, levels = module_order),
+    module_2 = factor(.data$module_2, levels = rev(module_order))
+  )
+
+correlation_plot <- ggplot(
+  correlation_plot_data,
+  aes(
+    x = .data$module_1,
+    y = .data$module_2,
+    fill = .data$spearman_correlation
+  )
+) +
+  geom_tile(color = "white", linewidth = 0.3) +
+  facet_wrap(vars(.data$dataset), nrow = 1) +
+  scale_fill_gradient2(
+    low = "#3B4CC0",
+    mid = "white",
+    high = "#B40426",
+    midpoint = 0,
+    limits = c(-1, 1)
+  ) +
+  coord_equal() +
+  theme_minimal(base_size = 9) +
+  theme(
+    axis.title = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid = element_blank()
+  ) +
+  labs(
+    title = "Cilia-module correlation across cell types",
+    subtitle = paste(
+      "Spearman correlation of cell-type medians;",
+      "at least 50 cells per cell type"
+    ),
+    fill = "Spearman\ncorrelation"
+  )
+
+ggsave(
+  file.path(FIGURE_DIR, "cilia_module_correlation_heatmap.pdf"),
+  correlation_plot,
+  width = 11,
+  height = 5.5
+)
+ggsave(
+  file.path(FIGURE_DIR, "cilia_module_correlation_heatmap.png"),
+  correlation_plot,
+  width = 11,
+  height = 5.5,
+  dpi = 200,
+  bg = "white"
+)
+
+correlation_plot
+```
+
+## Step 4: Ask whether each module is stable across datasets
+
+For each module, we correlate reference and GENE14 scores using only cell
+types present in both datasets. A stable module should rank those shared cell
+types similarly in both datasets.
+
+```{r compare-datasets}
+shared_cell_type_scores <- cell_type_scores |>
+  dplyr::filter(.data$n_cells >= MINIMUM_CELLS_PER_CELL_TYPE) |>
+  dplyr::select(
+    dataset,
+    cell_type,
+    module_id,
+    median_score
+  ) |>
+  tidyr::pivot_wider(
+    names_from = dataset,
+    values_from = median_score
+  ) |>
+  dplyr::filter(
+    !is.na(.data$reference),
+    !is.na(.data$gene14)
+  )
+
+module_dataset_agreement <- shared_cell_type_scores |>
+  dplyr::group_by(.data$module_id) |>
+  dplyr::summarise(
+    n_shared_cell_types = dplyr::n(),
+    reference_gene14_correlation = stats::cor(
+      .data$reference,
+      .data$gene14,
+      method = "spearman"
+    ),
+    .groups = "drop"
+  ) |>
+  dplyr::arrange(
+    dplyr::desc(.data$reference_gene14_correlation)
+  )
+
+readr::write_tsv(
+  module_dataset_agreement,
+  DATASET_AGREEMENT_FILE
+)
+
+module_dataset_agreement
+```
+
+## Step 5: Put the decision information in one table
+
+Correlation measures redundancy. The interquartile range reports how strongly
+a module separates cell types. We also report how many cell types have a
+nonzero median and how many distinct median values exist. These checks prevent
+a sparse module with many tied zeroes from looking deceptively stable.
+
+The final table retains module size and reference-versus-GENE14 agreement.
+
+```{r module-summary}
+module_coverage <- readr::read_tsv(
+  MODULE_COVERAGE_FILE,
+  show_col_types = FALSE
+)
+
+module_score_spread <- cell_type_scores |>
+  dplyr::filter(.data$n_cells >= MINIMUM_CELLS_PER_CELL_TYPE) |>
+  dplyr::group_by(.data$dataset, .data$module_id) |>
+  dplyr::summarise(
+    n_cell_types = dplyr::n(),
+    fraction_cell_types_nonzero = mean(.data$median_score > 0),
+    n_distinct_cell_type_scores = dplyr::n_distinct(.data$median_score),
+    median_across_cell_types = stats::median(.data$median_score),
+    cell_type_score_iqr = stats::IQR(.data$median_score),
+    .groups = "drop"
+  ) |>
+  tidyr::pivot_wider(
+    names_from = dataset,
+    values_from = c(
+      n_cell_types,
+      fraction_cell_types_nonzero,
+      n_distinct_cell_type_scores,
+      median_across_cell_types,
+      cell_type_score_iqr
+    ),
+    names_glue = "{dataset}_{.value}"
+  )
+
+module_comparison_summary <- module_coverage |>
+  dplyr::select(
+    module_id,
+    n_human_genes,
+    n_mapped_human_genes,
+    mapping_fraction
+  ) |>
+  dplyr::left_join(module_score_spread, by = "module_id") |>
+  dplyr::left_join(module_dataset_agreement, by = "module_id") |>
+  dplyr::arrange(
+    dplyr::desc(.data$reference_gene14_correlation)
+  )
+
+readr::write_tsv(
+  module_comparison_summary,
+  MODULE_SUMMARY_FILE
+)
+
+module_comparison_summary
+```
+
+This report describes module redundancy and stability. It does not test any
+perturbation. Perturbation testing should happen only after selecting the
+modules, using one value per embryo and cell type rather than treating cells
+as independent replicates.

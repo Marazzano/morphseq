@@ -15,6 +15,19 @@ is 1:1. The imaging side has redundant images (snapshot + _t01/_t02 backups + _s
 up to 3 imaging embryo_ids) that all collapse to ONE physical embryo -> ONE sequencing embryo.
 
 =============================================================================================
+DATA SOURCES (what this module actually reads)  +  what "File A" means
+=============================================================================================
+  This code reads exactly TWO things (see load_plate_maps / build_meta_index):
+    * THE EXCEL  = source_plate_metadata_excels/*_well_metadata.xlsx  (per-plate;
+                   sheets `image_to_hash_map` + `hash_plate_num`). "the Excel is truth" below
+                   ALWAYS refers to these.  <- authoritative
+    * SEQ METADATA = /net/seahub_zfish/.../GENE14/GENE14_embryo_metadata.tsv  (sequencing side)
+  "File A" is NOT read by this code. It is an informal name from the original hand-validation:
+  an external per-embryo imaging-well record (the imaging-side rescue log, ~query_all_rows_clean)
+  that was cross-checked while deriving this mapping. It is mentioned ONLY to say: where File A
+  and the Excel DISAGREE (e.g. plate03's phantom F4, #3), the EXCEL WINS. Nothing here loads it.
+
+=============================================================================================
 WHAT MAPS CLEANLY  (the easy 90%)
 =============================================================================================
   * NORMAL plates: the imaging well IS the hash well (no reformatting). image_to_hash_map sheet
@@ -44,18 +57,7 @@ THE TRICKY THINGS  (why a naive join silently mismatches ~30% of the interesting
    imaging_well=F4 (etc.) for the rescued embryos, but those File-A imaging wells are part of
    the ORIGINAL error. The Excel is truth. (plate03 has 0 phenotype predictions anyway.)
 
-4. P18->P02 "WRONG PLATE" CORRECTION -> HASH-SPACE COLLISIONS. 11 rescued cep290 embryos had
-   their hash_plate corrected P18->P02 in the METADATA COLUMN, but their embryo_ID STRING still
-   says P18 (id_plate=P18, hash_plate=P02, cross_batch=5). This pushed each onto a hash
-   coordinate ALREADY OCCUPIED by a real plate01/P02 embryo. Result: two DISTINCT physical
-   embryos share (gene, timepoint, hash_plate=P02, hash_well) — a naive key returns both.
-   TIE-BREAK: the embryo_ID STRING preserves each embryo's ORIGINAL plate (id_plate). Pick the
-   twin whose id_plate == the imaging plate's hash_plate (from hash_plate_num). The phenotyped
-   embryo came from a specific imaging plate; that routes it to the correct twin.
-       (cross_batch is the sequencing-side witness of this — 5 = the rescued group, exactly 11
-        cep290 rows — but the imaging side has no cross_batch, so id_plate is the usable key.)
-
-5. COLLECTION TIME != IMAGING TIME for "30to48" plates. plate01/plate02 of cep290 & b9d2 carry
+4. COLLECTION TIME != IMAGING TIME for "30to48" plates. plate01/plate02 of cep290 & b9d2 carry
    BOTH a 30hpf and a 48hpf snapshot (_t01/_t02) plus an _sci timeseries — redundant backups of
    the SAME embryos, collected across 30-48 hpf. The sequencing `timepoint` for these is 48.
    RULE: collection_time = plate start age, EXCEPT experiments containing "30to48" -> 48.

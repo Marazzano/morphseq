@@ -153,6 +153,19 @@ PIPELINE_STEPS: dict[str, dict] = {
         "artifacts": {"csv": "plate_metadata.csv"},
     },
 
+    # ── COLLECTION CLASSIFY (early-DAG "what is this experiment?" fact) ───────
+    # One small per-experiment JSON — the single source of truth for is_collection + the
+    # time_index→start_age_hpf map (the age escape hatch RIDES here; no separate age product).
+    # Every step that must branch on collection-ness consumes THIS artifact; none re-derives it.
+    # See docs/EXPERIMENT_GROUP_PLATE_MODEL.md ("CLASSIFY ONCE, CONSUME EVERYWHERE").
+    "collection_provenance": {
+        "stage": "acquisition",
+        "product_dir": "ingest_metadata",
+        "fanout": EXPERIMENT,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {"provenance": "collection_provenance.json"},
+    },
+
     # ── SCOPE LINEAGE (raw microscope file — acquisition facts) ───────────────
     # ingest_scope_metadata emits two artifacts from ONE raw read; both ride one step-level
     # product_dir because both belong under ingest_metadata/ (no artifact-level override needed).
@@ -401,9 +414,88 @@ PIPELINE_STEPS: dict[str, dict] = {
         "fanout": PER_WELL_THEN_MERGE,
         "execution": EXECUTION_PER_WELL,
         "artifacts": {
+            # AUTHORITATIVE, product-keyed and SYMMETRIC. One render job owns one shard, so the
+            # grammar is `well x product -> one inventory` with no default special-cased into it.
+            # Encoding defaultness in the authoritative name (BF plain, others suffixed) would put
+            # a two-branch path rule into every generic consumer forever.
+            #
+            # The product key rides in format_vars, the sanctioned channel for filename-level
+            # tokens that are not identity; the template may name a subdirectory.
             "snip_inventory": {
-                PATH_MODE_PER_WELL: "{well_id}_snip_inventory.csv",
+                PATH_MODE_PER_WELL: "{snip_product_key}/snip_inventory.csv",
                 PATH_MODE_MERGED: "{experiment_id}_snip_inventory.csv",
+            },
+            # COMPATIBILITY VIEW of the default BF product, as a relative symlink. ~24 call sites
+            # across 14 stages read this path today and genuinely mean "the default BF snips" --
+            # they are not choosing among BF, RFP and z_stack. Writing the default key into all of
+            # them would distribute one policy decision across 14 modules and make CHANGING the
+            # default another 24-site migration, without performing the semantic audit that would
+            # justify it. The policy stays in DEFAULT_BF_SNIP_PRODUCT_KEY, and consumers migrate
+            # deliberately, one at a time, as they become genuinely product-aware.
+            # TODO(deprecate-legacy-snip-inventory-alias): remove with the last product-unaware
+            # consumer.
+            "legacy_default_snip_inventory": {
+                PATH_MODE_PER_WELL: "{well_id}_snip_inventory.csv",
+            },
+        },
+    },
+
+    # ── OBJECT EXTRACTION — snip geometry (THE GATE) ─────────────────────────
+    # `snip_geometry` derives the canonical snip transform ONCE per embryo-time, from the BF
+    # segmentation mask, and persists it. Every snip product then RESOLVES that shared recipe onto
+    # its own pixel grid rather than deriving its own.
+    #
+    # WHY IT IS ITS OWN STEP. An earlier design had each product job re-derive from the same mask,
+    # justified by determinism. But determinism only holds if the inputs are identical, and nothing
+    # enforced that: two product jobs straddling a frame_masks regeneration, a mask revision, or an
+    # orientation-policy change would derive DIFFERENT geometry and produce silently unregisterable
+    # siblings — no error, discovered later in a composite overlay. The gate makes sibling
+    # registration a structural property instead of something a test asserts about synthetic masks.
+    #
+    # Fanout is per-well ONLY — deliberately no product wildcard. One embryo-time has one canonical
+    # transform; a product wildcard here would derive it N times, which is the exact thing this step
+    # exists to prevent.
+    "snip_geometry": {
+        "stage": "object_extraction",
+        "product_dir": "snip_geometry",
+        "fanout": PER_WELL_THEN_MERGE,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {
+            "snip_transforms": {
+                PATH_MODE_PER_WELL: "{well_id}_snip_transforms.csv",
+                PATH_MODE_MERGED: "{experiment_id}_snip_transforms.csv",
+            },
+        },
+    },
+
+    # ── OBJECT EXTRACTION — native-grid channel intensity ────────────────────
+    # `channel_intensity` measures per-embryo fluorescence on the NATIVE uint16 raster: an annulus
+    # background ring and the embryo interior, both as fixed-bin histograms.
+    #
+    # NOT UNDER THE SNIP PACKAGE, deliberately. A snip is rendered through INTER_AREA, which mixes
+    # photons across pixel boundaries and biases both saturation counts and distribution tails, and
+    # it constant-fills outside the source, contaminating any annulus near a frame edge. So this
+    # step reads no rendered snip and needs no snip transform — it carries snip_transform_id as a
+    # join key only. Filing it under snip_materialization would assert exactly what it denies.
+    #
+    # HISTOGRAMS, NOT SUMMARY STATISTICS, because the background null is POOLED over a well's annuli
+    # and mean/median/MAD are not sufficient statistics — you cannot recover a pooled mode from
+    # them. A fixed-bin histogram is the only compact per-embryo emission that pools EXACTLY, by
+    # elementwise summation. It is also what lets the null be re-estimated later without re-reading
+    # a single pixel.
+    #
+    # Fanout is per-well x SOURCE PRODUCT: intensity measured off a CLAHE'd raster is not the same
+    # quantity as intensity off a quantitative one, so the source product belongs in the key rather
+    # than being something a reader has to infer.
+    "channel_intensity": {
+        "stage": "object_extraction",
+        "product_dir": "channel_intensity",
+        "fanout": PER_WELL_THEN_MERGE,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {
+            "channel_intensity": {
+                PATH_MODE_PER_WELL: "{source_image_product_key}/channel_intensity.csv",
+                PATH_MODE_MERGED: "{experiment_id}_channel_intensity.csv",
             },
         },
     },

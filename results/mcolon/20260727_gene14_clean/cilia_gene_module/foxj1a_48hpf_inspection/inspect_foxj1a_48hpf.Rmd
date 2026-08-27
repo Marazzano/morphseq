@@ -1,0 +1,1294 @@
+---
+title: "Inspect foxj1a cilia-module expression at 48 hpf"
+output: html_document
+---
+
+This report examines the first differential cilia-module result from several
+angles. It keeps the embryo-level observations visible and treats component
+genes as descriptive validation rather than a second significance screen.
+
+```{r setup, message=FALSE, warning=FALSE}
+library(monocle3)
+library(Matrix)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(readr)
+library(ggplot2)
+library(jsonlite)
+library(patchwork)
+
+knitr::opts_chunk$set(
+  dev = "ragg_png",
+  fig.bg = "white"
+)
+
+PROJECT_DIR <- paste0(
+  "/net/trapnell/vol1/home/mdcolon/proj/morphseq/results/",
+  "mcolon/20260727_gene14_clean"
+)
+MODULE_DIR <- file.path(PROJECT_DIR, "cilia_gene_module")
+HERE <- file.path(MODULE_DIR, "foxj1a_48hpf_inspection")
+DATA_DIR <- file.path(HERE, "data")
+FIGURE_DIR <- file.path(HERE, "figures")
+
+dir.create(DATA_DIR, recursive = TRUE, showWarnings = FALSE)
+dir.create(FIGURE_DIR, recursive = TRUE, showWarnings = FALSE)
+
+PROJECT_CONFIG <- jsonlite::read_json(
+  file.path(PROJECT_DIR, "project_config.json"),
+  simplifyVector = TRUE
+)
+
+GENE14_CDS <- PROJECT_CONFIG$mcclintock_cds
+EMBRYO_MODULE_FILE <- file.path(
+  MODULE_DIR,
+  "output",
+  "embryo_celltype_cilia_module_scores.tsv"
+)
+MODEL_RESULT_FILE <- file.path(
+  MODULE_DIR,
+  "output",
+  "differential_module_results",
+  "foxj1a_48hpf.tsv"
+)
+HUMAN_MODULE_FILE <- file.path(
+  MODULE_DIR,
+  "data",
+  "human_cilia_modules.tsv"
+)
+ORTHOLOGY_FILE <- file.path(
+  MODULE_DIR,
+  "data",
+  "human_to_zebrafish_cilia_map.tsv"
+)
+
+CONTRAST_NAME <- "foxj1a_48hpf"
+PERTURBATION <- "foxj1a"
+CONTROL <- "ctrl-inj"
+TIMEPOINT <- 48
+MINIMUM_CELLS <- 10L
+FOCUS_CELL_TYPE <- "radial glial cell, spinal cord"
+FOCUS_MODULE <- "gold_motile_cilia"
+FOXJ1A_GENE <- "foxj1a"
+MAX_COMPONENT_GENES <- 40L
+
+source(file.path(MODULE_DIR, "cilia_gene_module_policy.R"))
+
+save_plot_pair <- function(file_stem, plot, width, height) {
+  ggsave(
+    file.path(FIGURE_DIR, paste0(file_stem, ".pdf")),
+    plot,
+    width = width,
+    height = height,
+    limitsize = FALSE
+  )
+  ggsave(
+    file.path(FIGURE_DIR, paste0(file_stem, ".png")),
+    plot,
+    device = ragg::agg_png,
+    width = width,
+    height = height,
+    dpi = 200,
+    bg = "white",
+    limitsize = FALSE
+  )
+}
+
+arm_colors <- c(
+  control = "#4C78A8",
+  perturbation = "#E45756"
+)
+```
+
+## Step 1: Read the completed model and embryo scores
+
+```{r read-results}
+module_results <- readr::read_tsv(
+  MODEL_RESULT_FILE,
+  show_col_types = FALSE
+)
+embryo_module_scores <- readr::read_tsv(
+  EMBRYO_MODULE_FILE,
+  show_col_types = FALSE
+)
+
+if (!all(module_results$contrast_name == CONTRAST_NAME)) {
+  stop("The model result file contains the wrong contrast.")
+}
+
+contrast_embryo_scores <- embryo_module_scores |>
+  dplyr::filter(
+    .data$timepoint == TIMEPOINT,
+    .data$perturbation %in% c(PERTURBATION, CONTROL),
+    .data$n_cells >= MINIMUM_CELLS
+  ) |>
+  dplyr::mutate(
+    arm = dplyr::if_else(
+      .data$perturbation == PERTURBATION,
+      "perturbation",
+      "control"
+    ),
+    arm = factor(.data$arm, levels = c("control", "perturbation")),
+    hash_plate = stringr::str_extract(.data$embryo_ID, "P\\d+")
+  )
+
+module_results |>
+  dplyr::count(.data$module_id, .data$is_fdr_significant)
+```
+
+## Step 2: Show every embryo for the significant results
+
+One dot is one embryo. The black bar is the group mean.
+
+```{r significant-embryo-values, fig.width=11, fig.height=10}
+significant_results <- module_results |>
+  dplyr::filter(.data$is_fdr_significant) |>
+  dplyr::select(
+    module_id,
+    cell_type,
+    score_difference,
+    standardized_effect,
+    q_value
+  )
+
+significant_embryo_values <- contrast_embryo_scores |>
+  dplyr::inner_join(
+    significant_results,
+    by = c("module_id", "cell_type")
+  ) |>
+  dplyr::mutate(
+    panel_label = paste0(
+      .data$module_id,
+      "\n",
+      .data$cell_type,
+      "\nq = ",
+      format(.data$q_value, digits = 2, scientific = TRUE)
+    )
+  )
+
+readr::write_tsv(
+  dplyr::select(significant_embryo_values, -panel_label),
+  file.path(DATA_DIR, "significant_embryo_values.tsv")
+)
+
+significant_plot <- ggplot(
+  significant_embryo_values,
+  aes(
+    x = .data$arm,
+    y = .data$mean_module_score,
+    color = .data$arm
+  )
+) +
+  geom_jitter(width = 0.10, height = 0, size = 2, alpha = 0.85) +
+  stat_summary(
+    fun = mean,
+    geom = "crossbar",
+    width = 0.5,
+    color = "black",
+    linewidth = 0.35
+  ) +
+  facet_wrap(vars(.data$panel_label), scales = "free_y", ncol = 2) +
+  scale_color_manual(values = arm_colors, guide = "none") +
+  theme_minimal(base_size = 10) +
+  theme(
+    axis.title.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(size = 8)
+  ) +
+  labs(
+    title = "Foxj1a 48-hpf significant cilia-module results",
+    subtitle = "Each point is one embryo; black bar is the group mean",
+    y = "mean module score"
+  )
+
+save_plot_pair(
+  "01_significant_embryo_values",
+  significant_plot,
+  width = 11,
+  height = 10
+)
+
+significant_plot
+```
+
+## Step 3: Compare all five modules in spinal-cord radial glia
+
+Free y-axes are intentional because the five curated modules have different
+score ranges.
+
+```{r focus-module-profile, fig.width=12, fig.height=7}
+focus_module_profile <- contrast_embryo_scores |>
+  dplyr::filter(
+    .data$cell_type == FOCUS_CELL_TYPE,
+    .data$module_id %in% CHOSEN_CILIA_MODULES
+  )
+
+readr::write_tsv(
+  focus_module_profile,
+  file.path(DATA_DIR, "spinal_radial_glia_five_modules.tsv")
+)
+
+focus_module_plot <- ggplot(
+  focus_module_profile,
+  aes(
+    x = .data$arm,
+    y = .data$mean_module_score,
+    color = .data$arm
+  )
+) +
+  geom_jitter(width = 0.10, height = 0, size = 2, alpha = 0.85) +
+  stat_summary(
+    fun = mean,
+    geom = "crossbar",
+    width = 0.5,
+    color = "black",
+    linewidth = 0.35
+  ) +
+  facet_wrap(vars(.data$module_id), scales = "free_y", ncol = 3) +
+  scale_color_manual(values = arm_colors, guide = "none") +
+  theme_minimal(base_size = 10) +
+  theme(
+    axis.title.x = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    title = "Five cilia programs in spinal-cord radial glia",
+    subtitle = "Each point is one embryo",
+    y = "mean module score"
+  )
+
+save_plot_pair(
+  "02_spinal_radial_glia_five_modules",
+  focus_module_plot,
+  width = 12,
+  height = 7
+)
+
+focus_module_plot
+```
+
+## Step 4: Ask whether the motile-cilia effect is cell-type specific
+
+The forest plot shows every eligible cell type. Filled red points pass the BH
+threshold; open gray points do not.
+
+```{r motile-forest, fig.width=10, fig.height=18}
+motile_results <- module_results |>
+  dplyr::filter(.data$module_id == FOCUS_MODULE) |>
+  dplyr::arrange(.data$score_difference) |>
+  dplyr::mutate(
+    cell_type = factor(.data$cell_type, levels = .data$cell_type)
+  )
+
+readr::write_tsv(
+  motile_results,
+  file.path(DATA_DIR, "gold_motile_all_cell_types.tsv")
+)
+
+motile_forest_plot <- ggplot(
+  motile_results,
+  aes(
+    x = .data$score_difference,
+    y = .data$cell_type
+  )
+) +
+  geom_segment(
+    aes(
+      x = .data$confidence_interval_low,
+      xend = .data$confidence_interval_high,
+      yend = .data$cell_type
+    ),
+    color = "gray55",
+    linewidth = 0.35
+  ) +
+  geom_point(
+    aes(fill = .data$is_fdr_significant),
+    shape = 21,
+    size = 2,
+    color = "black"
+  ) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray35") +
+  scale_fill_manual(
+    values = c(`FALSE` = "white", `TRUE` = "#E45756"),
+    name = "BH q < 0.05"
+  ) +
+  theme_minimal(base_size = 8) +
+  theme(
+    axis.title.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.position = "bottom"
+  ) +
+  labs(
+    title = "Foxj1a effect on the gold motile-cilia module",
+    subtitle = "Perturbation minus control; lines are 95% confidence intervals",
+    x = "module-score difference"
+  )
+
+save_plot_pair(
+  "03_gold_motile_forest_all_cell_types",
+  motile_forest_plot,
+  width = 10,
+  height = 18
+)
+
+motile_forest_plot
+```
+
+## Step 5: Relate normal foxj1a expression to the motile-cilia response
+
+The large CDS is loaded once. We measure baseline `foxj1a` expression only in
+control embryos, with each embryo contributing equally to its cell-type mean.
+The response remains the embryo-level model estimate from Steps 1–4.
+
+```{r baseline-response, fig.width=15, fig.height=5.5}
+message("Loading GENE14 CDS...")
+cds <- monocle3::load_monocle_objects(GENE14_CDS)
+
+cell_metadata <- as.data.frame(SummarizedExperiment::colData(cds))
+cell_metadata$cell <- rownames(cell_metadata)
+
+# Use exactly the control embryo and cell-type combinations that passed the
+# module model's minimum-cell requirement.
+eligible_control_pairs <- contrast_embryo_scores |>
+  dplyr::filter(
+    .data$module_id == FOCUS_MODULE,
+    .data$arm == "control",
+    .data$cell_type %in% as.character(motile_results$cell_type)
+  ) |>
+  dplyr::distinct(.data$embryo_ID, .data$cell_type) |>
+  dplyr::mutate(
+    pair_key = paste(.data$embryo_ID, .data$cell_type, sep = "___")
+  )
+
+cell_pair_key <- paste(
+  cell_metadata$embryo_ID,
+  cell_metadata$cell_type,
+  sep = "___"
+)
+keep_baseline_cells <- (
+  !is.na(cell_metadata$timepoint) &
+    cell_metadata$timepoint == TIMEPOINT &
+    !is.na(cell_metadata$perturbation) &
+    cell_metadata$perturbation == CONTROL &
+    cell_pair_key %in% eligible_control_pairs$pair_key
+)
+
+gene_metadata <- as.data.frame(SummarizedExperiment::rowData(cds))
+foxj1a_rows <- (
+  !is.na(gene_metadata$gene_short_name) &
+    gene_metadata$gene_short_name == FOXJ1A_GENE
+)
+if (sum(foxj1a_rows) != 1L) {
+  stop("Expected exactly one foxj1a row in the CDS.")
+}
+
+foxj1a_cds <- cds[foxj1a_rows, keep_baseline_cells]
+foxj1a_counts <- as.numeric(
+  as.matrix(SingleCellExperiment::counts(foxj1a_cds))[1, ]
+)
+foxj1a_expression <- as.numeric(
+  as.matrix(
+    monocle3::normalized_counts(
+      foxj1a_cds,
+      norm_method = "size_only"
+    )
+  )[1, ]
+)
+
+foxj1a_by_embryo <- cell_metadata[keep_baseline_cells, ] |>
+  tibble::as_tibble() |>
+  dplyr::transmute(
+    embryo_ID = .data$embryo_ID,
+    cell_type = .data$cell_type,
+    foxj1a_expression = log1p(foxj1a_expression),
+    foxj1a_detected = foxj1a_counts > 0
+  ) |>
+  dplyr::group_by(.data$embryo_ID, .data$cell_type) |>
+  dplyr::summarise(
+    mean_foxj1a_expression = mean(.data$foxj1a_expression),
+    foxj1a_detection_fraction = mean(.data$foxj1a_detected),
+    .groups = "drop"
+  )
+
+foxj1a_by_cell_type <- foxj1a_by_embryo |>
+  dplyr::group_by(.data$cell_type) |>
+  dplyr::summarise(
+    control_foxj1a_expression = mean(.data$mean_foxj1a_expression),
+    control_foxj1a_detection_fraction = mean(
+      .data$foxj1a_detection_fraction
+    ),
+    .groups = "drop"
+  )
+
+control_motile_by_cell_type <- contrast_embryo_scores |>
+  dplyr::filter(
+    .data$module_id == FOCUS_MODULE,
+    .data$arm == "control",
+    .data$cell_type %in% as.character(motile_results$cell_type)
+  ) |>
+  dplyr::group_by(.data$cell_type) |>
+  dplyr::summarise(
+    control_motile_score = mean(.data$mean_module_score),
+    .groups = "drop"
+  )
+
+baseline_response <- motile_results |>
+  dplyr::mutate(cell_type = as.character(.data$cell_type)) |>
+  dplyr::left_join(foxj1a_by_cell_type, by = "cell_type") |>
+  dplyr::left_join(control_motile_by_cell_type, by = "cell_type")
+
+if (anyNA(baseline_response$control_foxj1a_expression)) {
+  stop("Some modeled cell types are missing baseline foxj1a expression.")
+}
+
+readr::write_tsv(
+  foxj1a_by_embryo,
+  file.path(DATA_DIR, "control_foxj1a_expression_by_embryo.tsv")
+)
+readr::write_tsv(
+  baseline_response,
+  file.path(DATA_DIR, "celltype_baseline_and_motile_response.tsv")
+)
+
+top_foxj1a_cell_types <- baseline_response |>
+  dplyr::slice_max(
+    .data$control_foxj1a_expression,
+    n = 10,
+    with_ties = FALSE
+  ) |>
+  dplyr::pull("cell_type")
+
+volcano_labels <- union(
+  baseline_response |>
+    dplyr::filter(.data$is_fdr_significant) |>
+    dplyr::pull("cell_type"),
+  baseline_response |>
+    dplyr::slice_max(
+      abs(.data$score_difference),
+      n = 3,
+      with_ties = FALSE
+    ) |>
+    dplyr::pull("cell_type")
+)
+
+response_theme <- theme_minimal(base_size = 9) +
+  theme(
+    panel.grid.minor = element_blank(),
+    legend.position = "bottom"
+  )
+
+pearson_result <- stats::cor.test(
+  baseline_response$control_foxj1a_expression,
+  baseline_response$control_motile_score,
+  method = "pearson"
+)
+spearman_result <- stats::cor.test(
+  baseline_response$control_foxj1a_expression,
+  baseline_response$control_motile_score,
+  method = "spearman",
+  exact = FALSE
+)
+correlation_label <- paste0(
+  "Pearson r = ",
+  format(unname(pearson_result$estimate), digits = 2),
+  "\nSpearman rho = ",
+  format(unname(spearman_result$estimate), digits = 2)
+)
+
+baseline_correlation_plot <- ggplot(
+  baseline_response,
+  aes(
+    x = .data$control_foxj1a_expression,
+    y = .data$control_motile_score,
+    color = .data$control_foxj1a_expression
+  )
+) +
+  geom_point(size = 2.5, alpha = 0.9) +
+  ggrepel::geom_text_repel(
+    data = dplyr::filter(
+      baseline_response,
+      .data$cell_type %in% top_foxj1a_cell_types
+    ),
+    aes(label = .data$cell_type),
+    size = 2.5,
+    seed = 1,
+    force = 2,
+    box.padding = 0.4,
+    min.segment.length = 0,
+    max.time = 2,
+    max.overlaps = Inf,
+    show.legend = FALSE
+  ) +
+  annotate(
+    "label",
+    x = Inf,
+    y = -Inf,
+    label = correlation_label,
+    hjust = 1.05,
+    vjust = -0.1,
+    size = 3
+  ) +
+  scale_color_viridis_c(
+    name = "control foxj1a expression",
+    guide = guide_colorbar(
+      direction = "horizontal",
+      title.position = "top",
+      barwidth = 5,
+      barheight = 0.5
+    )
+  ) +
+  response_theme +
+  labs(
+    title = "A. Foxj1a marks the motile-cilia program",
+    x = "mean control foxj1a expression",
+    y = "mean control gold-motile score"
+  )
+
+volcano_data <- baseline_response |>
+  dplyr::mutate(
+    minus_log10_q = -log10(pmax(.data$q_value, .Machine$double.xmin))
+  )
+
+volcano_plot <- ggplot(
+  volcano_data,
+  aes(
+    x = .data$score_difference,
+    y = .data$minus_log10_q,
+    color = .data$control_foxj1a_expression
+  )
+) +
+  geom_hline(
+    yintercept = -log10(0.05),
+    linetype = "dashed",
+    color = "gray45"
+  ) +
+  geom_vline(xintercept = 0, color = "gray65") +
+  geom_point(size = 2.5, alpha = 0.9) +
+  ggrepel::geom_text_repel(
+    data = dplyr::filter(
+      volcano_data,
+      .data$cell_type %in% volcano_labels
+    ),
+    aes(label = .data$cell_type),
+    size = 2.5,
+    seed = 1,
+    force = 2,
+    box.padding = 0.4,
+    min.segment.length = 0,
+    max.time = 2,
+    max.overlaps = Inf,
+    show.legend = FALSE
+  ) +
+  scale_color_viridis_c(
+    name = "control foxj1a expression",
+    guide = guide_colorbar(
+      direction = "horizontal",
+      title.position = "top",
+      barwidth = 5,
+      barheight = 0.5
+    )
+  ) +
+  response_theme +
+  labs(
+    title = "B. Motile-score changes across cell types",
+    x = "motile-score change (foxj1a - control)",
+    y = "-log10(BH q)"
+  )
+
+top_validation_cell_types <- baseline_response |>
+  dplyr::slice_min(.data$q_value, n = 6, with_ties = FALSE) |>
+  dplyr::arrange(.data$q_value) |>
+  dplyr::pull("cell_type")
+top_validation_labels <- stringr::str_wrap(top_validation_cell_types, 24)
+
+embryo_validation <- contrast_embryo_scores |>
+  dplyr::filter(
+    .data$module_id == FOCUS_MODULE,
+    .data$cell_type %in% top_validation_cell_types
+  ) |>
+  dplyr::mutate(
+    short_cell_type = stringr::str_wrap(.data$cell_type, 24),
+    short_cell_type = factor(
+      .data$short_cell_type,
+      levels = top_validation_labels
+    )
+  )
+
+embryo_validation_plot <- ggplot(
+  embryo_validation,
+  aes(
+    x = .data$arm,
+    y = .data$mean_module_score,
+    color = .data$arm
+  )
+) +
+  geom_jitter(width = 0.10, height = 0, size = 2, alpha = 0.85) +
+  stat_summary(
+    fun = mean,
+    geom = "crossbar",
+    width = 0.5,
+    color = "black",
+    linewidth = 0.35
+  ) +
+  facet_wrap(vars(.data$short_cell_type), scales = "free_y", ncol = 3) +
+  scale_color_manual(values = arm_colors, guide = "none") +
+  response_theme +
+  theme(
+    axis.title = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.text.x = element_text(size = 7),
+    strip.text = element_text(size = 7),
+    panel.grid = element_blank()
+  ) +
+  labs(
+    title = "C. Top six results across embryos",
+    y = "mean gold-motile score"
+  )
+
+baseline_response_figure <- (
+  baseline_correlation_plot |
+    volcano_plot |
+    embryo_validation_plot
+) +
+  patchwork::plot_layout(
+    widths = c(1, 1, 1.3),
+    guides = "collect"
+  ) +
+  patchwork::plot_annotation(
+    title = "Foxj1a perturbation reduces the motile-cilia program in radial glia",
+    subtitle = paste(
+      "Cell types define Panels A-B; embryos define Panel C;",
+      "Panel B labels the FDR hits and largest changes"
+    )
+  ) &
+  theme(legend.position = "bottom")
+
+save_plot_pair(
+  "04_foxj1a_motile_baseline_and_response",
+  baseline_response_figure,
+  width = 16,
+  height = 6
+)
+
+baseline_response_figure
+```
+
+## All cell types ordered by evidence and effect
+
+This overview keeps every eligible cell type. Panels are ordered by BH q-value
+and then by motile-score change, with the strongest losses first when q-values
+tie. `Fox rank` orders the same cell types by control `foxj1a` expression.
+Each point remains one embryo; the black bar is the arm mean.
+
+```{r all-celltype-embryo-grid, fig.width=16, fig.height=24}
+ordered_cell_types <- baseline_response |>
+  dplyr::arrange(.data$q_value, .data$score_difference) |>
+  dplyr::mutate(
+    result_rank = dplyr::row_number(),
+    foxj1a_rank = rank(
+      -.data$control_foxj1a_expression,
+      ties.method = "min"
+    ),
+    short_cell_type = stringr::str_wrap(.data$cell_type, 22),
+    panel_label = paste0(
+      "#", .data$result_rank,
+      " | Fox rank ", .data$foxj1a_rank,
+      "\n", .data$short_cell_type,
+      "\ndelta ", format(.data$score_difference, digits = 2),
+      " | q ", format(.data$q_value, digits = 2, scientific = TRUE)
+    )
+  )
+
+readr::write_tsv(
+  dplyr::select(
+    ordered_cell_types,
+    -short_cell_type,
+    -panel_label
+  ),
+  file.path(DATA_DIR, "all_celltypes_ordered_for_embryo_grid.tsv")
+)
+
+all_celltype_embryos <- contrast_embryo_scores |>
+  dplyr::filter(.data$module_id == FOCUS_MODULE) |>
+  dplyr::inner_join(
+    ordered_cell_types |>
+      dplyr::select(cell_type, panel_label, result_rank),
+    by = "cell_type"
+  ) |>
+  dplyr::mutate(
+    panel_label = factor(
+      .data$panel_label,
+      levels = ordered_cell_types$panel_label
+    )
+  )
+
+all_celltype_grid <- ggplot(
+  all_celltype_embryos,
+  aes(
+    x = .data$arm,
+    y = .data$mean_module_score,
+    color = .data$arm
+  )
+) +
+  geom_jitter(width = 0.10, height = 0, size = 0.8, alpha = 0.8) +
+  stat_summary(
+    fun = mean,
+    geom = "crossbar",
+    width = 0.55,
+    color = "black",
+    linewidth = 0.25
+  ) +
+  facet_wrap(
+    vars(.data$panel_label),
+    scales = "free_y",
+    ncol = 8
+  ) +
+  scale_color_manual(
+    values = arm_colors,
+    labels = c(control = "control", perturbation = "foxj1a")
+  ) +
+  theme_void(base_size = 7) +
+  theme(
+    strip.text = element_text(size = 5.5, lineheight = 0.9),
+    legend.position = "bottom",
+    plot.title = element_text(size = 14),
+    plot.subtitle = element_text(size = 9),
+    panel.spacing = grid::unit(0.8, "lines")
+  ) +
+  labs(
+    title = "All 48-hpf foxj1a gold-motile results",
+    subtitle = paste(
+      "Ordered by BH q, then motile-score change;",
+      "each point is one embryo and black bars are arm means"
+    ),
+    color = NULL
+  )
+
+ggsave(
+  file.path(FIGURE_DIR, "08_all_celltypes_ordered_embryo_grid.png"),
+  all_celltype_grid,
+  device = ragg::agg_png,
+  width = 16,
+  height = 24,
+  dpi = 200,
+  bg = "white",
+  limitsize = FALSE
+)
+
+all_celltype_grid
+```
+
+## Correlation sensitivity among the most foxj1a-expressing cell types
+
+The full rank correlation includes many cell types with little or no detected
+`foxj1a`. This descriptive sensitivity analysis shows both Pearson and
+Spearman correlations as lower-ranked cell types are added. It is not used to
+choose a new significance threshold.
+
+```{r spearman-sensitivity, fig.width=8, fig.height=5}
+ranked_cell_types <- baseline_response |>
+  dplyr::arrange(dplyr::desc(.data$control_foxj1a_expression))
+
+numbers_to_include <- 10:nrow(ranked_cell_types)
+correlation_rows <- vector("list", length(numbers_to_include))
+
+for (i in seq_along(numbers_to_include)) {
+  n_cell_types <- numbers_to_include[[i]]
+  included_cell_types <- dplyr::slice_head(
+    ranked_cell_types,
+    n = n_cell_types
+  )
+
+  correlation_rows[[i]] <- tibble::tibble(
+    n_cell_types = n_cell_types,
+    mean_foxj1a_expression = mean(
+      included_cell_types$control_foxj1a_expression
+    ),
+    minimum_foxj1a_expression = min(
+      included_cell_types$control_foxj1a_expression
+    ),
+    pearson_r = stats::cor(
+      included_cell_types$control_foxj1a_expression,
+      included_cell_types$control_motile_score,
+      method = "pearson"
+    ),
+    spearman_rho = stats::cor(
+      included_cell_types$control_foxj1a_expression,
+      included_cell_types$control_motile_score,
+      method = "spearman"
+    )
+  )
+}
+
+correlation_sensitivity <- dplyr::bind_rows(correlation_rows)
+readr::write_tsv(
+  correlation_sensitivity,
+  file.path(DATA_DIR, "correlation_top_foxj1a_sensitivity.tsv")
+)
+
+first_zero_expression <- correlation_sensitivity |>
+  dplyr::filter(.data$minimum_foxj1a_expression == 0) |>
+  dplyr::slice_head(n = 1) |>
+  dplyr::pull("n_cell_types")
+
+correlation_plot_data <- correlation_sensitivity |>
+  tidyr::pivot_longer(
+    cols = c("pearson_r", "spearman_rho"),
+    names_to = "correlation_method",
+    values_to = "correlation"
+  ) |>
+  dplyr::mutate(
+    correlation_method = dplyr::recode(
+      .data$correlation_method,
+      pearson_r = "Pearson r",
+      spearman_rho = "Spearman rho"
+    )
+  )
+
+correlations_to_label <- correlation_plot_data |>
+  dplyr::filter(
+    .data$n_cell_types %in% c(10L, 20L, nrow(ranked_cell_types))
+  ) |>
+  dplyr::mutate(
+    label = paste0(
+      "top ",
+      .data$n_cell_types,
+      ": ",
+      format(.data$correlation, digits = 2)
+    )
+  )
+
+correlation_sensitivity_plot <- ggplot(
+  correlation_plot_data,
+  aes(
+    x = .data$n_cell_types,
+    y = .data$correlation,
+    color = .data$correlation_method
+  )
+) +
+  geom_hline(yintercept = 0, color = "gray65") +
+  geom_vline(
+    xintercept = first_zero_expression,
+    linetype = "dashed",
+    color = "gray45"
+  ) +
+  geom_line(linewidth = 0.8) +
+  geom_point(size = 1.4) +
+  ggrepel::geom_label_repel(
+    data = correlations_to_label,
+    aes(label = .data$label),
+    size = 3,
+    max.overlaps = Inf,
+    show.legend = FALSE
+  ) +
+  annotate(
+    "text",
+    x = first_zero_expression,
+    y = -Inf,
+    label = "zero-expression cell types begin to enter",
+    angle = 90,
+    hjust = -0.05,
+    vjust = -0.4,
+    size = 3,
+    color = "gray35"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    panel.grid.minor = element_blank(),
+    legend.position = "bottom",
+    plot.margin = margin(5, 5, 0, 5)
+  ) +
+  scale_color_manual(
+    values = c("Pearson r" = "#E45756", "Spearman rho" = "#4C78A8"),
+    name = NULL
+  ) +
+  labs(
+    x = NULL,
+    y = "correlation"
+  )
+
+mean_expression_plot <- ggplot(
+  correlation_sensitivity,
+  aes(
+    x = .data$n_cell_types,
+    y = .data$mean_foxj1a_expression
+  )
+) +
+  geom_vline(
+    xintercept = first_zero_expression,
+    linetype = "dashed",
+    color = "gray45"
+  ) +
+  geom_line(linewidth = 0.8, color = "#7A5195") +
+  geom_point(size = 1.4, color = "#7A5195") +
+  theme_minimal(base_size = 10) +
+  theme(
+    panel.grid.minor = element_blank(),
+    plot.margin = margin(0, 5, 5, 5)
+  ) +
+  labs(
+    x = "top foxj1a-expressing cell types included",
+    y = "mean control\nfoxj1a expression"
+  )
+
+correlation_sensitivity_figure <-
+  correlation_sensitivity_plot /
+  mean_expression_plot +
+  patchwork::plot_layout(heights = c(2.2, 1)) +
+  patchwork::plot_annotation(
+    title = "Foxj1a-motile correlation sensitivity",
+    subtitle = paste(
+      "Cell types are added from highest to lowest control foxj1a expression;",
+      "the lower panel shows how their mean expression falls"
+    )
+  )
+
+save_plot_pair(
+  "07_correlation_sensitivity",
+  correlation_sensitivity_figure,
+  width = 8,
+  height = 7
+)
+
+correlation_sensitivity_figure
+```
+
+## Step 6: Load spinal-cord radial glia for focused diagnostics
+
+Every subsequent calculation is restricted to 48-hpf spinal-cord radial glia
+from foxj1a and control-injected embryos.
+
+```{r load-focus-cds}
+eligible_focus_embryos <- unique(focus_module_profile$embryo_ID)
+keep_cells <- (
+  !is.na(cell_metadata$timepoint) &
+    cell_metadata$timepoint == TIMEPOINT &
+    !is.na(cell_metadata$perturbation) &
+    cell_metadata$perturbation %in% c(PERTURBATION, CONTROL) &
+    !is.na(cell_metadata$cell_type) &
+    cell_metadata$cell_type == FOCUS_CELL_TYPE &
+    !is.na(cell_metadata$embryo_ID) &
+    cell_metadata$embryo_ID %in% eligible_focus_embryos
+)
+
+focus_cds <- cds[, keep_cells]
+rm(cds)
+invisible(gc())
+
+focus_cell_metadata <- as.data.frame(
+  SummarizedExperiment::colData(focus_cds)
+)
+focus_cell_metadata$cell <- rownames(focus_cell_metadata)
+focus_cell_metadata <- tibble::as_tibble(focus_cell_metadata) |>
+  dplyr::transmute(
+    cell = .data$cell,
+    embryo_ID = .data$embryo_ID,
+    perturbation = .data$perturbation,
+    arm = dplyr::if_else(
+      .data$perturbation == PERTURBATION,
+      "perturbation",
+      "control"
+    ),
+    rt_block = .data$rt_block,
+    hash_plate = stringr::str_extract(.data$embryo_ID, "P\\d+")
+  )
+
+focus_cell_metadata |>
+  dplyr::distinct(
+    .data$perturbation,
+    .data$arm,
+    .data$rt_block,
+    .data$hash_plate
+  )
+```
+
+Controls and foxj1a share RT block `Bl1`, but their hash plates are different.
+Because plate and condition are confounded, the following depth diagnostics
+are important; a separate plate coefficient cannot resolve this design.
+
+## Step 7: Check cell count and UMI depth
+
+```{r depth-diagnostics, fig.width=10, fig.height=5}
+focus_counts <- SingleCellExperiment::counts(focus_cds)
+if (methods::is(focus_counts, "IterableMatrix")) {
+  total_umi <- BPCells::colSums(focus_counts)
+} else {
+  total_umi <- Matrix::colSums(focus_counts)
+}
+
+cell_depth <- focus_cell_metadata |>
+  dplyr::mutate(total_umi = as.numeric(total_umi))
+
+embryo_depth <- cell_depth |>
+  dplyr::group_by(
+    .data$embryo_ID,
+    .data$arm,
+    .data$rt_block,
+    .data$hash_plate
+  ) |>
+  dplyr::summarise(
+    n_cells_from_cds = dplyr::n(),
+    median_umi_per_cell = stats::median(.data$total_umi),
+    mean_umi_per_cell = mean(.data$total_umi),
+    .groups = "drop"
+  ) |>
+  dplyr::left_join(
+    focus_module_profile |>
+      dplyr::filter(.data$module_id == FOCUS_MODULE) |>
+      dplyr::select(
+        embryo_ID,
+        n_cells,
+        mean_module_score
+      ),
+    by = "embryo_ID"
+  )
+
+if (any(embryo_depth$n_cells_from_cds != embryo_depth$n_cells)) {
+  stop("Focused CDS cell counts do not match the embryo score artifact.")
+}
+
+readr::write_tsv(
+  embryo_depth,
+  file.path(DATA_DIR, "spinal_radial_glia_depth_diagnostics.tsv")
+)
+
+depth_plot_data <- embryo_depth |>
+  dplyr::select(
+    embryo_ID,
+    arm,
+    hash_plate,
+    mean_module_score,
+    n_cells,
+    median_umi_per_cell
+  ) |>
+  tidyr::pivot_longer(
+    cols = c(n_cells, median_umi_per_cell),
+    names_to = "depth_measure",
+    values_to = "depth_value"
+  ) |>
+  dplyr::mutate(
+    depth_measure = dplyr::recode(
+      .data$depth_measure,
+      n_cells = "cells from this embryo",
+      median_umi_per_cell = "median UMIs per cell"
+    )
+  )
+
+depth_plot <- ggplot(
+  depth_plot_data,
+  aes(
+    x = .data$depth_value,
+    y = .data$mean_module_score,
+    color = .data$arm,
+    shape = .data$hash_plate
+  )
+) +
+  geom_point(size = 2.5, alpha = 0.9) +
+  facet_wrap(vars(.data$depth_measure), scales = "free_x") +
+  scale_color_manual(values = arm_colors) +
+  theme_minimal(base_size = 10) +
+  theme(panel.grid.minor = element_blank(), legend.position = "bottom") +
+  labs(
+    title = "Spinal radial-glia motile score versus sampling depth",
+    x = NULL,
+    y = "mean gold-motile score",
+    color = "arm",
+    shape = "hash plate"
+  )
+
+save_plot_pair(
+  "05_depth_diagnostics",
+  depth_plot,
+  width = 10,
+  height = 5
+)
+
+depth_plot
+```
+
+## Step 8: Decompose the motile score into component genes
+
+Zebrafish paralogs are summed to their human ortholog exactly as in the module
+score. We then retain per-cell log-normalized expression and average it within
+each embryo. The heatmap shows the 40 most highly expressed component genes;
+selection is based on overall expression, not the foxj1a effect.
+
+```{r component-genes, fig.width=12, fig.height=11}
+human_modules <- readr::read_tsv(
+  HUMAN_MODULE_FILE,
+  show_col_types = FALSE
+)
+human_to_zebrafish <- readr::read_tsv(
+  ORTHOLOGY_FILE,
+  show_col_types = FALSE
+)
+
+motile_human_genes <- human_modules |>
+  dplyr::filter(.data$module_id == FOCUS_MODULE) |>
+  dplyr::distinct(.data$current_human_symbol)
+
+ortholog_groups <- motile_human_genes |>
+  dplyr::inner_join(human_to_zebrafish, by = "current_human_symbol") |>
+  dplyr::filter(
+    !is.na(.data$zebrafish_gene_id),
+    .data$zebrafish_gene_id %in% rownames(focus_cds)
+  ) |>
+  dplyr::distinct(
+    .data$zebrafish_gene_id,
+    .data$current_human_symbol
+  )
+
+human_expression <- monocle3::aggregate_gene_expression(
+  focus_cds,
+  gene_group_df = ortholog_groups,
+  norm_method = "size_only",
+  gene_agg_fun = "sum",
+  scale_agg_values = FALSE
+)
+
+if (inherits(human_expression, "sparseMatrix")) {
+  human_expression@x <- log1p(human_expression@x)
+} else {
+  human_expression <- log1p(human_expression)
+}
+
+human_cell_expression <- Matrix::t(human_expression) |>
+  as.matrix() |>
+  as.data.frame() |>
+  tibble::rownames_to_column("cell") |>
+  tibble::as_tibble() |>
+  dplyr::left_join(focus_cell_metadata, by = "cell") |>
+  tidyr::pivot_longer(
+    cols = dplyr::all_of(rownames(human_expression)),
+    names_to = "human_gene",
+    values_to = "log_expression"
+  )
+
+embryo_gene_expression <- human_cell_expression |>
+  dplyr::group_by(
+    .data$embryo_ID,
+    .data$arm,
+    .data$hash_plate,
+    .data$human_gene
+  ) |>
+  dplyr::summarise(
+    mean_log_expression = mean(.data$log_expression),
+    .groups = "drop"
+  )
+
+component_gene_summary <- embryo_gene_expression |>
+  dplyr::group_by(.data$human_gene) |>
+  dplyr::summarise(
+    overall_mean_expression = mean(.data$mean_log_expression),
+    control_mean = mean(
+      .data$mean_log_expression[.data$arm == "control"]
+    ),
+    perturbation_mean = mean(
+      .data$mean_log_expression[.data$arm == "perturbation"]
+    ),
+    .groups = "drop"
+  ) |>
+  dplyr::mutate(
+    expression_difference = .data$perturbation_mean - .data$control_mean
+  ) |>
+  dplyr::arrange(.data$expression_difference)
+
+readr::write_tsv(
+  embryo_gene_expression,
+  file.path(DATA_DIR, "motile_component_genes_by_embryo.tsv")
+)
+readr::write_tsv(
+  component_gene_summary,
+  file.path(DATA_DIR, "motile_component_gene_summary.tsv")
+)
+
+genes_to_show <- component_gene_summary |>
+  dplyr::slice_max(
+    .data$overall_mean_expression,
+    n = MAX_COMPONENT_GENES,
+    with_ties = FALSE
+  ) |>
+  dplyr::pull("human_gene")
+
+gene_order <- component_gene_summary |>
+  dplyr::filter(.data$human_gene %in% genes_to_show) |>
+  dplyr::arrange(.data$expression_difference) |>
+  dplyr::pull("human_gene")
+
+embryo_order <- embryo_depth |>
+  dplyr::arrange(.data$arm, .data$mean_module_score) |>
+  dplyr::pull("embryo_ID")
+
+component_heatmap_data <- embryo_gene_expression |>
+  dplyr::filter(.data$human_gene %in% genes_to_show) |>
+  dplyr::group_by(.data$human_gene) |>
+  dplyr::mutate(
+    expression_sd = stats::sd(.data$mean_log_expression),
+    scaled_expression = dplyr::if_else(
+      .data$expression_sd > 0,
+      (.data$mean_log_expression - mean(.data$mean_log_expression)) /
+        .data$expression_sd,
+      0
+    )
+  ) |>
+  dplyr::ungroup() |>
+  dplyr::mutate(
+    human_gene = factor(.data$human_gene, levels = rev(gene_order)),
+    embryo_ID = factor(.data$embryo_ID, levels = embryo_order)
+  )
+
+component_heatmap <- ggplot(
+  component_heatmap_data,
+  aes(
+    x = .data$embryo_ID,
+    y = .data$human_gene,
+    fill = .data$scaled_expression
+  )
+) +
+  geom_tile(color = "white", linewidth = 0.15) +
+  facet_grid(cols = vars(.data$arm), scales = "free_x", space = "free_x") +
+  scale_fill_gradient2(
+    low = "#3B4CC0",
+    mid = "white",
+    high = "#B40426",
+    midpoint = 0
+  ) +
+  theme_minimal(base_size = 8) +
+  theme(
+    axis.title = element_blank(),
+    axis.text.x = element_text(angle = 90, hjust = 1, size = 6),
+    panel.grid = element_blank()
+  ) +
+  labs(
+    title = "Gold motile-cilia component genes in spinal radial glia",
+    subtitle = paste(
+      "Top 40 genes by overall expression;",
+      "each column is one embryo"
+    ),
+    fill = "within-gene\nstandardized\nexpression"
+  )
+
+save_plot_pair(
+  "06_motile_component_gene_heatmap",
+  component_heatmap,
+  width = 12,
+  height = 11
+)
+
+component_heatmap
+```
+
+## Component-gene direction summary
+
+```{r component-direction-summary}
+component_gene_summary |>
+  dplyr::summarise(
+    n_mapped_component_genes = dplyr::n(),
+    n_lower_in_foxj1a = sum(.data$expression_difference < 0),
+    fraction_lower_in_foxj1a = mean(.data$expression_difference < 0)
+  )
+
+component_gene_summary
+```

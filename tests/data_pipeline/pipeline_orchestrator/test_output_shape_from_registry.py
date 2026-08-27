@@ -70,6 +70,15 @@ _GRANDFATHERED: frozenset[str] = frozenset({
     # they come off together with their in-process twins when it does.
     "build_snip_auxiliary_masks_for_well_served",
     "frame_detections_per_well_served",
+    # channel_intensity_per_well joined on 2026-08-04. Grandfathered for the SAME reason as every
+    # other entry -- step_outputs() does not exist yet, so there is currently no way for a new
+    # per-well rule to comply with the doctrine this module states (see the STATUS note above).
+    # It agrees with the registry, which is the property that actually matters here:
+    # channel_intensity declares EXECUTION_PER_WELL and the rule fans out per well. Its extra
+    # {source_image_product_key} wildcard is a PRODUCT dimension, not a second well dimension --
+    # intensity off a CLAHE'd raster is a different quantity from intensity off a quantitative one,
+    # so the source product belongs in the key.
+    "channel_intensity_per_well",
     "frame_masks_per_well_served",
     "build_snip_qc_for_well",
     "build_stage_predictions_for_well",
@@ -82,7 +91,16 @@ _GRANDFATHERED: frozenset[str] = frozenset({
     # ordinary hand-written-wildcard case like every other entry here.
     "frame_masks_per_well",
     "materialize_image_product_for_well",
-    "snip_processing_per_well",
+    # snip_geometry_per_well joined on 2026-08-03 with the geometry gate. Grandfathered for the same
+    # reason as everything else here -- step_outputs() does not exist yet -- and NOT because its
+    # fanout is a special case. It is per-well by registry declaration (PER_WELL_THEN_MERGE), and
+    # deliberately carries no product wildcard: one embryo-time has one canonical transform.
+    "snip_geometry_per_well",
+    # legacy_default_snip_inventory_alias joined on 2026-08-03. Grandfathered for the same reason as
+    # every other entry -- step_outputs() does not exist yet. It is a per-well compatibility view of
+    # the default BF product, and it retires WITH the alias layer rather than being migrated.
+    "legacy_default_snip_inventory_alias",
+    "snip_materialization_per_well",
     "split_dropin_inventory",
     "validate_curvature_metrics_for_well",
     "validate_death_detection_qc_for_well",

@@ -149,6 +149,15 @@ pipeline/
 tmp/
 src/data_pipeline/docs/_SCRATCHPAD_*.md
 
+# BPCells on-disk matrix scratch. monocle3's load_monocle_objects() writes these
+# (~9G each) relative to the WORKING DIRECTORY. Jobs should point TMPDIR into tmp/
+# (see results/mcolon/20260715_gene14_hooke_dact/scripts/5_submit_*.sh), but ignore
+# them at the root too so a crashed run never leaves untracked noise.
+monocle.bpcells.*.tmp/
+
 # Scheduler output produced beside pipeline rule files during local runs.
 src/data_pipeline/pipeline_orchestrator/*.err
 src/data_pipeline/pipeline_orchestrator/*.out
+
+# Two-product smoke scratch: symlinked raw inputs + disposable output.
+.pbx_smoke/

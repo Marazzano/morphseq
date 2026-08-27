@@ -123,6 +123,17 @@ def build_keyence_stitch_map(
     except Exception as exc:  # non-fatal: metadata-only field
         log.warning("build_keyence_stitch_map: could not read tile_shape: %s", exc)
 
+    # THE WHOLE-MAP FALLBACK IS THE LOUDEST CASE AND HAD THE QUIETEST SIGNAL. A per-tile fallback
+    # already warns (Stage D), but "no well anywhere produced a trusted fit" only appeared as
+    # "calibrated from 0 wells" in an info line. That is the case most worth seeing: the map is
+    # entirely un-evidenced by image data.
+    if not fits:
+        log.warning(
+            "build_keyence_stitch_map: NO well produced a trusted fit — the entire map is the "
+            "stage prior, with no image evidence behind any offset. Recorded as "
+            "metadata.alignment_source='stage_prior'."
+        )
+
     # Stage E: write in the exact schema materialization consumes (metadata + index-keyed [y,x]).
     shape = [n_tiles, 1] if orientation == "vertical" else [1, n_tiles]
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -133,6 +144,16 @@ def build_keyence_stitch_map(
                     "shape": shape,
                     "size": n_tiles,
                     "tile_shape": tile_shape,
+                    # PROVENANCE OF THE OFFSETS. Since this builder stopped failing when no well
+                    # aligns and started falling back to the stage prior, a map built from ZERO
+                    # image evidence became byte-indistinguishable from one calibrated off 96
+                    # wells -- the fallback is the right policy, but it was silent, and a silent
+                    # fallback is how an uncalibrated map gets trusted as a measured one.
+                    #
+                    # "stage_prior" means no well survived Stage C and every offset is the
+                    # prior; "aligned" means at least one well contributed a trusted fit.
+                    "alignment_source": "aligned" if fits else "stage_prior",
+                    "n_good_samples": len(fits),
                 },
                 "coords": coords,
             }

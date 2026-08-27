@@ -1,0 +1,2 @@
+physical_embryo_id,experiment_id,well_id,local_embryo_index,track_id,track_id_source,merge_policy,n_sources
+chem28c_coll_plate01_A02_e01,chem28c_coll_plate01,chem28c_coll_plate01_A02,1,chem28c_coll_plate01_A02_track0000,sam2_object_id,bridged,2

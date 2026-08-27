@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+#$ -N morphseq_tests
+#$ -q trapnell-short.q
+#$ -l mfree=16G
+#$ -l h_rt=2:00:00
+#$ -j y
+#$ -V
+#$ -o /net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/logs
+#$ -e /net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/logs
+
+# Full test suite on a COMPUTE node.
+#
+# WHY NOT ON THE HEAD NODE. Measured 2026-08-04: load average ~80 with the pytest process in state
+# Dl (uninterruptible I/O wait) at 0.3% CPU. A run there measures contention, not correctness, and
+# it takes CPU from everyone else on a shared machine. No GPU is requested.
+#
+# EVERY PATH HERE IS ABSOLUTE, deliberately. SGE copies this script into its own spool directory
+# before running it, so anything relative resolves against /var/spool/uge/... instead of the repo.
+# Two runs were lost to that: `cd "$(dirname "$0")"` landed in the spool dir and pytest "passed" in
+# 0.02s having collected nothing, then `-o logs` wrote the log somewhere unreadable and the evidence
+# vanished with the job. Relative paths in a qsub script fail SILENTLY and look like success.
+
+set -euo pipefail
+cd /net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt
+export PYTHONPATH="src:${PYTHONPATH:-}"
+# The spool cwd is not writable, and a cache-write failure would be the only error in an otherwise
+# green run.
+export PYTEST_ADDOPTS="-p no:cacheprovider"
+
+echo "[tests] cwd=$(pwd)"
+echo "[tests] HEAD=$(git rev-parse --short HEAD)"
+# NO --ignore LIST ANY MORE. Five stale modules used to be skipped here because their imports had
+# broken with module moves, and a COLLECTION error aborts the ENTIRE pytest run ("Interrupted: 5
+# errors during collection") -- so those five kept every other test in the repo from executing.
+# They have now been resolved rather than suppressed: three were repointed at the relocated modules
+# (and their assertions brought up to the current contracts), two were deleted because the code
+# they tested no longer exists in any form.
+#
+# Keep it this way. An --ignore entry here is invisible suppression: it makes a broken test look
+# like a passing suite.
+conda run -n segmentation_grounded_sam --no-capture-output \
+  python -m pytest src/data_pipeline tests --import-mode=importlib -q

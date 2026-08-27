@@ -33,8 +33,21 @@ SUPPORTED_CHANNELS: frozenset[str] = frozenset(VALID_CHANNEL_NAMES)
 # Image product SHAPE (encoded in the path tree); method lives in frame_inventory, not the path.
 SUPPORTED_IMAGE_PRODUCT_TYPES: frozenset[str] = frozenset({"projection", "z_stack"})
 
-# How a Z-stack collapses to one 2D frame.
+# How a Z-stack collapses to one 2D frame. This is GRAMMAR: what a config may legally SAY.
 SUPPORTED_PROJECTION_METHODS: frozenset[str] = frozenset({"focus_stack", "max", "mean"})
+
+# The subset that has a real primitive behind it — CAPABILITY: what the code can actually RUN.
+#
+# Grammar and capability are different questions, and conflating them is why a config asking for
+# "mean" used to pass plan validation and then fail a layer deeper with a confusing message.
+#
+# THE SINGLE SOURCE OF TRUTH, imported by both the scope resolver (which rejects an unimplemented
+# method) and the YX1 executor (whose _PROJECTION_PRIMITIVES registry must cover exactly this set,
+# asserted by test). It lives here rather than in a backend because the resolver may not import
+# backends, and duplicating the set in two modules is drift waiting to happen.
+#
+# Adding a method: write the primitive, register it in the executor, then add the token here.
+IMPLEMENTED_PROJECTION_METHODS: frozenset[str] = frozenset({"focus_stack", "max"})
 
 # REQUEST vocabulary for XY composition (what a config/user may ask for).
 #   auto     — let the scope decide (the recommended default)
@@ -71,12 +84,19 @@ class ImageProductRequest:
     Fields carry REQUEST vocabulary: ``xy_composition`` may be the soft token ``"auto"``,
     meaning "let the scope decide." A request is scope-agnostic; the same plan can be handed
     to any microscope's resolver, which narrows it to that scope's reality.
+
+    ``write_index_map`` asks for the per-pixel index-map provenance sidecar. It is a property of the
+    REQUEST, not of the method: every projection collapses Z somehow, so "which plane fed this pixel"
+    is always a meaningful question — for ``focus_stack`` it is the LoG argmax, for ``max`` the
+    intensity argmax. Keeping it a plan field is what makes the sidecar an explicit choice instead of
+    an accident of which method happens to be wired.
     """
 
     channel_id: str
     image_product_type: str
     projection_method: str | None
     xy_composition: str = "auto"
+    write_index_map: bool = False
 
 
 @dataclass(frozen=True)
@@ -86,12 +106,16 @@ class ResolvedImageProduct:
     A resolved product never carries soft tokens: ``xy_composition`` is ``"identity"`` or
     ``"mosaic"`` (never ``"auto"``). This is the only product shape a backend executor accepts;
     by construction it cannot be ambiguous about what to do.
+
+    ``write_index_map`` passes through unchanged from the request — no scope narrows it, because
+    whether to keep provenance is the caller's choice, not a microscope capability.
     """
 
     channel_id: str
     image_product_type: str
     projection_method: str | None
     xy_composition: str
+    write_index_map: bool = False
 
 
 @dataclass(frozen=True)
@@ -161,15 +185,22 @@ def load_image_materialization_plan(config: dict | None) -> ImageMaterialization
         image_product_type = p["image_product_type"]
         projection_method = p.get("projection_method")
         xy_composition = p.get("xy_composition", "auto")
+        write_index_map = p.get("write_index_map", False)
 
         _assert_in("channel_id", channel_id, SUPPORTED_CHANNELS, i)
         _assert_in("image_product_type", image_product_type, SUPPORTED_IMAGE_PRODUCT_TYPES, i)
         if projection_method is not None:
             _assert_in("projection_method", projection_method, SUPPORTED_PROJECTION_METHODS, i)
         _assert_in("xy_composition", xy_composition, SUPPORTED_XY_COMPOSITION_REQUESTS, i)
+        if not isinstance(write_index_map, bool):
+            raise UnsupportedMaterializationRequest(
+                f"product[{i}] write_index_map must be a boolean; got "
+                f"{type(write_index_map).__name__} ({write_index_map!r})."
+            )
         _validate_product_shape(
             image_product_type=image_product_type,
             projection_method=projection_method,
+            write_index_map=write_index_map,
             product_index=i,
         )
 
@@ -179,13 +210,19 @@ def load_image_materialization_plan(config: dict | None) -> ImageMaterialization
                 image_product_type=image_product_type,
                 projection_method=projection_method,
                 xy_composition=xy_composition,
+                write_index_map=write_index_map,
             )
         )
     return ImageMaterializationPlan(products=tuple(requests))
 
 
 def _default_step6_plan() -> ImageMaterializationPlan:
-    """The Step-6 default product set: the one accepted YX1 product."""
+    """The Step-6 default product set: the one accepted YX1 product.
+
+    ``write_index_map=True`` here (against the field's ``False`` default) because focus_stack has
+    ALWAYS written its focus_index_map sidecar, and downstream provenance checks require it. The
+    field default is False so a new product opts in; this default preserves existing behavior.
+    """
     return ImageMaterializationPlan(
         products=(
             ImageProductRequest(
@@ -193,6 +230,7 @@ def _default_step6_plan() -> ImageMaterializationPlan:
                 image_product_type="projection",
                 projection_method="focus_stack",
                 xy_composition="auto",
+                write_index_map=True,
             ),
         )
     )
@@ -211,12 +249,16 @@ def _validate_product_shape(
     *,
     image_product_type: str,
     projection_method: str | None,
+    write_index_map: bool = False,
     product_index: int,
 ) -> None:
     """Enforce global product-shape grammar (not scope behavior).
 
     ``projection`` requires a ``projection_method``; ``z_stack`` forbids one (it preserves z
     planes). This is product ontology — true for every microscope — so it lives here.
+
+    ``z_stack`` also forbids ``write_index_map``: an index map says which Z plane fed each output
+    pixel, and a z_stack writes every plane already, so there is nothing to index.
     """
     if image_product_type == "projection" and projection_method is None:
         raise UnsupportedMaterializationRequest(
@@ -227,4 +269,10 @@ def _validate_product_shape(
         raise UnsupportedMaterializationRequest(
             f"product[{product_index}] image_product_type='z_stack' must not set "
             f"projection_method={projection_method!r}; z_stack preserves z planes."
+        )
+    if image_product_type == "z_stack" and write_index_map:
+        raise UnsupportedMaterializationRequest(
+            f"product[{product_index}] image_product_type='z_stack' must not set "
+            "write_index_map=True; an index map records which Z plane fed each projected pixel, "
+            "and a z_stack already writes every plane."
         )

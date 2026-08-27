@@ -60,12 +60,39 @@ YX1_ACQUISITION_INVENTORY_SCOPE_COLUMNS: tuple[str, ...] = (
     "source_nd2_path",          # the ONE ND2 (no per-plane path)
 )
 
+# ACQUISITION SETTINGS -- the difference between comparable and incomparable pixels. Fluorescence
+# intensity means nothing across frames acquired with different exposure, and exposure is the setting
+# most likely to change without being recorded as an experimental variable: it gets adjusted to make
+# a good-looking image. MEASURED on the pbx collection, where the fluorescence channel ran at 600 ms
+# on day 1 and 300 ms on days 2-3 -- a 2x artifact the same size as the 1-vs-2-copy dosage effect it
+# would be mistaken for.
+#
+# OPTIONAL, AND DELIBERATELY NOT IN THE REQUIRED TUPLE ABOVE. These are parsed from the ND2
+# free-text dump, so a file whose settings do not parse must still ingest -- and, more importantly,
+# every inventory written before these columns existed must still VALIDATE. Adding them to the
+# required set broke 19 tests at once by making the entire installed base retroactively invalid,
+# which is the correct signal: provenance a reader may want is not the same as structure a row
+# cannot exist without. They are emitted (see YX1_ACQUISITION_INVENTORY_COLUMNS) so column ORDER is
+# stable, but never required to be present.
+YX1_ACQUISITION_INVENTORY_ILLUMINATION_COLUMNS: tuple[str, ...] = (
+    "exposure_ms",
+    "illumination_power",
+    "dia_iris_intensity",
+)
+
 # The maximal per-coordinate schema = the SHARED Tier-1 core + the YX1 Tier-2 extras. Standardized
 # ``*_index`` axis vocabulary — the inventory is a NEW artifact, born with target names (the legacy
-# scope_metadata keeps time_int/z_position until the Scope-2 collapse).
-YX1_ACQUISITION_INVENTORY_COLUMNS: tuple[str, ...] = (
+# scope_metadata keeps z_position until the Scope-2 collapse).
+YX1_ACQUISITION_INVENTORY_REQUIRED_COLUMNS: tuple[str, ...] = (
     *REQUIRED_ACQUISITION_INVENTORY_CORE_COLUMNS,
     *YX1_ACQUISITION_INVENTORY_SCOPE_COLUMNS,
+)
+
+# The full emitted schema = required + optional provenance. Used for column ORDER on write; the
+# validator checks only the required tuple above.
+YX1_ACQUISITION_INVENTORY_COLUMNS: tuple[str, ...] = (
+    *YX1_ACQUISITION_INVENTORY_REQUIRED_COLUMNS,
+    *YX1_ACQUISITION_INVENTORY_ILLUMINATION_COLUMNS,
 )
 
 # The tensor cell key — exactly one raw unit may occupy each cell. YX1 is clean by construction.
@@ -147,7 +174,7 @@ def validate_yx1_acquisition_inventory(
     """
     # Hard-check the shared core first (every scope must satisfy it), then the full YX1 schema.
     assert_columns_present(df, REQUIRED_ACQUISITION_INVENTORY_CORE_COLUMNS, scope_label=_SCOPE_LABEL)
-    assert_columns_present(df, YX1_ACQUISITION_INVENTORY_COLUMNS, scope_label=_SCOPE_LABEL)
+    assert_columns_present(df, YX1_ACQUISITION_INVENTORY_REQUIRED_COLUMNS, scope_label=_SCOPE_LABEL)
     assert_positive_column(df, "micrometers_per_pixel", scope_label=_SCOPE_LABEL)
     assert_positive_column(df, "image_width_px", scope_label=_SCOPE_LABEL)
     assert_positive_column(df, "image_height_px", scope_label=_SCOPE_LABEL)
@@ -205,6 +232,7 @@ def build_yx1_acquisition_inventory_rows(
     n_z: int,
     timestamps: Sequence[float],
     channels: Sequence[tuple[int, str, str]],
+    channel_illumination: Mapping[int, Mapping[str, float | None]] | None = None,
     stage_xy: Mapping[int, tuple[float, float]],
     micrometers_per_pixel: float,
     image_width_px: int,
@@ -220,6 +248,11 @@ def build_yx1_acquisition_inventory_rows(
     Args:
         channels: one ``(channel_index, normalized_channel, raw_channel_name)`` triple per ND2
             channel — the full channel mapping, recorded once.
+        channel_illumination: optional ``{channel_index: {exposure_ms, illumination_power,
+            dia_iris_intensity}}``. Passed as a SEPARATE map rather than widened into the
+            ``channels`` triple so that every existing caller keeps working unchanged and a file
+            without parseable settings simply omits it — these are provenance, not identity, and
+            must never become required to build a row.
         stage_xy: ``{position_index: (x_um, y_um)}`` from the ND2 frame metadata at T=0.
         timestamps: per-T acquisition time in seconds (length ``n_t``).
     """
@@ -235,6 +268,7 @@ def build_yx1_acquisition_inventory_rows(
 
             for z_index in range(n_z):
                 for channel_index, channel, raw_channel_name in channels:
+                    illumination = (channel_illumination or {}).get(int(channel_index), {})
                     rows.append(
                         {
                             "experiment_id": experiment_id,
@@ -255,6 +289,16 @@ def build_yx1_acquisition_inventory_rows(
                             "microscope_id": "YX1",
                             "n_z": int(n_z),
                             "source_nd2_path": source_nd2_path,
+                            # NaN, not a default. A fabricated exposure would be indistinguishable
+                            # from a measured one downstream, and normalizing by a guessed value is
+                            # exactly the silent error this column exists to prevent.
+                            "exposure_ms": illumination.get("exposure_ms", float("nan")),
+                            "illumination_power": illumination.get(
+                                "illumination_power", float("nan")
+                            ),
+                            "dia_iris_intensity": illumination.get(
+                                "dia_iris_intensity", float("nan")
+                            ),
                         }
                     )
 
@@ -266,11 +310,10 @@ def _derive_elapsed_time_s(df: pd.DataFrame) -> pd.DataFrame:
 
     Reuses ``time_helpers.add_elapsed_time_columns`` (the one scope-neutral time derivation) pointed at
     the YX1 raw atom ``acquisition_time_s`` and grouped per ``position_index`` (YX1 position ≡ well,
-    1:1). The helper sorts on an internal ``time_int`` and also emits min/hr columns; we alias
-    ``time_index`` → ``time_int`` for it and keep only the canonical ``elapsed_time_s``.
+    1:1). The helper sorts on the ``time_index`` column (already present on the YX1 inventory) and
+    also emits min/hr columns; we keep only the canonical ``elapsed_time_s``.
     """
     work = df.copy()
-    work["time_int"] = work["time_index"]
     # The helper sorts rows internally but preserves the original index labels, so reindexing back
     # onto df.index restores row order while carrying each row's derived value.
     work = add_elapsed_time_columns(

@@ -4,8 +4,8 @@ This module owns the YX1-specific path from an acquisition-inventory row set to 
 pixel files + frame-inventory rows.  It has two layers:
 
   Primitives (pure image math, no paths, no IDs):
-    ``materialize_ff_projection``  — focus-stack a Z-stack → one uint8 2D frame (BF method)
-    ``materialize_max_projection`` — max-project a Z-stack → one 2D frame (fluorescence method)
+    ``materialize_ff_projection``  — focus-stack a Z-stack → one uint8 2D frame
+    ``materialize_max_projection`` — max-project a Z-stack → one 2D frame, input dtype preserved
 
   Per-well orchestrator:
     ``materialize_yx1_product_for_well`` — reads ONE well's ND2 slices for ONE resolved product,
@@ -13,8 +13,11 @@ pixel files + frame-inventory rows.  It has two layers:
                                            returns inventory rows.
     ``materialize_yx1_well``             — compatibility wrapper requiring exactly one product.
 
-Step 3 scope: BF only (``projection_method='focus_stack'``).  Fluorescence channels use
-``materialize_max_projection``; that wiring is deferred until GFP acquisition inventory lands.
+ANY canonical channel is materializable (2026-07-29): the channel is read from the acquisition
+inventory via ``resolve_channel_index`` and threaded into every path, id, and row — never assumed.
+Both ``focus_stack`` and ``max`` projections are wired, dispatched by ``_project_stack``. There is no
+channel→method rule here; the product plan chooses, and the resolver checks only that a primitive
+exists.
 
 Import rules: this module imports image primitives from ``image_building/``, path resolution
 from ``materialized_image_paths.py``, ID helpers from ``shared/identifiers/``, and the
@@ -32,8 +35,11 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
+from data_pipeline.acquisition.metadata_ingest.scope.yx1.nd2_axes import (
+    array_axis_order_of,
+    axes_of,
+)
 from data_pipeline.acquisition.image_building.scope.yx1.stitched_ff_builder import (
-    _determine_bf_channel,
     _get_stack,
 )
 from data_pipeline.acquisition.image_building.shared.display_polarity import apply_display_polarity
@@ -47,6 +53,7 @@ from data_pipeline.acquisition.image_materialization.frame_inventory_contract im
     derive_well_id,
 )
 from data_pipeline.acquisition.image_materialization.materialization_plan import (
+    IMPLEMENTED_PROJECTION_METHODS,
     ResolvedImageProduct,
     ResolvedMaterializationPlan,
 )
@@ -59,9 +66,13 @@ from data_pipeline.acquisition.image_materialization.materialized_image_write_po
     suffix_for_policy,
     write_image,
 )
+from data_pipeline.acquisition.metadata_ingest.scope.shared.acquisition_channels import (
+    resolve_channel_index,
+)
 from data_pipeline.acquisition.metadata_ingest.scope.yx1.acquisition_inventory import (
     validate_yx1_acquisition_inventory,
 )
+from data_pipeline.shared.identifiers.parsers import parse_image_id_with_z_index
 from data_pipeline.shared.path_roots import resolve_under_input_root
 
 log = logging.getLogger(__name__)
@@ -85,7 +96,8 @@ _EMITTED_COLUMNS: tuple[str, ...] = (
     "image_product_type",
     "projection_method",
     "image_path",
-    "focus_index_map_path",
+    "index_map_path",
+    "write_index_map",
     "image_micrometers_per_pixel",
     "image_width_px",
     "image_height_px",
@@ -100,6 +112,12 @@ _EMITTED_COLUMNS: tuple[str, ...] = (
     "raw_image_width_px",
     "raw_image_height_px",
     "raw_micrometers_per_pixel",
+    # ACQUISITION SETTINGS. Fluorescence intensity is only comparable across frames acquired the
+    # same way, and exposure is the setting most likely to move unrecorded. Carried here so an
+    # analysis can normalize instead of assuming -- see DOSAGE_INFORMATION_ANALYSIS.md.
+    "exposure_ms",
+    "illumination_power",
+    "dia_iris_intensity",
 )
 
 
@@ -144,13 +162,78 @@ def materialize_ff_projection(
     return tile.projection_u8, tile.focus_index_map
 
 
-def materialize_max_projection(stack_zyx: np.ndarray) -> np.ndarray:
+def materialize_max_projection(stack_zyx: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Max-project a Z-stack into one 2D frame (fluorescence projection method).
 
-    Returns same dtype as input.  This is the ``projection_method='max_projection'``
-    primitive.  Defined here now to lock the naming convention; wired when GFP lands.
+    This is the ``projection_method='max'`` primitive (the token in
+    ``SUPPORTED_PROJECTION_METHODS``; earlier drafts of this docstring said ``'max_projection'``,
+    which was never the vocabulary).
+
+    Returns the projection in the INPUT dtype — deliberately, unlike ``materialize_ff_projection``'s
+    uint8 display transform. Fluorescence is materialized for quantitative use, so narrowing is left
+    to the write policy (``RFP__projection__max`` pins uint16, i.e. no narrowing at all).
+
+    Returns:
+        ``(projection, index_map)``:
+          - ``projection``: per-pixel maximum over Z, same dtype as input, shape ``(Y, X)``.
+          - ``index_map``: per-pixel STACK-AXIS OFFSET ``int32 (Y, X)`` of the plane that supplied
+            the maximum — the max-projection analogue of ``focus_index_map``. Same convention: an
+            axis offset into ``stack_zyx``, NOT an acquisition ``z_index`` label; the caller pairs it
+            with an ordered ``z_indices`` array to recover labels.
+
+    **TIES RESOLVE TO THE LOWEST Z OFFSET** (``np.argmax`` returns the first occurrence). This is not
+    a detail: in fluorescence, dark background is frequently tied across EVERY plane, so those pixels
+    all record offset 0. Plane 0 did not "win" there in any meaningful sense — it was simply first.
+    Read a max index map as trustworthy only where the projection is above background; do not
+    interpret background offsets as a focal-plane measurement.
+
+    ``int32`` matches ``focus_index_map``'s dtype so one reader and one validator serve both, even
+    though a Z count that fits in ``uint16`` would suffice. Consistency is the deliberate choice.
     """
-    return stack_zyx.max(axis=0)
+    return stack_zyx.max(axis=0), stack_zyx.argmax(axis=0).astype(np.int32)
+
+
+# THE registry of wired projection primitives, keyed by canonical projection_method token.
+#
+# This is the SINGLE SOURCE OF TRUTH for "which methods can actually run". The resolver imports
+# IMPLEMENTED_PROJECTION_METHODS (derived from these keys) rather than restating the set, so a method
+# cannot be accepted by the resolver but missing from the executor — the two were previously two
+# hand-written copies of {"focus_stack", "max"} in two modules, which is drift waiting to happen.
+# Adding a method means adding ONE entry here; validation follows automatically.
+#
+# Every primitive returns (projection, index_map) so the caller needs no per-method branching for
+# provenance — whether the index map is WRITTEN is the plan's write_index_map choice. Primitives
+# taking no device just ignore the kwarg.
+_PROJECTION_PRIMITIVES = {
+    "focus_stack": lambda stack, device: materialize_ff_projection(stack, device=device),
+    "max": lambda stack, device: materialize_max_projection(stack),
+}
+
+# The declared capability set lives in materialization_plan (the resolver may not import backends).
+# This registry must cover it EXACTLY — asserted at import so a method declared implemented but never
+# wired, or wired but never declared, is a startup error rather than a runtime surprise.
+_declared = set(IMPLEMENTED_PROJECTION_METHODS)
+_wired = set(_PROJECTION_PRIMITIVES)
+if _declared != _wired:
+    raise RuntimeError(
+        "YX1 projection primitives disagree with IMPLEMENTED_PROJECTION_METHODS: "
+        f"declared-not-wired={sorted(_declared - _wired)}, "
+        f"wired-not-declared={sorted(_wired - _declared)}. Both must list the same methods."
+    )
+del _declared, _wired
+
+
+def _project_stack(
+    stack_zyx: np.ndarray, *, projection_method: str, device: str
+) -> tuple[np.ndarray, np.ndarray]:
+    """Dispatch one Z-stack to the requested projection primitive."""
+    primitive = _PROJECTION_PRIMITIVES.get(projection_method)
+    if primitive is None:
+        raise ValueError(
+            f"No YX1 projection primitive for projection_method={projection_method!r}; "
+            f"wired: {sorted(IMPLEMENTED_PROJECTION_METHODS)}."
+        )
+    return primitive(stack_zyx, device)
 
 
 # ---------------------------------------------------------------------------
@@ -261,15 +344,14 @@ def materialize_yx1_product_for_well(
             f"materialize_yx1_product_for_well only executes xy_composition='identity'; got "
             f"{resolved_product.xy_composition!r}. YX1 is single-tile — this indicates a resolver bug."
         )
-    if resolved_product.channel_id != "BF":
-        raise ValueError(
-            f"materialize_yx1_product_for_well only supports channel_id='BF'; "
-            f"got {resolved_product.channel_id!r}."
-        )
+    # channel_id is NOT gated: any canonical channel the acquisition inventory actually contains is
+    # materializable. resolve_channel_index() below fails loud if the requested channel is absent.
     if resolved_product.image_product_type == "projection":
-        if resolved_product.projection_method != "focus_stack":
+        if resolved_product.projection_method not in IMPLEMENTED_PROJECTION_METHODS:
             raise ValueError(
-                "YX1 projection materialization requires projection_method='focus_stack'."
+                f"YX1 projection materialization has no primitive for projection_method="
+                f"{resolved_product.projection_method!r}. Wired: "
+                f"{sorted(IMPLEMENTED_PROJECTION_METHODS)}."
             )
     elif resolved_product.image_product_type == "z_stack":
         if resolved_product.projection_method is not None:
@@ -297,10 +379,27 @@ def materialize_yx1_product_for_well(
             f"{sorted(well_acquisition_inventory_df['position_index'].unique())}. "
             "Inventory must map exactly one position_index to one well."
         )
-    if well_acquisition_inventory_df["source_nd2_path"].nunique() != 1:
+    # NO source_nd2_path GUARD. A single experiment has one ND2 per well; a COLLECTION has one per
+    # SOURCE, and the whole point of the union is to process them as one plate. This used to require
+    # nunique() == 1, which made YX1 collections unmaterializable -- the only collection that ever
+    # ran was Keyence, whose backend iterates rows and never made the assumption.
+    #
+    # What stays guarded is what genuinely must be constant: position_index (above) plus the
+    # calibration and dimensions read below. Verified on the pbx collection -- across its 3 sources,
+    # position_index / micrometers_per_pixel / image_width_px / image_height_px each have exactly
+    # ONE distinct value per well, and only source_nd2_path varies. So the scalars stay scalars and
+    # only the FILE binding moves into the loop.
+    if well_acquisition_inventory_df["micrometers_per_pixel"].nunique() != 1:
         raise ValueError(
-            f"Ambiguous source_nd2_path for well {well_id!r}: "
-            f"{sorted(well_acquisition_inventory_df['source_nd2_path'].unique())}."
+            f"Ambiguous micrometers_per_pixel for well {well_id!r}: "
+            f"{sorted(well_acquisition_inventory_df['micrometers_per_pixel'].unique())}. Sources "
+            "merged into one collection must share a calibration, or their frames are not "
+            "comparable and the downsample factor below would be wrong for some of them."
+        )
+    if well_acquisition_inventory_df[["image_width_px", "image_height_px"]].drop_duplicates().shape[0] != 1:
+        raise ValueError(
+            f"Ambiguous image dimensions for well {well_id!r}: "
+            f"{well_acquisition_inventory_df[['image_width_px', 'image_height_px']].drop_duplicates().to_dict('records')}."
         )
 
     # Consume-boundary contract check: re-validate the acquisition inventory in source-checking mode
@@ -322,32 +421,95 @@ def materialize_yx1_product_for_well(
         config, product_key, native_micrometers_per_pixel=um_per_px
     )
     ext = suffix_for_policy(write_policy)
-    # The ND2 source comes from the inventory (the record of what was acquired), not a CLI arg.
-    # Stored as a full path; re-anchored onto input_root if it has moved.
-    nd2_path = resolve_under_input_root(
-        well_acquisition_inventory_df["source_nd2_path"].iloc[0],
-        input_root=input_root,
-        scope_label=_SCOPE_LABEL,
-        full_root_fallback=True,
-    )
+    # ONE ND2 PER SOURCE, keyed by the MERGED time_index the output identity uses. A single
+    # experiment yields one entry; a collection yields one per source. Resolved up front so a
+    # moved/missing file fails before any tensor read, and so the open below is a dict lookup
+    # rather than a per-frame path resolution.
+    #
+    # Stored as full paths; re-anchored onto input_root if the tree has moved.
+    nd2_path_by_merged_time = {
+        int(t): resolve_under_input_root(
+            str(rows["source_nd2_path"].iloc[0]),
+            input_root=input_root,
+            scope_label=_SCOPE_LABEL,
+            full_root_fallback=True,
+        )
+        for t, rows in well_acquisition_inventory_df.groupby("time_index")
+    }
+    # A time_index whose rows disagree about their source file means the union mis-assigned a
+    # frame -- two acquisitions claiming the same merged slot. Fail here, not with pixels from
+    # whichever file sorted first.
+    for t, rows in well_acquisition_inventory_df.groupby("time_index"):
+        if rows["source_nd2_path"].nunique() != 1:
+            raise ValueError(
+                f"time_index {int(t)} of well {well_id!r} maps to multiple source files: "
+                f"{sorted(rows['source_nd2_path'].unique())}. One merged frame comes from exactly "
+                "one acquisition; re-check the collection union."
+            )
+    nd2_path = next(iter(nd2_path_by_merged_time.values()))
 
     log.info(
         "materialize_yx1_product_for_well: experiment=%s well=%s product=%s position_index=%d nd2=%s device=%s candidate=%s",
         experiment_id, well_id, resolved_product.image_product_type, position_index, nd2_path, device, candidate,
     )
 
-    # --- ND2 source + tensor setup: open the one ND2, pick the BF channel axis ----------------
+    # --- ND2 source + tensor setup ------------------------------------------------------------
+    # AXES AND CHANNEL INDEX COME FROM THE FIRST SOURCE and are asserted against every other one
+    # below. A collection's sources are the same plate imaged repeatedly, so they share an axis
+    # layout and channel order; if they did not, the union that merged them was already wrong.
     nd = nd2.ND2File(nd2_path)
     try:
         dask_arr = nd.to_dask()
-        channel_names = [c.channel.name for c in nd.frame_metadata(0).channels]
-        bf_idx = _determine_bf_channel(channel_names)
 
-        # Select BF channel axis if present (shape T,W,Z,C,Y,X → T,W,Z,Y,X).
-        if dask_arr.ndim == 6:
-            dask_arr = dask_arr[:, :, :, bf_idx, :, :]
+        # CHANNEL INDEX IS READ, NEVER RE-DERIVED. The scope adapter minted the
+        # channel_index/raw_channel_name/channel_id triple into the acquisition inventory (a 1:1:1
+        # mapping guarded by assert_channel_mapping_consistent); this looks the requested product's
+        # channel_id up in it. Matching channel NAMES here would invent a second channel vocabulary
+        # that drifts from the scope's channel_map.py.
+        channel_index = resolve_channel_index(
+            well_acquisition_inventory_df, resolved_product.channel_id
+        )
+
+        # Axis selection is by NAME (see metadata_ingest/scope/yx1/nd2_axes.py). The channel is
+        # picked per-slice inside _get_stack instead of by pre-slicing axis 3, because that
+        # pre-slice was gated on `ndim == 6` and so was SKIPPED for a 5-D (P, Z, C, Y, X) snapshot —
+        # leaving the channel axis in place to masquerade as the Z stack, which would make
+        # focus-stacking run over [BF, fluorescence] as if they were focal planes.
+        axes = axes_of(nd)
+        array_axis_order = array_axis_order_of(nd)
+        # The recorded index must fit THIS file — catches a stale/mismatched inventory here rather
+        # than as a cryptic dask index error deep in the read.
+        if not 0 <= channel_index < axes.n_c:
+            raise ValueError(
+                f"Acquisition inventory maps channel {resolved_product.channel_id!r} to "
+                f"channel_index {channel_index}, but {nd2_path} has {axes.n_c} channel(s). The "
+                "inventory does not match the file it points at; re-run scope ingest."
+            )
+        log.info(
+            "ND2 axes: T=%d P=%d Z=%d C=%d (array order %s, channel_id %s -> channel_index %d)",
+            axes.n_t, axes.n_p, axes.n_z, axes.n_c, array_axis_order,
+            resolved_product.channel_id, channel_index,
+        )
 
         time_indices = sorted(well_acquisition_inventory_df["time_index"].unique())
+
+        # MERGED time_index -> SOURCE-NATIVE frame index. For a single experiment these are the same
+        # value. For a COLLECTION they are not: the union block-offsets each source's frames onto one
+        # plate-wide axis, so a well's merged time_index 96 may be its source's native frame 0. The
+        # output identity (image_id, paths) uses the MERGED index; the ND2 lookup must use the NATIVE
+        # one, or a collection would read pixels from the wrong frame — or off the end of the file.
+        # `raw_time_index` is the union's record of the source-native value (see
+        # metadata_ingest/collection_merge_primitives.py).
+        if "raw_time_index" in well_acquisition_inventory_df.columns:
+            native_by_merged = {
+                int(merged): int(native)
+                for merged, native in well_acquisition_inventory_df.groupby("time_index")[
+                    "raw_time_index"
+                ].first().items()
+            }
+        else:
+            native_by_merged = {int(t): int(t) for t in time_indices}
+
         if smoke_max_time_indices is not None and smoke_max_time_indices > 0:
             # ┌─────────────────────────────────────────────────────────────────────────────────┐
             # │ DEVELOPMENT-ONLY SCAFFOLDING — NOT a frame-selection policy.                       │
@@ -372,6 +534,24 @@ def materialize_yx1_product_for_well(
             print(msg, flush=True)
         rows: list[dict] = []
 
+        # Open each source ONCE per well, not once per frame. A collection well reads every
+        # timepoint of source 0, then source 1, and so on -- reopening per frame would pay the ND2
+        # metadata parse dozens of times. Handles are closed in the finally below.
+        _open_sources: dict[str, tuple] = {}
+
+        def _source_tensor(path):
+            key = str(path)
+            if key not in _open_sources:
+                if key == str(nd2_path):
+                    _open_sources[key] = (nd, dask_arr, axes, array_axis_order)
+                else:
+                    handle = nd2.ND2File(path)
+                    _open_sources[key] = (
+                        handle, handle.to_dask(), axes_of(handle), array_axis_order_of(handle),
+                    )
+            _handle, arr, ax, order = _open_sources[key]
+            return arr, ax, order
+
         # Per-time_index time-column lookup, carried through from the acquisition inventory (the
         # OWNER/deriver of the time block — see specs/acquisition_inventory_schema_policy.md). The
         # values are constant across z/channel within a time_index, so one row per time_index suffices.
@@ -381,6 +561,34 @@ def materialize_yx1_product_for_well(
             .set_index("time_index")[time_cols]
             .to_dict("index")
         )
+        # EXPOSURE IS PER (time_index, channel_id), NOT PER time_index. The time_lookup above is
+        # keyed on time alone because elapsed/acquisition time are constant across z and channel
+        # within a timepoint. Exposure is NOT: measured on the pbx files, BF ran at 11 ms and
+        # tdtomato at 600 ms in the SAME file. Reusing the time-only shape would stamp whichever
+        # channel came first onto every row -- here, BF's 11 ms onto the RFP rows: a column that is
+        # present, plausible, and wrong by 55x on exactly the channel it exists to describe.
+        _illumination_cols = [
+            c
+            for c in ("exposure_ms", "illumination_power", "dia_iris_intensity")
+            if c in well_acquisition_inventory_df.columns
+        ]
+        illumination_lookup: dict[tuple[int, str], dict] = {}
+        if _illumination_cols:
+            for (t_key, c_key), group in well_acquisition_inventory_df.groupby(
+                ["time_index", "channel_id"]
+            ):
+                illumination_lookup[(int(t_key), str(c_key))] = (
+                    group.iloc[0][_illumination_cols].to_dict()
+                )
+
+        def _illumination_for(time_index: int, channel_id: str) -> dict:
+            """Settings for one frame; NaN when the inventory predates these columns."""
+            found = illumination_lookup.get((int(time_index), str(channel_id)), {})
+            return {
+                column: found.get(column, float("nan"))
+                for column in ("exposure_ms", "illumination_power", "dia_iris_intensity")
+            }
+
         z_lookup = (
             well_acquisition_inventory_df.groupby("time_index")["z_index"]
             .apply(lambda s: sorted(int(z) for z in s.dropna().unique()))
@@ -389,70 +597,120 @@ def materialize_yx1_product_for_well(
 
         # --- Materialization loop: per time_index → product frame(s) → write image → record rows --
         for t in time_indices:
-            stack = _get_stack(dask_arr, t=t, w=position_index)
+            # PER-SOURCE FILE BINDING. A single experiment resolves the same path every iteration
+            # (dict hit, file already open). A COLLECTION switches file when the merged axis crosses
+            # a source boundary -- which is the whole reason this lookup exists rather than one ND2
+            # bound outside the loop.
+            t_nd2_path = nd2_path_by_merged_time[int(t)]
+            t_dask, t_axes, t_axis_order = _source_tensor(t_nd2_path)
+
+            # The axis layout must agree with the first source's, since channel_index and the
+            # position/z geometry were resolved against it. Disagreement means the union merged
+            # acquisitions that are not the same plate imaged the same way.
+            if (t_axes.n_c, t_axes.n_z, t_axes.n_p) != (axes.n_c, axes.n_z, axes.n_p):
+                raise ValueError(
+                    f"Source {t_nd2_path} has axes (C={t_axes.n_c}, Z={t_axes.n_z}, "
+                    f"P={t_axes.n_p}) but the first source of well {well_id!r} has "
+                    f"(C={axes.n_c}, Z={axes.n_z}, P={axes.n_p}). Sources merged into one "
+                    "collection must share an axis layout, or channel_index and position_index "
+                    "do not mean the same thing across them."
+                )
+
+            # The ND2 lookup uses the SOURCE-NATIVE frame index; `t` (merged) keys the output identity.
+            stack = _get_stack(
+                t_dask,
+                t=native_by_merged[int(t)],
+                w=position_index,
+                axes=t_axes,
+                array_axis_order=t_axis_order,
+                channel=channel_index,
+            )
             t_times = time_lookup[t]
             if resolved_product.image_product_type == "projection":
-                ff, focus_index_map = materialize_ff_projection(stack, device=device)
-                # Per-product display polarity (shared owner), same op/flag Keyence uses.
-                ff = apply_display_polarity(ff, invert=write_policy.flip_polarity)
+                projection, index_map = _project_stack(
+                    stack,
+                    projection_method=resolved_product.projection_method,
+                    device=device,
+                )
+                # Per-product display polarity (shared owner), same op/flag Keyence uses. For
+                # fluorescence the resolved policy is flip_polarity=False, so this is a no-op there.
+                projection = apply_display_polarity(
+                    projection, invert=write_policy.flip_polarity
+                )
 
                 out_path = materialized_image_paths.projection_frame_path(
                     built_image_data_dir,
                     experiment_id=experiment_id,
                     well_id=well_id,
-                    channel_id="BF",
+                    channel_id=resolved_product.channel_id,
                     time_index=t,
-                    projection_method="focus_stack",
+                    projection_method=resolved_product.projection_method,
                     ext=ext,
                     candidate=candidate,
                 )
-                out_w, out_h = _write_image_and_read_dims(ff, out_path, write_policy)
+                out_w, out_h = _write_image_and_read_dims(projection, out_path, write_policy)
 
-                # --- Construction provenance: the focus_index_map .npz (focus_stack only) ----------
-                # focus_index_map values are STACK-AXIS OFFSETS into `stack` (axis 0). z_indices is
-                # the ordered list of acquisition z_index labels for those offsets — built from the
-                # SAME inventory rows / order used to load `stack`. For YX1 the stack is loaded in
-                # z_index order (range(n_z)), so sorted(z_lookup[t]) is exactly the axis order.
-                z_indices = np.asarray(z_lookup.get(t, []), dtype=np.int32)
-                if focus_index_map.shape[0] != stack.shape[1] or focus_index_map.shape[1] != stack.shape[2]:
-                    raise ValueError(
-                        f"focus_index_map shape {focus_index_map.shape} does not match the "
-                        f"(Y, X) of stack {stack.shape} for well {well_id} time_index={t}."
+                # --- Construction provenance: the index_map .npz, IF the plan asked for it ---------
+                # index_map values are STACK-AXIS OFFSETS into `stack` (axis 0). z_indices is the
+                # ordered list of acquisition z_index labels for those offsets — built from the SAME
+                # inventory rows / order used to load `stack`. For YX1 the stack is loaded in z_index
+                # order (range(n_z)), so sorted(z_lookup[t]) is exactly the axis order. The pair is
+                # what makes an offset translatable back to an acquisition label; never write one
+                # without the other.
+                fim_path = None
+                if resolved_product.write_index_map:
+                    if index_map is None:
+                        raise ValueError(
+                            f"Product requested write_index_map=True but the "
+                            f"{resolved_product.projection_method!r} primitive returned no index map."
+                        )
+                    z_indices = np.asarray(z_lookup.get(t, []), dtype=np.int32)
+                    if index_map.shape[0] != stack.shape[1] or index_map.shape[1] != stack.shape[2]:
+                        raise ValueError(
+                            f"index_map shape {index_map.shape} does not match the "
+                            f"(Y, X) of stack {stack.shape} for well {well_id} time_index={t}."
+                        )
+                    fim_path = materialized_image_paths.index_map_path(
+                        built_image_data_dir,
+                        experiment_id=experiment_id,
+                        well_id=well_id,
+                        channel_id=resolved_product.channel_id,
+                        time_index=t,
+                        projection_method=resolved_product.projection_method,
+                        candidate=candidate,
                     )
-                fim_path = materialized_image_paths.focus_index_map_path(
-                    built_image_data_dir,
-                    experiment_id=experiment_id,
-                    well_id=well_id,
-                    channel_id="BF",
-                    time_index=t,
-                    candidate=candidate,
-                )
-                fim_path.parent.mkdir(parents=True, exist_ok=True)
-                np.savez(
-                    fim_path,
-                    focus_index_map=focus_index_map.astype(np.int32),
-                    z_indices=z_indices,
-                )
+                    fim_path.parent.mkdir(parents=True, exist_ok=True)
+                    np.savez(
+                        fim_path,
+                        focus_index_map=index_map.astype(np.int32),
+                        z_indices=z_indices,
+                    )
 
-                image_id = derive_image_id(well_id, "BF", int(t))
+                image_id = derive_image_id(well_id, resolved_product.channel_id, int(t))
                 rows.append(_frame_inventory_row(
                     experiment_id=experiment_id,
                     well_index=well_index,
                     well_id=well_id,
+                    channel_id=resolved_product.channel_id,
                     time_index=int(t),
                     image_id=image_id,
                     elapsed_time_s=t_times["elapsed_time_s"],
                     acquisition_time_s=t_times["acquisition_time_s"],
+                    **_illumination_for(int(t), resolved_product.channel_id),
                     z_index=pd.NA,
                     image_product_type="projection",
-                    projection_method="focus_stack",
+                    projection_method=resolved_product.projection_method,
                     image_path=out_path,
-                    focus_index_map_path=fim_path,
+                    index_map_path=fim_path,
+                    write_index_map=bool(resolved_product.write_index_map),
                     image_micrometers_per_pixel=_materialized_um_per_px(um_per_px, write_policy),
                     image_width_px=out_w,
                     image_height_px=out_h,
                     write_policy=write_policy,
-                    raw_image_source_path=nd2_path,
+                    # THIS frame's source, not the well's first. For a collection they
+                    # differ, and a row claiming the wrong provenance is a lie that no
+                    # downstream check would catch.
+                    raw_image_source_path=t_nd2_path,
                     raw_image_width_px=img_w,
                     raw_image_height_px=img_h,
                     raw_micrometers_per_pixel=um_per_px,
@@ -469,7 +727,7 @@ def materialize_yx1_product_for_well(
                         built_image_data_dir,
                         experiment_id=experiment_id,
                         well_id=well_id,
-                        channel_id="BF",
+                        channel_id=resolved_product.channel_id,
                         time_index=t,
                         z_index=z_index,
                         ext=ext,
@@ -480,25 +738,33 @@ def materialize_yx1_product_for_well(
                     z_plane = apply_display_polarity(stack[z_index], invert=write_policy.flip_polarity)
                     out_w, out_h = _write_image_and_read_dims(z_plane, out_path, write_policy)
 
-                    image_id = derive_image_id(well_id, "BF", int(t), z_index=z_index)
+                    image_id = derive_image_id(
+                        well_id, resolved_product.channel_id, int(t), z_index=z_index
+                    )
                     rows.append(_frame_inventory_row(
                         experiment_id=experiment_id,
                         well_index=well_index,
                         well_id=well_id,
+                        channel_id=resolved_product.channel_id,
                         time_index=int(t),
                         image_id=image_id,
                         elapsed_time_s=t_times["elapsed_time_s"],
                         acquisition_time_s=t_times["acquisition_time_s"],
+                        **_illumination_for(int(t), resolved_product.channel_id),
                         z_index=int(z_index),
                         image_product_type="z_stack",
                         projection_method=pd.NA,
                         image_path=out_path,
-                        focus_index_map_path=None,  # z_stack rows carry no focus provenance
+                        index_map_path=None,  # z_stack writes every plane; nothing to index
+                        write_index_map=False,
                         image_micrometers_per_pixel=_materialized_um_per_px(um_per_px, write_policy),
                         image_width_px=out_w,
                         image_height_px=out_h,
                         write_policy=write_policy,
-                        raw_image_source_path=nd2_path,
+                        # THIS frame's source, not the well's first. For a collection they
+                    # differ, and a row claiming the wrong provenance is a lie that no
+                    # downstream check would catch.
+                    raw_image_source_path=t_nd2_path,
                         raw_image_width_px=img_w,
                         raw_image_height_px=img_h,
                         raw_micrometers_per_pixel=um_per_px,
@@ -508,10 +774,21 @@ def materialize_yx1_product_for_well(
                 log.info("  %d/%d frames written", len(rows), len(time_indices))
 
     finally:
+        # Close EVERY source this well opened, not just the first. A collection well opens one
+        # handle per source; leaking them across 96 wells would exhaust file descriptors. `nd` is
+        # registered in the cache under its own path on first lookup, but it is closed explicitly
+        # too -- an exception raised before the loop leaves the cache empty with `nd` still open.
+        for _handle, _arr, _ax, _order in locals().get("_open_sources", {}).values():
+            if _handle is not nd:
+                try:
+                    _handle.close()
+                except Exception:  # a failed close must not mask the real error
+                    log.warning("failed to close ND2 source for well %s", well_id, exc_info=True)
         nd.close()
 
     # --- Inventory assembly: build the frame-inventory shard + final required-columns check ---
     inv_df = pd.DataFrame(rows, columns=list(_EMITTED_COLUMNS))
+
 
     # Migration-local sanity check: Stage 3 emits the materialized-image-first contract shape even
     # if the shared frame_inventory contract module has not been updated yet on this branch.
@@ -522,6 +799,8 @@ def materialize_yx1_product_for_well(
             f"columns: {missing}. Present: {list(inv_df.columns)}."
         )
 
+    _assert_channel_identity_agrees(inv_df, resolved_product=resolved_product, well_id=well_id)
+
     log.info(
         "materialize_yx1_product_for_well complete: well=%s product=%s frames=%d",
         well_id, resolved_product.image_product_type, len(inv_df),
@@ -529,20 +808,68 @@ def materialize_yx1_product_for_well(
     return inv_df
 
 
+def _assert_channel_identity_agrees(
+    inv_df: pd.DataFrame, *, resolved_product: ResolvedImageProduct, well_id: str
+) -> None:
+    """Fail loud unless ONE channel agrees across every place identity is recorded.
+
+    The failure this guards is silent, not loud: writing RFP pixels while stamping a BF ``image_id``
+    or a BF path directory produces a table that validates and images that open, with corrupt
+    identity. De-hardcoding the ``"BF"`` literals fixed that once; this invariant keeps a new literal
+    (or a mis-threaded parameter) from reintroducing it, which a one-time sweep cannot do.
+
+    Checks the resolved product's channel against: the ``channel_id`` column, the channel token
+    parsed back out of ``image_id``, and the channel directory in ``image_path``.
+    """
+    if inv_df.empty:
+        return
+    expected = resolved_product.channel_id
+
+    column_channels = set(inv_df["channel_id"].astype(str).unique())
+    if column_channels != {expected}:
+        raise RuntimeError(
+            f"channel identity mismatch for well {well_id!r}: resolved product declares "
+            f"channel_id={expected!r} but emitted rows carry {sorted(column_channels)}."
+        )
+
+    for image_id in inv_df["image_id"].astype(str):
+        _, parsed_channel, _, _ = parse_image_id_with_z_index(image_id)
+        if parsed_channel != expected:
+            raise RuntimeError(
+                f"channel identity mismatch for well {well_id!r}: image_id {image_id!r} encodes "
+                f"channel {parsed_channel!r} but the resolved product is {expected!r}. Pixels would "
+                "be recorded under the wrong channel identity."
+            )
+
+    # The channel is a path SEGMENT (…/{well_id}/{channel_id}/{image_product_type}/…), so a wrong
+    # directory means the bytes themselves landed under another channel's tree.
+    for image_path in inv_df["image_path"].astype(str):
+        if expected not in Path(image_path).parts:
+            raise RuntimeError(
+                f"channel identity mismatch for well {well_id!r}: image_path {image_path!r} has no "
+                f"{expected!r} path segment, so the written file is not under its channel's tree."
+            )
+
+
 def _frame_inventory_row(
     *,
     experiment_id: str,
     well_index: str,
     well_id: str,
+    channel_id: str,
     time_index: int,
     image_id: str,
     elapsed_time_s: float,
     acquisition_time_s: float,
+    exposure_ms: float,
+    illumination_power: float,
+    dia_iris_intensity: float,
     z_index: object,
     image_product_type: str,
     projection_method: object,
     image_path: Path,
-    focus_index_map_path: object,
+    index_map_path: object,
+    write_index_map: bool,
     image_micrometers_per_pixel: float,
     image_width_px: int,
     image_height_px: int,
@@ -556,21 +883,29 @@ def _frame_inventory_row(
         "experiment_id": experiment_id,
         "well_index": well_index,
         "well_id": well_id,
-        "channel_id": "BF",
+        # Required parameter, never a literal: the row's channel MUST be the resolved product's
+        # channel. A default here would let RFP pixels be recorded under a BF identity silently.
+        "channel_id": channel_id,
         "time_index": time_index,
         "image_id": image_id,
         "elapsed_time_s": elapsed_time_s,
         "acquisition_time_s": acquisition_time_s,
+        "exposure_ms": exposure_ms,
+        "illumination_power": illumination_power,
+        "dia_iris_intensity": dia_iris_intensity,
         "z_index": z_index,
         "image_product_type": image_product_type,
         "projection_method": projection_method,
         "image_path": str(image_path),
         # Construction-provenance path (NOT a primary image): the focus_stack focus_index_map .npz,
         # populated for projection/focus_stack rows, NA otherwise.
-        "focus_index_map_path": (
-            pd.NA if focus_index_map_path is None or focus_index_map_path is pd.NA
-            else str(focus_index_map_path)
+        "index_map_path": (
+            pd.NA if index_map_path is None or index_map_path is pd.NA
+            else str(index_map_path)
         ),
+        # The row states whether its product ASKED for the sidecar, so the validator can enforce
+        # "path populated iff requested" from the table alone (it never sees the resolved plan).
+        "write_index_map": bool(write_index_map),
         "image_micrometers_per_pixel": image_micrometers_per_pixel,
         "image_width_px": image_width_px,
         "image_height_px": image_height_px,
@@ -636,3 +971,4 @@ def _materialized_um_per_px(raw_um_per_px: float, write_policy: ImageWritePolicy
     coerce to int — doing so truncated e.g. 2.012 to 2 and recorded the wrong calibration.
     """
     return float(raw_um_per_px) * float(write_policy.downsample_factor)
+

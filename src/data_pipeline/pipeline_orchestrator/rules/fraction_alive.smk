@@ -17,10 +17,10 @@ def _fa_validated(experiment, *, path_mode, well_id=None):
     return rule_validated(FRACTION_ALIVE_STEP, "fraction_alive", experiment, path_mode=path_mode, well_id=well_id)
 
 def _fa_snip_inventory(experiment, *, well_id):
-    return rule_artifact("snip_inventory", "snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
+    return rule_artifact("snip_inventory", "legacy_default_snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _fa_snip_inventory_validated(experiment, *, well_id):
-    return rule_validated("snip_inventory", "snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
+    return rule_validated("snip_inventory", "legacy_default_snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _fa_snip_aux(experiment, *, well_id):
     return rule_artifact("snip_auxiliary_masks", "manifest", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)

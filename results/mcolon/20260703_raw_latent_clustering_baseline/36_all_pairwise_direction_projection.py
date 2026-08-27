@@ -129,10 +129,46 @@ def build_projection_tensor(binned_z, z_cols, pair_vecs, frac):
 
     # NaN-off-support ok; keep a bin unless ALL directions missing
     mask = mask & ~np.isnan(features).all(axis=2)
+    # prune extreme (embryo, bin) cells that spread randomly and distort the layout
+    mask = prune_outlier_cells(features, mask, k_mad=3.0)
     return features, mask, embryo_ids, time_values, labels
 
 
-def condense_and_render(features, mask, embryo_ids, time_values, labels, exp_labels, out_dir, title):
+def prune_outlier_cells(features, mask, k_mad=4.0):
+    """Drop (embryo, bin) cells whose projection is an extreme outlier within its bin.
+
+    For each time bin, compute each observed point's robust radius = distance from
+    the per-bin median projection, then flag points beyond ``k_mad`` median-absolute-
+    deviations of that radius. Those cells are removed from the mask so they never
+    enter UMAP / condensation — surgical: an embryo keeps its good bins, only its
+    extreme slices are dropped. Missing directions (NaN) are treated as 0 for the
+    radius so a partially-defined cell isn't judged an outlier on that basis alone.
+    """
+    mask = mask.copy()
+    N_e, T, K = features.shape
+    n_pruned = 0
+    for t in range(T):
+        obs = np.flatnonzero(mask[:, t])
+        if obs.size < 5:
+            continue
+        pts = np.nan_to_num(features[obs, t, :], nan=0.0)
+        center = np.median(pts, axis=0)
+        radius = np.linalg.norm(pts - center, axis=1)
+        med_r = np.median(radius)
+        mad = np.median(np.abs(radius - med_r))
+        if mad <= 0:
+            continue
+        cutoff = med_r + k_mad * mad
+        drop = obs[radius > cutoff]
+        mask[drop, t] = False
+        n_pruned += drop.size
+    # a bin with <2 survivors can't inform UMAP; leave as-is (init handles small slices)
+    print(f"  pruned {n_pruned} outlier (embryo,bin) cells (>{k_mad}·MAD per bin)")
+    return mask
+
+
+def condense_and_render(features, mask, embryo_ids, time_values, labels, exp_labels, out_dir,
+                        title, render_gif=False):
     out_dir.mkdir(parents=True, exist_ok=True)
     x0 = init_embedding.aligned_umap_init(features, mask, n_neighbors=15, min_dist=0.1,
                                           random_state=RANDOM_STATE)
@@ -148,9 +184,16 @@ def condense_and_render(features, mask, embryo_ids, time_values, labels, exp_lab
                               energy_change_rel_threshold=None, coherence_change_rel_threshold=None)
     result = run_condensation(x0=x0, mask=mask, config=config, stopping=stopping,
                               log_every=max(1, N_ITER // 20), save_every=SAVE_EVERY, verbose=True)
-    np.savez(out_dir / "condensed_positions.npz",
-             positions=result.positions, x0=x0, mask=mask, time_values=time_values,
-             embryo_ids=embryo_ids, labels=labels, experiments=exp_labels)
+
+    payload = dict(positions=result.positions, x0=x0, mask=mask, time_values=time_values,
+                   embryo_ids=embryo_ids, labels=labels, experiments=exp_labels)
+    # keep the per-iteration snapshots so we can animate the condensation
+    if result.position_history is not None:
+        payload["position_history"] = result.position_history
+        payload["snapshot_iters"] = np.asarray(result.snapshot_iters, dtype=int)
+    npz_out = out_dir / "condensed_positions.npz"
+    np.savez(npz_out, **payload)
+
     views = [
         {"name": "experiment", "labels": exp_labels, "color_map": EXP},
         {"name": "genotype", "labels": labels, "color_map": GEN},
@@ -159,6 +202,12 @@ def condense_and_render(features, mask, embryo_ids, time_values, labels, exp_lab
                        views=views, title=title,
                        output_path=out_dir / "multiview_time_slice.html")
     print(f"  rendered -> {out_dir / 'multiview_time_slice.html'}")
+
+    if render_gif and result.position_history is not None:
+        # iterations.gif: watch the condensation move point-by-point over solver iters
+        run = tc.load_run(npz_out, title=title, color_map=GEN)
+        tc.render_run(run, str(out_dir), skip_animations=False)
+        print(f"  iterations.gif -> {out_dir / 'iterations.gif'}")
 
 
 def main():
@@ -193,7 +242,8 @@ def main():
                     rows.append(d)
         pd.DataFrame(rows).to_csv(out_dir / "projection_scores.csv", index=False)
         condense_and_render(feats, mask, eids, tvals, labels, exp_labels, out_dir,
-                            f"PBX all-pairwise direction projection ({level})")
+                            f"PBX all-pairwise direction projection ({level})",
+                            render_gif=(level == "all"))
 
     print("\nDone. HTMLs under figures/pairwise_direction/{all,clf90,clf50}/")
 

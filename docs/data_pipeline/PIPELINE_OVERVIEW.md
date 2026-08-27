@@ -381,6 +381,11 @@ Object extraction produces **three landmark artifacts** (roughly in order of imp
 
 - **physical embryo registry** — *which animals exist*. Track identity becomes `physical_embryo_id`
   — the first per-well fan point below the frame, everything snip-level downstream expands from it.
+  For **snapshot collections** (a well merged from `n_sources>1` acquisitions, per
+  `EXPERIMENT_GROUP_PLATE_MODEL.md`), a visible `EmbryoMergePolicy` governs the mint: `n_sources==1`
+  → NORMAL (as today); `n_sources>1` & one embryo → BRIDGE (one id across timepoints); else FRACTURE
+  (disjoint `_e` blocks, no guessed cross-gap correspondence). Recorded as `merge_policy` + `n_sources`
+  columns on the registry.
 - **snip inventory** — *what was cropped*: crop identity, provenance, and output paths for every
   `snip_id`, projected from the registered animal onto channel and time.
 - **auxiliary masks** — *what else was segmented per snip*: yolk, viability (for death), and other

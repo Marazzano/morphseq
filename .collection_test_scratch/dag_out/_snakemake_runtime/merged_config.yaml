@@ -1,0 +1,122 @@
+experiment_wells: null
+experiments:
+- 20260624_2x_td_bf_pbx_coll_plate01
+feature_extraction:
+  consolidated_features: {}
+  curvature_metrics: {}
+  fraction_alive: {}
+  legacy_embeddings:
+    batch_size: 64
+    model_input_channels: 1
+    model_input_shape:
+    - 288
+    - 128
+    model_name: 20241107_ds_sweep01_optimum
+  mask_geometry: {}
+  pose_kinematics: {}
+  stage_predictions: {}
+front_end:
+  mode: native
+image_building:
+  device: auto
+  keyence:
+    enabled: false
+  overwrite: false
+  yx1:
+    z_buffer: false
+image_materialization:
+  products:
+  - channel_id: BF
+    image_product_type: projection
+    projection_method: focus_stack
+    snips:
+    - snip_recipe: clahe_blend
+    write_index_map: true
+  - channel_id: RFP
+    image_product_type: projection
+    projection_method: max
+    snips:
+    - snip_recipe: no_change
+  smoke_max_time_indices: 0
+  write_policies:
+    BF__z_stack:
+      downsample_factor: 4
+      downsample_method: area_resize
+      file_format: jpg
+      jpeg_quality: 85
+      pixel_dtype: uint8
+microscope: YX1
+plate_metadata:
+  enabled: true
+qc:
+  death_fraction_threshold: 0.9
+  edge_margin_pixels: 2
+resources:
+  gpu: 0
+  mem_mb: 8000
+scope_metadata:
+  keyence:
+    raw_images_pattern: Keyence/{experiment}
+  yx1:
+    raw_images_pattern: YX1/{experiment}
+    ref_xy_csv: metadata/reference/yx1/nd2_ref_plate_xy_coordinates.csv
+segmentation_and_tracking:
+  channel_id: BF
+  device: cuda
+  groundingdino:
+    box_threshold: 0.35
+    config_path: ''
+    iou_threshold: 0.5
+    text_prompt: individual embryo
+    text_threshold: 0.25
+    weights_path: ''
+  groundingdino_config: groundingdino/config/GroundingDINO_SwinT_OGC.py
+  groundingdino_model_name: SwinT_OGC
+  groundingdino_release: legacy
+  groundingdino_repo: GroundingDINO
+  groundingdino_weights: weights/groundingdino_swint_ogc.pth
+  models_root: models
+  sam2:
+    checkpoint_path: ''
+    config_path: ''
+  sam2_checkpoint: checkpoints/sam2.1_hiera_large.pt
+  sam2_config: configs/sam2.1/sam2.1_hiera_l.yaml
+  sam2_model_name: hiera_large
+  sam2_models_root: sam2
+  sam2_release: legacy
+  tracking_mode: bidirectional
+snip_frame_shape: &id001
+- 576
+- 256
+snip_processing:
+  background_n_samples: 100
+  background_noise_scale: 0.1
+  background_seed: 309
+  blend_radius_um: 20.0
+  output_shape: *id001
+  save_raw_crops: true
+  target_pixel_size_um: 7.8
+  write_manifest_csv: true
+target_wells:
+  20260624_2x_td_bf_pbx_coll_plate01:
+  - 20260624_2x_td_bf_pbx_coll_plate01_A01
+  - 20260624_2x_td_bf_pbx_coll_plate01_A02
+  - 20260624_2x_td_bf_pbx_coll_plate01_B01
+  - 20260624_2x_td_bf_pbx_coll_plate01_B02
+threads: 4
+unet_snip:
+  device: cuda
+  models:
+    bubble:
+      checkpoint: segmentation/bubble_v0_0100
+      model_input_shape: *id001
+    focus:
+      checkpoint: segmentation/focus_v0_0100
+      model_input_shape: *id001
+    via:
+      checkpoint: segmentation/via_v1_0100
+      model_input_shape: *id001
+    yolk:
+      checkpoint: segmentation/yolk_v1_0050
+      model_input_shape: *id001
+  models_root: models

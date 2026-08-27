@@ -17,6 +17,8 @@ import numpy as np
 import nd2
 import logging
 
+from data_pipeline.acquisition.metadata_ingest.scope.yx1.nd2_axes import axes_of
+
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
@@ -49,16 +51,19 @@ def extract_nd2_stage_positions(nd2_path: Path) -> pd.DataFrame:
     log.info(f"Extracting stage positions from: {nd2_path}")
 
     with nd2.ND2File(str(nd2_path)) as f:
-        sizes = f.sizes
-        P = sizes.get("P", sizes.get("W", 1))
-        Z = sizes.get("Z", 1)
-        C = sizes.get("C", 1)
-
-        log.info(f"  ND2 dimensions: P={P}, Z={Z}, C={C}")
+        # Dimensions + frame addressing from the ONE shared reader, so this cannot drift from the
+        # extractor/materializer. The previous local arithmetic `idx = w * (Z * C)` multiplied by the
+        # CHANNEL count, but channels are not addressable (one frame carries all of them) — so on a
+        # multi-channel file it overshot every position by a factor of C and ran off the end.
+        axes = axes_of(f)
+        log.info(
+            f"  ND2 dimensions: P={axes.n_p}, Z={axes.n_z}, C={axes.n_c}, T={axes.n_t} "
+            f"(sequence order {axes.sequence_order})"
+        )
 
         records = []
-        for w in range(P):
-            idx = w * (Z * C)  # T=0, first frame per position
+        for w in range(axes.n_p):
+            idx = axes.frame_index(position=w, time=0, z=0)
             try:
                 md = f.frame_metadata(idx)
                 ch = getattr(md, "channels", [None])[0]

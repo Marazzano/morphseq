@@ -207,23 +207,40 @@ def projection_frame_path(
     )
 
 
-def focus_index_map_path(
+def index_map_subdir_for_method(projection_method: str) -> str:
+    """Return the provenance subdirectory name for one projection method's index map.
+
+    ``focus_stack`` keeps the legacy ``focus_index_map/`` name deliberately: every already-materialized
+    BF sidecar on disk lives there, and orphaning those is strictly worse than a slightly inconsistent
+    directory name. New methods get ``{method}_index_map/``, so ``max`` → ``max_index_map/``.
+    """
+    if projection_method == "focus_stack":
+        return _FOCUS_INDEX_MAP_SUBDIR
+    return f"{projection_method}_index_map"
+
+
+def index_map_path(
     built_image_data_dir: Path,
     *,
     experiment_id: str,
     well_id: str,
     channel_id: str,
     time_index: int,
+    projection_method: str = "focus_stack",
     ext: str = "npz",
     candidate: bool = False,
 ) -> Path:
-    """Resolve the CONSTRUCTION-PROVENANCE path for one projection's focus-index map.
+    """Resolve the CONSTRUCTION-PROVENANCE path for one projection's index map.
 
-    Lands under ``{channel_id}/projection/focus_stack/focus_index_map/{image_id}.npz`` — a
-    sibling of the focus_stack projection image it explains, 1:1 with that projection ``image_id``.
+    Lands under ``{channel_id}/projection/{projection_method}/{subdir}/{image_id}.npz`` — a sibling of
+    the projection image it explains, 1:1 with that projection ``image_id``. The subdir is
+    ``focus_index_map/`` for focus_stack (legacy-preserved) and ``{method}_index_map/`` otherwise; see
+    ``index_map_subdir_for_method``.
+
     This is NOT an image path: it is gated by ``ALLOWED_PROVENANCE_SUFFIXES`` (``.npz``), never by
-    ``ALLOWED_IMAGE_SUFFIXES``. The ``.npz`` stores ``focus_index_map`` (per-pixel stack-axis
-    offsets) + ``z_indices`` (ordered acquisition z labels for those offsets).
+    ``ALLOWED_IMAGE_SUFFIXES``. The ``.npz`` stores per-pixel stack-axis offsets + ``z_indices`` (the
+    ordered acquisition z labels those offsets index into) — the pair is what makes an offset
+    translatable, so neither is ever written without the other.
     """
     dot_ext = f".{ext}" if not ext.startswith(".") else ext
     if dot_ext not in ALLOWED_PROVENANCE_SUFFIXES:
@@ -243,10 +260,20 @@ def focus_index_map_path(
         / well_subdir
         / channel_id
         / "projection"
-        / "focus_stack"
-        / _FOCUS_INDEX_MAP_SUBDIR
+        / projection_method
+        / index_map_subdir_for_method(projection_method)
         / f"{image_id}{dot_ext}"
     )
+
+
+def focus_index_map_path(*args, **kwargs) -> Path:
+    """Deprecated alias for ``index_map_path``, pinned to ``projection_method='focus_stack'``.
+
+    Kept so existing callers keep resolving the legacy location through the rename. New code should
+    call ``index_map_path`` with an explicit ``projection_method``.
+    """
+    kwargs.setdefault("projection_method", "focus_stack")
+    return index_map_path(*args, **kwargs)
 
 
 def z_stack_frame_path(

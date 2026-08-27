@@ -10,7 +10,7 @@ import pandas as pd
 
 from data_pipeline.acquisition.metadata_ingest.time_helpers import add_elapsed_time_columns
 from data_pipeline.acquisition.metadata_ingest.time_helpers import add_frame_interval_unit_columns
-from data_pipeline.acquisition.metadata_ingest.time_helpers import ensure_time_int_column
+from data_pipeline.acquisition.metadata_ingest.time_helpers import ensure_time_index_column
 from data_pipeline.acquisition.metadata_ingest.position_well_mapping import validate_position_well_mapping
 from data_pipeline.shared.identifiers import build_image_id
 
@@ -23,7 +23,7 @@ def apply_position_to_well_mapping(
     selected_wells: Iterable[str] | None = None,
 ) -> pd.DataFrame:
     """Map scope rows to plate wells and canonical IDs for downstream contracts."""
-    scope_df = ensure_time_int_column(
+    scope_df = ensure_time_index_column(
         pd.read_csv(scope_metadata_csv),
         stage_name="scope_metadata_position_mapping_input",
     )
@@ -66,25 +66,64 @@ def apply_position_to_well_mapping(
                 f"Missing wells preview: {sorted(missing_wells)[:10]}"
             )
     else:
-        identity_cols = ["experiment_id", "position_index", "well_index", "well_id"]
+        # SOURCE-AWARE JOIN. A collection plate's mapping holds one block per raw source, so the
+        # same position_index recurs once per source and `(experiment_id, position_index)` alone is
+        # NOT unique on the right — pandas raises MergeError under validate="many_to_one".
+        # `source_ordinal` disambiguates it.
+        #
+        # The key is the SOURCE, not the frame: one source can span many merged time_index values,
+        # and every frame of that source inherits the same position→well mapping. Joining on
+        # time_index instead would demand one mapping row per frame.
+        #
+        # Gated on BOTH sides carrying the column, so a single (non-collection) experiment joins on
+        # exactly the original keys and behaves byte-identically.
+        merge_keys = ["experiment_id", "position_index"]
+        if "source_ordinal" in mapping_df.columns:
+            if "source_ordinal" not in mapped_df.columns:
+                raise ValueError(
+                    "position_well_mapping.csv carries 'source_ordinal' (a collection mapping, one "
+                    "block per raw source) but the scope metadata does not. Both sides must speak "
+                    "the same source key — the collection scope union stamps source_ordinal; a "
+                    "mapping and scope table from different pipelines cannot be joined."
+                )
+            # Coerce BOTH sides: a CSV round-trip can leave one int64 and the other object/float64,
+            # which silently yields ZERO matches and then a misleading "does not cover" error.
+            for frame in (mapped_df, mapping_df):
+                frame["source_ordinal"] = pd.to_numeric(
+                    frame["source_ordinal"], errors="raise"
+                ).astype(int)
+            merge_keys.append("source_ordinal")
+
+        identity_cols = merge_keys + ["well_index", "well_id"]
         mapped_df = mapped_df.merge(
             mapping_df[identity_cols],
-            on=["experiment_id", "position_index"],
+            on=merge_keys,
             how="left",
             validate="many_to_one",
         )
 
         missing_identity = mapped_df["well_id"].isna()
         if missing_identity.any():
+            # Preview the FULL join key, so the message names what actually failed to match rather
+            # than listing positions that are present under a different source.
             sample = mapped_df.loc[
-                missing_identity, ["experiment_id", "position_index"]
+                missing_identity, merge_keys
             ].drop_duplicates().head(10).to_dict(orient="records")
             raise ValueError(
-                "position_well_mapping.csv does not cover all scope metadata positions. "
-                f"Missing preview: {sample}"
+                "position_well_mapping.csv does not cover all scope metadata positions "
+                f"(joined on {merge_keys}). Missing preview: {sample}"
             )
 
-    mapped_df["channel_id"] = mapped_df.get("channel", "BF").astype(str)
+    # scope_metadata carries the canonical token as `channel_id` (it was historically the laggard
+    # name `channel`; converged 2026-07-29). Fail loud rather than defaulting: silently assuming BF
+    # would mislabel a fluorescence channel. NOTE the old `.get("channel", "BF")` returned a scalar
+    # on absence and then raised on .astype — it was never a working fallback.
+    if "channel_id" not in mapped_df.columns:
+        raise ValueError(
+            "scope metadata is missing 'channel_id' (the canonical channel token minted by the "
+            f"scope adapter's channel_map). Present columns: {sorted(mapped_df.columns)}."
+        )
+    mapped_df["channel_id"] = mapped_df["channel_id"].astype(str)
 
     if "raw_channel_name" in mapped_df.columns:
         mapped_df["channel_name_raw"] = mapped_df["raw_channel_name"].astype(str)
@@ -93,7 +132,7 @@ def apply_position_to_well_mapping(
 
     mapped_df["image_id"] = [
         build_image_id(well_id, channel, int(t))
-        for well_id, channel, t in zip(mapped_df["well_id"].astype(str), mapped_df["channel_id"].astype(str), mapped_df["time_int"].astype(int))
+        for well_id, channel, t in zip(mapped_df["well_id"].astype(str), mapped_df["channel_id"].astype(str), mapped_df["time_index"].astype(int))
     ]
 
     mapped_df = add_elapsed_time_columns(
@@ -110,7 +149,7 @@ def apply_position_to_well_mapping(
         "experiment_id",
         "well_id",
         "well_index",
-        "time_int",
+        "time_index",
         "channel_id",
         "image_id",
         "experiment_time_s",

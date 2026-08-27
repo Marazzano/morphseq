@@ -1,0 +1,318 @@
+---
+title: "Build embryo-level cilia module scores"
+output: html_document
+---
+
+This notebook creates the table needed for differential cilia-module testing.
+
+Every cell already has a module score. Here, cells of the same type from the
+same embryo are summarized together so that each embryo remains one biological
+replicate.
+
+This table is deliberately kept separate from the CDS:
+
+- CDS `colData` has one row per cell.
+- This output has one row per embryo, cell type, and module.
+
+No cell type is converted to zero when it is absent from an embryo.
+
+```{r setup, message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(readr)
+
+PROJECT_DIR <- paste0(
+  "/net/trapnell/vol1/home/mdcolon/proj/morphseq/results/",
+  "mcolon/20260727_gene14_clean"
+)
+MODULE_DIR <- file.path(PROJECT_DIR, "cilia_gene_module")
+OUTPUT_DIR <- file.path(MODULE_DIR, "output")
+
+CELL_SCORE_FILE <- file.path(
+  OUTPUT_DIR,
+  "gene14_cell_cilia_scores.rds"
+)
+CELLTYPE_COUNT_FILE <- file.path(
+  PROJECT_DIR,
+  "cell_type_counts",
+  "per_embryo_celltype_counts.tsv"
+)
+EMBRYO_MODULE_FILE <- file.path(
+  OUTPUT_DIR,
+  "embryo_celltype_cilia_module_scores.tsv"
+)
+COVERAGE_AUDIT_FILE <- file.path(
+  OUTPUT_DIR,
+  "embryo_celltype_module_coverage.tsv"
+)
+
+source(file.path(MODULE_DIR, "cilia_gene_module_policy.R"))
+source(file.path(PROJECT_DIR, "abundance_dact", "contrast_plan.R"))
+
+# We inspect several possible cell-count requirements before choosing one for
+# significance testing. This notebook does not silently select a threshold.
+CELL_COUNT_THRESHOLDS_TO_AUDIT <- c(1L, 5L, 10L, 20L)
+```
+
+## Step 1: Read the existing per-cell scores
+
+The expensive CDS scoring has already been completed. This compact checkpoint
+contains cell identity, embryo identity, cell type, and all module scores.
+
+```{r read-cell-scores}
+cell_scores <- readRDS(CELL_SCORE_FILE)
+
+required_columns <- c(
+  "cell",
+  "embryo_ID",
+  "cell_type",
+  "perturbation",
+  "timepoint",
+  CHOSEN_CILIA_MODULES
+)
+missing_columns <- setdiff(required_columns, names(cell_scores))
+if (length(missing_columns) > 0L) {
+  stop(
+    "The per-cell score checkpoint is missing: ",
+    paste(missing_columns, collapse = ", ")
+  )
+}
+
+cell_scores <- cell_scores |>
+  dplyr::filter(
+    !is.na(.data$embryo_ID),
+    !is.na(.data$cell_type)
+  )
+
+cat(
+  nrow(cell_scores), "cells from",
+  dplyr::n_distinct(cell_scores$embryo_ID), "embryos\n"
+)
+```
+
+## Step 2: Verify embryo identity and attach RT block
+
+Perturbation, collection time, and RT block must each have one value per
+embryo. The RT-block value comes from the existing cell-type count table.
+
+```{r embryo-metadata}
+score_embryo_metadata <- cell_scores |>
+  dplyr::distinct(
+    .data$embryo_ID,
+    .data$perturbation,
+    .data$timepoint
+  )
+
+conflicting_score_metadata <- score_embryo_metadata |>
+  dplyr::count(.data$embryo_ID, name = "n_metadata_rows") |>
+  dplyr::filter(.data$n_metadata_rows != 1L)
+
+if (nrow(conflicting_score_metadata) > 0L) {
+  stop("Some embryos have conflicting perturbation or timepoint metadata.")
+}
+
+celltype_counts <- readr::read_tsv(
+  CELLTYPE_COUNT_FILE,
+  show_col_types = FALSE
+)
+
+count_embryo_metadata <- celltype_counts |>
+  dplyr::distinct(
+    .data$embryo_ID,
+    .data$perturbation,
+    .data$timepoint,
+    .data$rt_block
+  )
+
+conflicting_count_metadata <- count_embryo_metadata |>
+  dplyr::count(.data$embryo_ID, name = "n_metadata_rows") |>
+  dplyr::filter(.data$n_metadata_rows != 1L)
+
+if (nrow(conflicting_count_metadata) > 0L) {
+  stop("Some embryos have conflicting RT-block metadata.")
+}
+
+embryo_metadata <- score_embryo_metadata |>
+  dplyr::left_join(
+    count_embryo_metadata,
+    by = c("embryo_ID", "perturbation", "timepoint")
+  )
+
+if (anyNA(embryo_metadata$rt_block)) {
+  stop("Some scored embryos are missing an RT-block assignment.")
+}
+
+embryo_metadata
+```
+
+## Step 3: Summarize cells within each embryo and cell type
+
+For readability and memory efficiency, the five chosen modules are summarized
+one at a time. The mean will be the primary differential-module measurement.
+The median and fraction of nonzero cells remain available for interpretation
+and sensitivity checks.
+
+```{r summarize-modules}
+module_tables <- vector("list", length(CHOSEN_CILIA_MODULES))
+
+for (i in seq_along(CHOSEN_CILIA_MODULES)) {
+  module_name <- CHOSEN_CILIA_MODULES[[i]]
+
+  module_tables[[i]] <- cell_scores |>
+    dplyr::group_by(
+      .data$embryo_ID,
+      .data$cell_type
+    ) |>
+    dplyr::summarise(
+      module_id = .env$module_name,
+      n_cells = dplyr::n(),
+      mean_module_score = mean(.data[[module_name]]),
+      median_module_score = stats::median(.data[[module_name]]),
+      fraction_nonzero = mean(.data[[module_name]] > 0),
+      .groups = "drop"
+    )
+}
+
+embryo_module_scores <- dplyr::bind_rows(module_tables) |>
+  dplyr::left_join(embryo_metadata, by = "embryo_ID") |>
+  dplyr::select(
+    embryo_ID,
+    perturbation,
+    timepoint,
+    rt_block,
+    cell_type,
+    module_id,
+    n_cells,
+    mean_module_score,
+    median_module_score,
+    fraction_nonzero
+  ) |>
+  dplyr::arrange(
+    .data$timepoint,
+    .data$perturbation,
+    .data$embryo_ID,
+    .data$cell_type,
+    .data$module_id
+  )
+
+n_observed_embryo_celltypes <- cell_scores |>
+  dplyr::distinct(.data$embryo_ID, .data$cell_type) |>
+  nrow()
+
+expected_rows <- n_observed_embryo_celltypes * length(CHOSEN_CILIA_MODULES)
+
+if (nrow(embryo_module_scores) != expected_rows) {
+  stop("The embryo-level table does not have five modules per observed cell type.")
+}
+
+readr::write_tsv(embryo_module_scores, EMBRYO_MODULE_FILE)
+
+cat(
+  "Wrote", EMBRYO_MODULE_FILE, "with",
+  nrow(embryo_module_scores), "rows\n"
+)
+
+embryo_module_scores
+```
+
+## Step 4: Audit cell-count thresholds before testing
+
+This audit asks how many perturbation and control embryos have enough cells of
+each type. Module scores share the same cells, so coverage is calculated once
+per contrast and cell type rather than repeated five times.
+
+```{r coverage-audit}
+celltype_observations <- embryo_module_scores |>
+  dplyr::distinct(
+    .data$embryo_ID,
+    .data$perturbation,
+    .data$timepoint,
+    .data$rt_block,
+    .data$cell_type,
+    .data$n_cells
+  )
+
+coverage_rows <- list()
+row_number <- 1L
+
+for (contrast_number in seq_len(nrow(perturbation_contrast_plan))) {
+  contrast <- perturbation_contrast_plan[contrast_number, ]
+
+  contrast_observations <- celltype_observations |>
+    dplyr::filter(
+      .data$timepoint == contrast$timepoint,
+      .data$perturbation %in%
+        c(contrast$perturbation, contrast$control)
+    ) |>
+    dplyr::mutate(
+      arm = dplyr::if_else(
+        .data$perturbation == contrast$perturbation,
+        "perturbation",
+        "control"
+      )
+    )
+
+  for (minimum_cells in CELL_COUNT_THRESHOLDS_TO_AUDIT) {
+    coverage_rows[[row_number]] <- contrast_observations |>
+      dplyr::filter(.data$n_cells >= .env$minimum_cells) |>
+      dplyr::group_by(.data$cell_type, .data$arm) |>
+      dplyr::summarise(
+        n_embryos = dplyr::n_distinct(.data$embryo_ID),
+        .groups = "drop"
+      ) |>
+      tidyr::complete(
+        cell_type,
+        arm = c("perturbation", "control"),
+        fill = list(n_embryos = 0L)
+      ) |>
+      tidyr::pivot_wider(
+        names_from = arm,
+        values_from = n_embryos,
+        names_prefix = "n_"
+      ) |>
+      dplyr::mutate(
+        contrast_name = contrast$contrast_name,
+        perturbation = contrast$perturbation,
+        control = contrast$control,
+        timepoint = contrast$timepoint,
+        expected_cross_rt_block = contrast$expected_cross_rt_block,
+        minimum_cells_per_embryo = minimum_cells,
+        passes_minimum_embryos =
+          .data$n_perturbation >= MINIMUM_EMBRYOS_PER_ARM &
+          .data$n_control >= MINIMUM_EMBRYOS_PER_ARM,
+        .before = 1
+      )
+
+    row_number <- row_number + 1L
+  }
+}
+
+coverage_audit <- dplyr::bind_rows(coverage_rows) |>
+  dplyr::arrange(
+    .data$contrast_name,
+    .data$minimum_cells_per_embryo,
+    .data$cell_type
+  )
+
+readr::write_tsv(coverage_audit, COVERAGE_AUDIT_FILE)
+
+coverage_summary <- coverage_audit |>
+  dplyr::group_by(
+    .data$contrast_name,
+    .data$minimum_cells_per_embryo
+  ) |>
+  dplyr::summarise(
+    n_testable_cell_types = sum(.data$passes_minimum_embryos),
+    .groups = "drop"
+  )
+
+coverage_summary
+```
+
+## What happens next?
+
+This notebook stops before significance testing. After choosing the minimum
+cell count, the next analysis will compare embryo-level mean module scores
+between the perturbation and control arms. Individual cells will remain
+visible for plotting but will not be treated as independent embryos.
