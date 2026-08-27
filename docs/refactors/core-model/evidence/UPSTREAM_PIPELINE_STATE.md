@@ -1,7 +1,7 @@
 # Upstream pipeline state — what the core-model refactor is building on
 
 Snapshot: 2026-08-24. Assembled from the pipeline's own written record, not from a fresh run.
-Canonical tracker: [`docs/data_pipeline/PLANNED_REVISIONS.md`](../../data_pipeline/PLANNED_REVISIONS.md).
+Canonical tracker: [`docs/data_pipeline/PLANNED_REVISIONS.md`](../../../data_pipeline/PLANNED_REVISIONS.md).
 
 This refactor consumes pipeline snips as its training corpus. Three upstream issues bear on that
 directly; one of them is not cosmetic.
@@ -47,11 +47,11 @@ experiment's snips were written on before treating the package as homogeneous.
 
 ### A gap in our own Phase 0 recon
 
-[`reports/recon_tables/pixel_scale_profiles.csv`](reports/recon_tables/pixel_scale_profiles.csv) is
+[`reports/recon_tables/pixel_scale_profiles.csv`](../reports/recon_tables/pixel_scale_profiles.csv) is
 **1 byte — empty**. Pixel scale is precisely the axis of half this regression, so the recon currently
 has no coverage of the thing most likely to be heterogeneous across the corpus. Worth re-running.
 
-By contrast [`reports/recon_tables/intensity_by_experiment.csv`](reports/recon_tables/intensity_by_experiment.csv)
+By contrast [`reports/recon_tables/intensity_by_experiment.csv`](../reports/recon_tables/intensity_by_experiment.csv)
 already carries `saturated_255_fraction_{p05,median,p95}` per experiment — that column is a direct
 readout of the regression and can be used to date-stamp the corpus without re-rendering anything.
 
@@ -59,7 +59,7 @@ readout of the regression and can be used to date-stamp the corpus without re-re
 
 ## 2. SeaHub data is built but unverified — 🟡
 
-Tracked as PLANNED_REVISIONS §6. Docs in [`../seahub/`](../seahub/); runbook at
+Tracked as PLANNED_REVISIONS §6. Docs in [`../seahub/`](../../seahub/); runbook at
 `results/nlammers/20260723_seahub/HANDOFF.md`.
 
 The newest pipeline commit (`409d9c83`) is *"Patch to resolve issues with SeaHUB embryo image
@@ -74,7 +74,7 @@ and a SeaHub "plate" is synthetic — it mixes perturbations and stages, so plat
 
 ## 3. Z-slice snips were designed but never built — 🔴
 
-P3 in [`docs/data_pipeline/PLAN_zslice_stitch_resolution.md`](../../data_pipeline/PLAN_zslice_stitch_resolution.md).
+P3 in [`docs/data_pipeline/PLAN_zslice_stitch_resolution.md`](../../../data_pipeline/PLAN_zslice_stitch_resolution.md).
 
 If this refactor wants z-slices as training input in addition to full-frame, the machinery does not
 exist yet. The design is scoped: extend snip processing to load z-planes per `image_id` via

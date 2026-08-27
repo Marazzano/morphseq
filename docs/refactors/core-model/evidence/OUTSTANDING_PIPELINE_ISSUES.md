@@ -211,11 +211,11 @@ These are not current image-quality blockers, but remain relevant if a bulk rege
 
 ## Primary evidence
 
-- [Final snip root-cause report](../../../results/nlammers/20260729_morphseq_integration/root_analysis/IMAGE_QUALITY_ROOT_CAUSE_REPORT.md)
-- [Earlier snip investigation handoff](../../../results/nlammers/20260729_morphseq_integration/PIPELINE_IMAGE_REGRESSION.md)
-- [SeaHUB validation README](../../../results/nlammers/20260723_seahub/README.md)
-- [SeaHUB handoff](../../../results/nlammers/20260723_seahub/HANDOFF.md)
-- [SeaHUB implementation contract](../seahub/SEAHUB_IMPLEMENTATION_CONTRACT.md)
-- [Z-slice plan](../../data_pipeline/PLAN_zslice_stitch_resolution.md)
-- [Phase 0 pipeline reconnaissance](reports/PIPELINE_RECON.md)
+- [Final snip root-cause report](../../../../results/nlammers/20260729_morphseq_integration/root_analysis/IMAGE_QUALITY_ROOT_CAUSE_REPORT.md)
+- [Earlier snip investigation handoff](../../../../results/nlammers/20260729_morphseq_integration/PIPELINE_IMAGE_REGRESSION.md)
+- [SeaHUB validation README](../../../../results/nlammers/20260723_seahub/README.md)
+- [SeaHUB handoff](../../../../results/nlammers/20260723_seahub/HANDOFF.md)
+- [SeaHUB implementation contract](../../seahub/SEAHUB_IMPLEMENTATION_CONTRACT.md)
+- [Z-slice plan](../../../data_pipeline/PLAN_zslice_stitch_resolution.md)
+- [Phase 0 pipeline reconnaissance](../reports/PIPELINE_RECON.md)
 - [Detailed snip-regression status](SNIP_IMAGE_REGRESSION_STATUS.md)

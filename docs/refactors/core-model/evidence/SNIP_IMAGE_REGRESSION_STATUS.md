@@ -17,8 +17,8 @@ as checkpoint-compatible.
 The final root-cause analysis supersedes the earlier handoff's statement that the saturation cause
 was unknown:
 
-- [Final root-cause report](../../../results/nlammers/20260729_morphseq_integration/root_analysis/IMAGE_QUALITY_ROOT_CAUSE_REPORT.md)
-- [Earlier investigation handoff](../../../results/nlammers/20260729_morphseq_integration/PIPELINE_IMAGE_REGRESSION.md)
+- [Final root-cause report](../../../../results/nlammers/20260729_morphseq_integration/root_analysis/IMAGE_QUALITY_ROOT_CAUSE_REPORT.md)
+- [Earlier investigation handoff](../../../../results/nlammers/20260729_morphseq_integration/PIPELINE_IMAGE_REGRESSION.md)
 
 ## Executive conclusion
 
@@ -174,7 +174,7 @@ cause.
 ### 1. Code defaults: resolved
 
 The compatibility defaults live in
-[`defaults.py`](../../../src/data_pipeline/object_extraction/snip_processing/defaults.py) and are
+[`defaults.py`](../../../../src/data_pipeline/object_extraction/snip_processing/defaults.py) and are
 used by the entrypoint, orchestration rule, task CLI, augmentation function, and alternate pipeline
 wrapper. The live orchestration config also specifies 6.5 um/px and 75 um explicitly.
 
@@ -188,7 +188,7 @@ The merged inventory for the paired GENE7 experiment was written on 2026-07-27, 
 
 The 2026-08-19 reconnaissance found that all 133 readable merged inventories lack both
 `source_micrometers_per_pixel` and `snip_micrometers_per_pixel`; see
-[`reports/PIPELINE_RECON.md`](reports/PIPELINE_RECON.md). The audited corpus contains 699,505 snips,
+[`reports/PIPELINE_RECON.md`](../reports/PIPELINE_RECON.md). The audited corpus contains 699,505 snips,
 but its inventories do not prove that any row was rendered under the corrected scale contract.
 
 Existing snips must not be assumed checkpoint-compatible merely because the current code defaults
@@ -227,7 +227,7 @@ The early SeaHUB workflow called GroundingDINO box detection "segmentation" and 
 FOVs by whether eight boxes remained after NMS. In the GENE6/Pbx validation, the FOV reached the
 expected count, but manual review found **two bona fide bad embryo crops** that the count-only QC did
 not detect. This is recorded in the
-[`SeaHUB README`](../../../results/nlammers/20260723_seahub/README.md).
+[`SeaHUB README`](../../../../results/nlammers/20260723_seahub/README.md).
 
 The later production design improved the contract by making precomputed box-prompted SAM2 masks
 authoritative, selecting the prompt-associated connected component, filling holes, requiring
@@ -246,7 +246,7 @@ This is secondary to the general snip regression, but it should remain tracked.
 
 Full-frame Keyence z-plane materialization exists. Per-embryo masked z-plane snips do not. They
 remain a design item in
-[`PLAN_zslice_stitch_resolution.md`](../../../src/data_pipeline/docs/PLAN_zslice_stitch_resolution.md).
+[`PLAN_zslice_stitch_resolution.md`](../../../../src/data_pipeline/docs/PLAN_zslice_stitch_resolution.md).
 
 Before adding them, the artifact contract needs an explicit product and z axis. The current
 `snip_id` grammar has no focus/z component, so a focus-projection snip and individual z-plane snips

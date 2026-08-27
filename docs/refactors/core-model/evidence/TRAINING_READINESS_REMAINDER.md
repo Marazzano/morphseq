@@ -277,13 +277,13 @@ Until those conditions hold, the system is **implementation-complete enough to i
 
 ## Primary references
 
-- [Binding agent rules](AGENTS.md)
-- [Decision record](DECISIONS.md)
-- [Manifest schema](contracts/MANIFEST_SCHEMA.md)
-- [Phase 1 briefs](plans/AGENT_BRIEFS_PHASE1.md)
-- [Pipeline reconnaissance](reports/PIPELINE_RECON.md)
+- [Binding agent rules](../AGENTS.md)
+- [Decision record](../DECISIONS.md)
+- [Manifest schema](../contracts/MANIFEST_SCHEMA.md)
+- [Phase 1 briefs](AGENT_BRIEFS_PHASE1.md)
+- [Pipeline reconnaissance](../reports/PIPELINE_RECON.md)
 - [Snip regression status](SNIP_IMAGE_REGRESSION_STATUS.md)
 - [Upstream pipeline state](UPSTREAM_PIPELINE_STATE.md)
 - [Consolidated outstanding pipeline issues](OUTSTANDING_PIPELINE_ISSUES.md)
-- [Original integration audit](audits/NEW_PIPELINE_CORE_INTEGRATION_AUDIT.md)
-- [Phase 0 audit](audits/CORE_REFACTOR_PHASE0_AUDIT.md)
+- [Original integration audit](../audits/NEW_PIPELINE_CORE_INTEGRATION_AUDIT.md)
+- [Phase 0 audit](../audits/CORE_REFACTOR_PHASE0_AUDIT.md)
