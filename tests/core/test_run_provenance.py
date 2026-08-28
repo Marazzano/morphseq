@@ -3,21 +3,44 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict
+from pathlib import Path
 
+from hydra import compose, initialize_config_dir
 import pandas as pd
 import pytest
 import yaml
-
+from src.core.data.dataset_configs import PipelineDataConfig
 from src.core.data.manifest_types import SourceArtifact
 from src.core.run.provenance import (
     RunProvenanceBundle,
     read_selected_identity,
     write_run_provenance,
 )
+from src.core.run.run_utils import _instantiate_pipeline_data_config
 from tests.core.fixtures.manifest_v2 import synthetic_manifest_v2
 
 
 ADAPTER_REVISION = "a" * 40
+
+
+def test_pipeline_vanilla_hydra_selects_manifest_data_and_disables_wandb(tmp_path):
+    config_dir = Path(__file__).resolve().parents[2] / "src/core/hydra_configs"
+    with initialize_config_dir(version_base="1.1", config_dir=str(config_dir)):
+        cfg = compose(
+            config_name="pipeline_vanilla",
+            overrides=[
+                f"data.pipeline_output_root={tmp_path}",
+                "data.manifest_policy.experiment_ids=[opaque-experiment]",
+                f"run_artifacts_dir={tmp_path / 'provenance'}",
+            ],
+        )
+
+    data_config = _instantiate_pipeline_data_config(cfg.data)
+    assert isinstance(data_config, PipelineDataConfig)
+    assert data_config.manifest_policy.experiment_ids == ("opaque-experiment",)
+    assert tuple(cfg.model.ddconfig.input_dim) == data_config.input_dim
+    assert cfg.wandb.enabled is False
+    assert Path(cfg.run_artifacts_dir).is_absolute()
 
 
 def _bundle(tmp_path):
