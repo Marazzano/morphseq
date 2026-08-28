@@ -1,13 +1,14 @@
 # Agent briefs — pipeline-backed core model execution
 
-**Updated:** 2026-08-27
+**Updated:** 2026-08-28
 **Dispatch authority:** lead/integration agent
 **Binding inputs:** repository-root `AGENTS.md`, `docs/refactors/core-model/DECISIONS.md`, and
 `docs/refactors/core-model/contracts/MANIFEST_SCHEMA.md`.
 
 These briefs are written to be passed directly to agents. Track A, Track D, and Track E may run now.
-Track C briefs are present for planning but **must not be dispatched until the lead records Track A3
-as accepted**.
+D34 permits one narrow pre-A3 exception under a single lead: C1's pure mapping/relation mechanism,
+followed by C3's pure `L_out` kernel, may use synthetic fixtures in an isolated metric feature branch.
+C2, dataset integration, scientific presets/runs, and tuning remain gated on accepted A3.
 
 ## 1. Rules for every agent
 
@@ -86,8 +87,9 @@ The lead resolves any ambiguous file before work begins. Two active agents never
 
 Coordinate Track A and parallel Tracks D/E, own shared decisions/contracts, integrate A1 and A2, and
 prove the pipeline-backed vanilla VAE works end to end. After vanilla acceptance, run one explicitly
-test-only metric smoke. Do not absorb final metric science, surface-QC policy, or stage-estimator
-selection into Track A.
+test-only metric smoke. Under D34/D36, the lead may also coordinate the isolated pre-A3 C1 and pure-C3
+mechanism slices without activating scientific metric training. Do not absorb final metric science,
+surface-QC policy, or stage-estimator selection into Track A.
 
 ## Read first
 
@@ -133,7 +135,11 @@ are active. Request changes through a written interface discrepancy.
 8. Implement run configuration/provenance and the A3 E2E harness without changing A1/A2 semantics.
 9. Run the vanilla acceptance gate. Record exact commands/output in the handoff and generated status.
 10. Only after A3 passes, add/run A4 with an unmistakably test-only metric policy.
-11. Do not dispatch C1/C2/C3 until A3 is accepted. C agents may read the accepted interface then.
+11. For the D34 exception, publish one exact base commit and create one isolated metric integration
+    branch/worktree. Dispatch exactly one C1 worker; integrate and test C1 before dispatching the pure
+    C3-kernel worker. The lead alone integrates both handoffs.
+12. Do not dispatch C2, metric dataset/pair-loader integration, scientific presets/runs, or tuning
+    until A3 is accepted. After acceptance, publish the new accepted base before further dispatch.
 
 ## Run/provenance requirements
 
@@ -896,7 +902,22 @@ downstream sensitivity outputs, recommendation, and files deliberately not touch
 
 # Track C dispatch gate
 
-Do not dispatch C1, C2, or C3 until the lead shows:
+## Pre-A3 exception authorized by D34/D36
+
+Before A3 acceptance, one lead may dispatch only these sequential, synthetic-fixture slices:
+
+1. C1's pure mapping/relation API, validation, compatibility-candidate policy, and tests;
+2. after C1 is integrated, C3's pure `L_out` kernel and hand-computed unit tests.
+
+The lead creates one metric integration branch/worktree from an exact published base commit. Each
+worker receives a unique lead-created branch/worktree and a non-overlapping ownership fence. The lead
+dispatches at most one worker per slice and alone integrates it. Pre-A3 workers must not edit the
+manifest adapter, dataset/loaders, pairing, run entrypoints, scientific Hydra presets, tuning harness,
+or production pipeline. They report `ready_for_integration`, never `accepted`.
+
+## Full Track C gate
+
+Do not dispatch C2 or integrated/tuning C3 work until the lead shows:
 
 ```text
 A3 status: accepted
@@ -906,11 +927,11 @@ Vanilla E2E: passing command/output
 Accepted observation/asset interface revision: <hash/version>
 ```
 
-The C agents branch from that integration commit. They do not resurrect legacy positional metadata or
-change the accepted observation/asset contract without lead approval.
+The post-A3 C agents branch from that integration commit. They do not resurrect legacy positional
+metadata or change the accepted observation/asset contract without lead approval.
 
-C1/C2 mechanism work may proceed after this gate. No scientific metric run may claim a biologically
-meaningful hpf window until Track E is accepted and Nick resolves O5/O8.
+C2 and integrated C3 work may proceed after this gate. No scientific metric run may claim a
+biologically meaningful hpf window until Track E is accepted and Nick resolves O5/O8.
 
 ---
 
@@ -919,8 +940,8 @@ meaningful hpf window until Track E is accepted and Nick resolves O5/O8.
 ## Mission
 
 Replace positional `metric_array` semantics with a versioned, explicit mapping and one shared
-class-to-class relation API. Implement mechanism and validation; Nick supplies/ratifies scientific
-content.
+class-to-class relation API. Implement mechanism and validation. D35 supplies a compatibility
+candidate for mechanism testing; it is not the final scientific content.
 
 Suggested branch: `agent/core-track-c1-relations`.
 
@@ -943,6 +964,16 @@ Do not touch dataset pairing or loss code.
 - Define exactly one API returning `positive`, `negative`, or `excluded` for two metric groups.
 - Define and validate policy version, symmetry/asymmetry declaration, diagonal behavior, exclusions,
   and complete coverage.
+- Implement the D35 compatibility candidate with explicit precedence: any relation involving an
+  uncertain group is excluded, including uncertain with itself; the same non-uncertain group is
+  positive; different crispant groups preserve the legacy exclusion pending review.
+- Preserve the other legacy exclusion rules as explicitly named candidate rules
+  (`src/build/build04_perform_embryo_qc.py:1607-1657` at the published base commit), but do not
+  silently assign negative to an uncovered label or class pair. Validation must fail before training
+  and name every uncovered value/pair.
+- Produce a complete, deterministic, human-readable class×class relation table for review.
+- Add exact audit fixtures for oddly labeled controls and for the same chemical inhibitor represented
+  at different application times. Do not consolidate either case by fuzzy matching or an inferred ID.
 - Ship a trivial test policy separately from the future scientific policy.
 - Persist the exact mapping and relation-policy version in run provenance.
 - Never infer mapping from fuzzy genotype/perturbation string matching.
@@ -953,6 +984,9 @@ Do not touch dataset pairing or loss code.
 - stable code assignment under row reorder;
 - relation coverage;
 - diagonal behavior;
+- uncertain diagonal is excluded while other covered diagonals are positive;
+- different crispant groups are excluded under the compatibility candidate;
+- uncovered pairs do not fall through to negative;
 - symmetry rule;
 - excluded pairs;
 - invalid/unknown group errors;
@@ -964,6 +998,8 @@ Run targeted tests, `python -m pytest tests/core -q`, and `git diff --check` bef
 ---
 
 # Brief C2 — legal-positive preflight and pair sampler
+
+**Dispatch status:** prohibited before real A3 acceptance. D34 does not waive this gate.
 
 ## Mission
 
@@ -1022,6 +1058,10 @@ Make the metric loss consume C1's relation semantics, implement the ratified Sup
 provide a reproducible tuning/acceptance harness. Do not change encoder/decoder architecture or claim
 scientific completion before policy/window/weight tuning.
 
+**Pre-A3 ownership reduction:** the D34 worker owns only the pure loss kernel plus focused unit tests.
+It must branch after the lead integrates C1. It must not edit dataset/loaders, pairing, run entrypoints,
+scientific Hydra presets, or the tuning harness. The remaining C3 mission stays gated on A3 and C2.
+
 Suggested branch: `agent/core-track-c3-loss`.
 
 ## Owned files
@@ -1045,6 +1085,8 @@ Do not change manifest or dataset selection semantics.
 - Preserve application to the intended biological latent subspace.
 - Define behavior for excluded pairs and anchors with zero batch positives.
 - Keep sampler window and loss target buffer separate and explicit.
+- Pin D35's target composition: a positive class relation outside the configured loss-age window is a
+  negative target; an excluded class relation remains excluded.
 - Record stage source/version, windows, metric weight, and contrastive temperature in provenance.
 - Provide numerically stable computation and useful diagnostics.
 - Provide a tuning harness for metric weight and contrastive temperature. Scientific tuning waits for

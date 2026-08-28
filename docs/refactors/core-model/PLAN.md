@@ -1,6 +1,6 @@
 # Plan — pipeline-backed core model
 
-**Updated:** 2026-08-27
+**Updated:** 2026-08-28
 **Authority:** `DECISIONS.md` for ratified choices; `contracts/MANIFEST_SCHEMA.md` for the binding
 data interface; `plans/AGENT_BRIEFS_PHASE1.md` for execution ownership; generated `STATUS.md` for
 implementation/test state.
@@ -28,9 +28,11 @@ explicit experiments
   -> held-out encode/reconstruct
 ```
 
-Metric relation semantics and developmental-age constraints are spoofed only after this vanilla path
-works. Z-aware model architecture is not selected now, but Track A must make z assets representable
-without changing biological IDs.
+Track A still uses only an unmistakable test stub for metric plumbing. D34 separately permits pure
+Track C relation and loss-kernel mechanism work on synthetic fixtures before the real vanilla A3
+gate; it does not permit metric dataset integration, a scientific preset, tuning, or a scientific
+metric run. Z-aware model architecture is not selected now, but Track A must make z assets
+representable without changing biological IDs.
 
 ## 2. Planning baseline
 
@@ -88,7 +90,7 @@ Track A is the critical path. It owns:
 Track A does not own final QC policy, real metric semantics, z-model architecture, or corpus
 generation.
 
-### Track C — metric constraint overhaul — starts after Track A acceptance
+### Track C — metric constraint overhaul — pure mechanism exception before A3
 
 Track C owns:
 
@@ -101,8 +103,18 @@ Track C owns:
 7. explicit stage source and independently configurable sampling/loss windows;
 8. retuning of metric weight and contrastive temperature on the intended cohort.
 
-Track A may exercise this machinery only through a visibly test-only stub (D31). The real mapping,
-relation content, and age/window policy remain Nick decisions.
+Track A may exercise metric plumbing only through a visibly test-only stub (D31). Under D34, a
+single lead may now develop C1's pure mapping/relation API and, after that API is frozen, C3's pure
+`L_out` kernel with synthetic inputs in an isolated feature branch. C2, modifications to the accepted
+dataset/pair-loader path, integrated metric training, scientific presets, and tuning still wait for
+real A3 acceptance.
+
+D35 fixes a compatibility **candidate**, not the final scientific policy: uncertain groups are
+excluded even on their diagonal; the same non-uncertain group is positive; different crispant groups
+retain legacy exclusion pending review; positive relations outside the configured loss-age window
+become negative; and uncovered labels or relations fail rather than inheriting a default negative.
+The pre-ratification audit must explicitly expose oddly labeled controls and representations of the
+same chemical inhibitor at different application times.
 
 ### Track D — surface-area QC investigation — parallel
 
@@ -165,9 +177,9 @@ rerun unless separately tasked.
 | A2 | Dataset, transforms, loaders | A2 | frozen v2 fixture; integrates after A1 | identity/path/metadata/shape/split tests pass; legacy `ImageFolder` path unreachable |
 | A3 | Vanilla end-to-end | lead | A1 + A2 | full vanilla acceptance gate below passes |
 | A4 | Test-only metric smoke | lead | A3 | paired batch, metric loss, backward, checkpoint under explicit stub |
-| C1 | Mapping + relation API | C1 | A3 | exhaustive relation/mapping tests; uncovered values fail |
-| C2 | Pair preflight + sampler | C2 | C1 | legal positives, no split leakage, indexed complexity, worker/rank reproducibility |
-| C3 | `L_out` loss + tuning harness | C3 | C1 + stable batch contract | hand-checked loss tests and integrated metric run; no scientific claim before tuning |
+| C1 | Mapping + relation API | C1 | D34 + frozen v2 interface | pure mapping/relation tests may pass pre-A3; uncovered values and relations fail |
+| C2 | Pair preflight + sampler | C2 | A3 accepted + C1 | legal positives, no split leakage, indexed complexity, worker/rank reproducibility |
+| C3 | `L_out` loss + tuning harness | C3 | C1 for pure kernel; A3 + C2 for integration/tuning | hand-checked kernel tests may pass pre-A3; integrated metric run and tuning remain gated |
 | D1 | Surface-area study | D | none | reproducible report, tables, counterfactuals, and clearly separated evidence/hypotheses |
 | E1 | Stage-estimation state/reliability audit | E | none | current/legacy machinery and consumers mapped; evidence limits stated; preserve/retire/replace recommendation delivered |
 
@@ -280,8 +292,10 @@ never edited to make progress look complete.
 
 Agents are divided by owned files and interfaces, not one agent per thematic track. Track A is split
 between adapter, dataset/loader, and lead integration. Tracks D and E run independently, with Track E
-reporting stage-axis sensitivity relevant to Track D. After A3, Track C is split into relation,
-sampler, and loss slices.
+reporting stage-axis sensitivity relevant to Track D. D36 assigns one lead to one metric integration
+branch/worktree. Before A3, that lead dispatches C1 and then the pure C3 kernel as non-overlapping,
+sequential slices; C2 is not dispatched. After A3, the lead may dispatch C2 and the integrated/tuning
+portion of C3 from the newly published accepted base.
 
 The lead agent alone owns shared planning/contract changes during parallel execution. Other agents
 report a required interface change and stop at their file fence. The synthetic contract fixture is
@@ -293,11 +307,11 @@ Exact ownership, commands, and handoff templates are in `plans/AGENT_BRIEFS_PHAS
 
 | ID | Decision | Blocks |
 |---|---|---|
-| O1 | Final metric-group mapping and positive/negative/excluded relation policy | scientific Track C completion |
+| O1 | Final scientific metric-group mapping and remaining relation content: revisit different-crispant exclusion, enumerate intentional negatives without a silent catch-all, audit oddly labeled controls, and resolve representations of the same inhibitor at different application times. D35 governs only the compatibility candidate | scientific Track C completion |
 | O2 | Final named QC policy after regenerated-QC counts and Track D report | final cohort |
 | O3 | Future z consumption: independent 2D planes, sampled planes, neighboring-plane channels, ordered stack, or auxiliary target | z-model implementation, not Track A |
 | O4 | Final ordered experiment list and explicit test experiments | frozen science cohort |
-| O5 | Stage source/status inclusion and separate sampler/loss windows | scientific metric training |
+| O5 | Stage source/status inclusion and exact separate sampler/loss windows. D35 resolves only that a positive class relation outside the configured loss window is negative | scientific metric training |
 | O6 | Whether and how product/plane-specific QC should be produced | future multi-asset science cohort |
 | O7 | Post-regeneration black-level handling: normalization, augmentation, conditioning, or no change | later science validity; not Track A |
 | O8 | After Track E: treat nominal clock age as metadata only, rehabilitate a morphology estimator, build a new calibrated estimator, or use a hybrid/manual-anchor strategy | scientific stage-conditioned QC and metric interpretation |

@@ -1,6 +1,6 @@
 # Decision ledger — core-model refactor
 
-**Updated:** 2026-08-27 · **Location:** `docs/refactors/core-model/DECISIONS.md`
+**Updated:** 2026-08-28 · **Location:** `docs/refactors/core-model/DECISIONS.md`
 
 This is the ledger of things a human decided. It contains no computed facts — those live in
 `STATUS.md`, which is script-generated. Plan, issues, and next steps live in `PLAN.md`.
@@ -50,6 +50,9 @@ decisions recorded only in the prior copy.
 | D31 | Metric grouping, relation semantics, and developmental-age constraints are explicitly **test-only stubs** for Track A plumbing. Stub configurations must be unmistakably named and cannot be represented as scientific runs | — |
 | D32 | Cohort-selection machinery is built before the final policy is chosen. The final ordered experiment list, QC policy, stage policy, and exact selected IDs are frozen only after regenerated pixel-dependent QC is available. A named temporary smoke-test policy is allowed | — |
 | D33 | Run provenance is part of acceptance, not later cleanup: resolved config, selected observation/asset keys, identity-keyed splits, source fingerprints, cohort counts, mapping policy, and adapter revision are written locally even when W&B is disabled | — |
+| D34 | **Pre-A3 Track C mechanism exception.** C1's pure mapping/relation mechanism and C3's pure SupCon `L_out` kernel may be implemented with synthetic fixtures before real A3 acceptance, on an isolated metric feature branch. C2, dataset/pair-loader integration, scientific presets, real metric runs, and weight/temperature tuning remain gated on A3 | Nick, 2026-08-28 |
+| D35 | **Metric compatibility candidate, not final science policy.** `uncertain × anything` is excluded, including `uncertain × uncertain`; the same non-uncertain group is positive; different crispant groups retain the legacy exclusion pending explicit review; a positive class relation outside the configured loss-age window is negative. Uncovered labels or class relations fail preflight instead of silently defaulting to negative. Before scientific ratification, inspect oddly labeled controls and the same chemical inhibitor represented at different application times | Nick, 2026-08-28 |
+| D36 | **One lead controls metric delegation and integration.** The lead publishes one exact base commit, owns one metric integration branch/worktree, dispatches at most one worker for each non-overlapping slice, and alone integrates worker commits. Nick does not independently commission duplicate workers for the same slice | Nick, 2026-08-28 |
 
 `verified by` is filled in by the pytest `decision` marker. An empty cell means **asserted but
 unproven** — the count of empty cells is the headline line in generated `STATUS.md`.
