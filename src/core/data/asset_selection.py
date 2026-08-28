@@ -1,249 +1,147 @@
-"""Asset-row selection for manifest-backed core datasets.
+"""Dataset-side validation of an adapter-resolved asset view.
 
-Selectors consume the contract-v2 observation and asset tables.  They never inspect
-directories or infer product/plane semantics from paths or identifiers.  The public
-``resolve_asset_row_groups`` result deliberately contains an ordered tuple of asset
-row positions for each observation; vanilla currently requires one row, while this
-shape leaves future z-plane grouping to a later policy decision.
+The manifest adapter owns cohort and asset policy.  This module deliberately does
+not inspect the full asset table or choose among sibling products.  It validates
+and groups rows that the adapter has already resolved, leaving a row-list seam for
+future selectors that may resolve several assets for one observation.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from numbers import Integral, Real
-from pathlib import Path
-from typing import Protocol, Sequence
+from typing import Sequence
 
-import numpy as np
 import pandas as pd
 
 
-class AssetSelectionError(ValueError):
-    """Raised when a configured selector cannot resolve an observation exactly."""
-
-
-@dataclass(frozen=True)
-class ResolvedAssetRowGroup:
-    """Ordered asset-table row positions selected for one observation."""
-
-    observation_row_position: int
-    snip_id: str
-    asset_row_positions: tuple[int, ...]
-
-
-class AssetRowSelector(Protocol):
-    """Policy seam for resolving one observation to ordered asset rows."""
-
-    name: str
-
-    def select_row_positions(
-        self,
-        *,
-        snip_id: str,
-        candidate_row_positions: Sequence[int],
-        asset_table: pd.DataFrame,
-    ) -> Sequence[int]:
-        """Return selected positions in the intended model-input order."""
-
-
-def normalize_nullable_z_index(value: object, *, snip_id: str) -> int | None:
-    """Normalize one contract-v2 nullable plane index without guessing semantics."""
-
-    if value is None or (not isinstance(value, (list, tuple, dict)) and pd.isna(value)):
-        return None
-    if isinstance(value, (bool, np.bool_)):
-        raise AssetSelectionError(
-            f"snip_id={snip_id!r} has boolean z_index={value!r}; expected null or a "
-            "non-negative integer plane index."
-        )
-    if isinstance(value, Integral):
-        result = int(value)
-    elif isinstance(value, Real) and float(value).is_integer():
-        result = int(value)
-    else:
-        raise AssetSelectionError(
-            f"snip_id={snip_id!r} has invalid z_index={value!r}; expected null or a "
-            "non-negative integer plane index."
-        )
-    if result < 0:
-        raise AssetSelectionError(
-            f"snip_id={snip_id!r} has negative z_index={result}; plane indices must be "
-            "non-negative."
-        )
-    return result
-
-
-def _normalized_bool(value: object, *, snip_id: str, field: str) -> bool:
-    """Parse the two known string spellings without ever calling ``bool(str)``."""
-
-    if isinstance(value, (bool, np.bool_)):
-        return bool(value)
-    if value == "True":
-        return True
-    if value == "False":
-        return False
-    raise AssetSelectionError(
-        f"snip_id={snip_id!r} has non-boolean {field}={value!r}; expected True or False."
-    )
-
-
-def _available_asset_summary(
-    asset_table: pd.DataFrame, candidate_row_positions: Sequence[int]
-) -> list[dict[str, object]]:
-    summaries: list[dict[str, object]] = []
-    for position in candidate_row_positions:
-        row = asset_table.iloc[position]
-        summaries.append(
-            {
-                "snip_product_key": row.get("snip_product_key"),
-                "z_index": row.get("z_index"),
-                "is_valid_snip": row.get("is_valid_snip"),
-                "processed_snip_path": row.get("processed_snip_path"),
-            }
-        )
-    return summaries
-
-
-@dataclass(frozen=True)
-class VanillaBFProjectionSelector:
-    """Select one exact, valid, null-z BF projection asset per observation."""
-
-    snip_product_key: str
-    require_valid_snip: bool = True
-    name: str = "vanilla_bf_projection_null_z"
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.snip_product_key, str) or not self.snip_product_key:
-            raise ValueError("snip_product_key must be a non-empty explicit string.")
-
-    def select_row_positions(
-        self,
-        *,
-        snip_id: str,
-        candidate_row_positions: Sequence[int],
-        asset_table: pd.DataFrame,
-    ) -> Sequence[int]:
-        matches: list[int] = []
-        for position in candidate_row_positions:
-            row = asset_table.iloc[position]
-            if row["snip_product_key"] != self.snip_product_key:
-                continue
-            if normalize_nullable_z_index(row["z_index"], snip_id=snip_id) is not None:
-                continue
-            if self.require_valid_snip and not _normalized_bool(
-                row["is_valid_snip"], snip_id=snip_id, field="is_valid_snip"
-            ):
-                continue
-            matches.append(int(position))
-
-        if len(matches) != 1:
-            available = _available_asset_summary(asset_table, candidate_row_positions)
-            raise AssetSelectionError(
-                f"Asset policy {self.name!r} required exactly one valid asset for "
-                f"snip_id={snip_id!r}, snip_product_key={self.snip_product_key!r}, "
-                f"z_index=null; found {len(matches)}. Available assets: {available!r}."
-            )
-        return matches
-
-
-def resolve_asset_row_groups(
-    observation_table: pd.DataFrame,
-    asset_table: pd.DataFrame,
-    selector: AssetRowSelector,
-) -> tuple[ResolvedAssetRowGroup, ...]:
-    """Resolve observations in their existing order without mutating either table."""
-
-    required_observation_columns = {"snip_id"}
-    required_asset_columns = {
+VANILLA_REQUIRED_COLUMNS = frozenset(
+    {
         "snip_id",
         "snip_product_key",
         "z_index",
         "processed_snip_path",
-        "is_valid_snip",
     }
-    missing_observation = sorted(
-        required_observation_columns - set(observation_table.columns)
-    )
-    missing_asset = sorted(required_asset_columns - set(asset_table.columns))
-    if missing_observation:
-        raise AssetSelectionError(
-            f"Observation table is missing required selector columns: {missing_observation}."
-        )
-    if missing_asset:
-        raise AssetSelectionError(
-            f"Asset table is missing required selector columns: {missing_asset}."
-        )
-
-    duplicate_observations = observation_table["snip_id"].duplicated(keep=False)
-    if duplicate_observations.any():
-        offending = (
-            observation_table.loc[duplicate_observations, "snip_id"]
-            .astype(str)
-            .tolist()
-        )
-        raise AssetSelectionError(
-            f"Observation table contains duplicate snip_id values: {offending!r}."
-        )
-
-    candidates_by_snip_id: dict[str, list[int]] = {}
-    for asset_position, raw_snip_id in enumerate(asset_table["snip_id"].tolist()):
-        if not isinstance(raw_snip_id, str) or not raw_snip_id:
-            raise AssetSelectionError(
-                f"Asset table row position {asset_position} has non-string or empty "
-                f"snip_id={raw_snip_id!r}; IDs are required opaque strings."
-            )
-        candidates_by_snip_id.setdefault(raw_snip_id, []).append(asset_position)
-
-    groups: list[ResolvedAssetRowGroup] = []
-    for observation_position, raw_snip_id in enumerate(
-        observation_table["snip_id"].tolist()
-    ):
-        if not isinstance(raw_snip_id, str) or not raw_snip_id:
-            raise AssetSelectionError(
-                f"Observation table row position {observation_position} has non-string or empty "
-                f"snip_id={raw_snip_id!r}; IDs are required opaque strings."
-            )
-        snip_id = raw_snip_id
-        candidate_positions = candidates_by_snip_id.get(snip_id, ())
-        selected = tuple(
-            int(position)
-            for position in selector.select_row_positions(
-                snip_id=snip_id,
-                candidate_row_positions=candidate_positions,
-                asset_table=asset_table,
-            )
-        )
-        invalid_positions = [
-            position
-            for position in selected
-            if position not in candidate_positions
-            or position < 0
-            or position >= len(asset_table)
-        ]
-        if invalid_positions:
-            raise AssetSelectionError(
-                f"Asset policy {selector.name!r} returned rows {invalid_positions!r} that do not "
-                f"belong to snip_id={snip_id!r}."
-            )
-        groups.append(
-            ResolvedAssetRowGroup(
-                observation_row_position=observation_position,
-                snip_id=snip_id,
-                asset_row_positions=selected,
-            )
-        )
-    return tuple(groups)
+)
 
 
-def selected_asset_paths(
-    asset_table: pd.DataFrame, groups: Sequence[ResolvedAssetRowGroup]
-) -> tuple[tuple[Path, ...], ...]:
-    """Diagnostic helper retaining the ordered-row-list shape of the selector seam."""
+@dataclass(frozen=True)
+class ResolvedAssetGroup:
+    """Ordered resolved-row references for one opaque observation identity."""
+
+    snip_id: str
+    resolved_row_references: tuple[int, ...]
+
+
+def group_resolved_asset_rows(
+    resolved_sample_table: pd.DataFrame,
+) -> tuple[ResolvedAssetGroup, ...]:
+    """Group an already-resolved view without changing its observation order.
+
+    The references are zero-based positions in ``resolved_sample_table`` rather
+    than source DataFrame index labels.  A future z-aware adapter may resolve a
+    row list for one observation; the vanilla validator below requires length one.
+    """
+
+    if "snip_id" not in resolved_sample_table.columns:
+        raise ValueError("Resolved sample table is missing required column 'snip_id'.")
+
+    ordered_ids: list[str] = []
+    row_references: dict[str, list[int]] = {}
+    for row_reference, raw_snip_id in enumerate(resolved_sample_table["snip_id"].tolist()):
+        if pd.isna(raw_snip_id):
+            raise ValueError(
+                f"Resolved sample row {row_reference} has null snip_id; observation IDs are required."
+            )
+        snip_id = str(raw_snip_id)
+        if snip_id not in row_references:
+            ordered_ids.append(snip_id)
+            row_references[snip_id] = []
+        row_references[snip_id].append(row_reference)
 
     return tuple(
-        tuple(
-            Path(str(asset_table.iloc[position]["processed_snip_path"]))
-            for position in group.asset_row_positions
-        )
-        for group in groups
+        ResolvedAssetGroup(snip_id, tuple(row_references[snip_id]))
+        for snip_id in ordered_ids
     )
+
+
+def validate_vanilla_resolved_view(
+    resolved_sample_table: pd.DataFrame,
+    *,
+    product_key: str,
+    expected_observation_ids: Sequence[str] | None = None,
+) -> tuple[ResolvedAssetGroup, ...]:
+    """Validate exact BF/null-z rows selected by the manifest adapter.
+
+    This is a guard at the dataset boundary, not a second selection policy.  It
+    never consults sibling assets and never repairs an invalid resolved view by
+    taking the first row.
+    """
+
+    missing_columns = sorted(VANILLA_REQUIRED_COLUMNS - set(resolved_sample_table.columns))
+    if missing_columns:
+        raise ValueError(
+            "Resolved sample table is missing vanilla asset columns: "
+            f"{missing_columns}. Configured product={product_key!r}."
+        )
+    if not isinstance(product_key, str) or not product_key:
+        raise ValueError(f"Configured vanilla product_key must be a non-empty string, got {product_key!r}.")
+
+    groups = group_resolved_asset_rows(resolved_sample_table)
+    group_ids = [group.snip_id for group in groups]
+
+    if expected_observation_ids is not None:
+        expected = [str(value) for value in expected_observation_ids]
+        expected_set = set(expected)
+        actual_set = set(group_ids)
+        missing_ids = [snip_id for snip_id in expected if snip_id not in actual_set]
+        extra_ids = [snip_id for snip_id in group_ids if snip_id not in expected_set]
+        if missing_ids or extra_ids:
+            raise ValueError(
+                "Resolved vanilla observation coverage mismatch for "
+                f"product={product_key!r}: missing snip_id={missing_ids}, extra snip_id={extra_ids}."
+            )
+
+    for group in groups:
+        if len(group.resolved_row_references) != 1:
+            details = resolved_sample_table.iloc[list(group.resolved_row_references)][
+                ["snip_product_key", "z_index", "processed_snip_path"]
+            ].to_dict("records")
+            raise ValueError(
+                "Vanilla resolved view requires exactly one asset-row reference for "
+                f"snip_id={group.snip_id!r}, product={product_key!r}; "
+                f"found {len(group.resolved_row_references)} rows: {details}."
+            )
+
+        row_reference = group.resolved_row_references[0]
+        row = resolved_sample_table.iloc[row_reference]
+        if row["snip_product_key"] != product_key or not pd.isna(row["z_index"]):
+            raise ValueError(
+                "Resolved vanilla row does not match the configured projection asset for "
+                f"snip_id={group.snip_id!r}, product={product_key!r}: "
+                f"resolved product={row['snip_product_key']!r}, z_index={row['z_index']!r}, "
+                f"path={row['processed_snip_path']!r}."
+            )
+
+        path = row["processed_snip_path"]
+        if pd.isna(path) or not str(path):
+            raise ValueError(
+                "Resolved vanilla row has no processed asset path for "
+                f"snip_id={group.snip_id!r}, product={product_key!r}."
+            )
+
+        if "is_valid_snip" in resolved_sample_table.columns:
+            validity = row["is_valid_snip"]
+            if isinstance(validity, str):
+                normalized = validity.strip().lower()
+                if normalized not in {"true", "false"}:
+                    raise ValueError(
+                        f"Invalid is_valid_snip={validity!r} for snip_id={group.snip_id!r}."
+                    )
+                validity = normalized == "true"
+            if pd.isna(validity) or not bool(validity):
+                raise ValueError(
+                    "Resolved vanilla row is not a valid materialized asset for "
+                    f"snip_id={group.snip_id!r}, product={product_key!r}."
+                )
+
+    return groups
