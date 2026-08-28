@@ -1485,7 +1485,13 @@ def build_parser() -> argparse.ArgumentParser:
                             help="experiment id to classify ({collection}_coll_{plate} or a single id)")
     p_classify.add_argument("--raw-root", type=Path, required=True,
                             help="raw image root containing the _coll dir (read only for a collection)")
-    p_classify.add_argument("--microscope", default="Keyence", choices=["Keyence", "YX1"])
+    # SeaHub belongs here even though it is not a microscope the native producers can read.
+    # build_collection_provenance is the one early-DAG rule NOT gated by front_end.mode, so it runs
+    # in dropin mode too and is handed that mode's scope token. Omitting it killed every dropin run
+    # at classify. Safe: a dropin id carries no `_coll_` marker, so classification takes the
+    # single-source branch, which only formats raw_root into a string and never reads it.
+    p_classify.add_argument("--microscope", default="Keyence",
+                            choices=["Keyence", "YX1", "SeaHub"])
     p_classify.add_argument("--output-json", type=Path, required=True,
                             help="destination for the collection_provenance.json artifact")
     p_classify.set_defaults(func=cmd_build_collection_provenance)
