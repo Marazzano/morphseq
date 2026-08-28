@@ -1,0 +1,29 @@
+{
+  "boundary_size_requested": 300,
+  "counterfactual_scope": "offline_derived_outputs_only",
+  "experiment_column": "experiment_id",
+  "experiments_file": "/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/docs/refactors/core-model/reports/recon_tables/qc_availability_by_experiment.csv",
+  "experiments_file_sha256": "b0c7d9606a328355a4df5ef849497ee276e5e3357e5e79247ce90c412f325b41",
+  "git_branch": "core-model-refactor",
+  "git_head": "d830391f9f7132d8086a53b5470129847e07e9d2",
+  "k_lower": 0.9,
+  "k_lower_sweep": [
+    0.7,
+    0.75,
+    0.8,
+    0.85,
+    0.9
+  ],
+  "k_upper": 1.4,
+  "measurement_timestamp_utc": "2026-08-28T02:44:29.367823+00:00",
+  "ordered_experiment_count": 148,
+  "output_root": "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline/output",
+  "platform": "Linux-5.15.0-181-generic-x86_64-with-glibc2.35",
+  "predicted_stage_interpretation": "nominal_pipeline_axis_not_validated_biological_truth",
+  "python": "3.10.16",
+  "reference_csv": "/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/data_pipeline/quality_control/surface_area_qc/references/surface_area_reference_v1.csv",
+  "reference_sha256": "3bffedb6a9ef96ec58e7e85b1e37ffb4983b2120d1a7607563a58ae64bb6c960",
+  "report_dir": "/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/docs/refactors/core-model/reports/surface_area_qc",
+  "runtime_seconds": 266.9112771092914,
+  "seed": 20260827
+}

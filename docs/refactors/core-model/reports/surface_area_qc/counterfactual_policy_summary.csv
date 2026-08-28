@@ -1,0 +1,7 @@
+policy,eligible_rows,ineligible_rows,eligible_physical_embryos,ineligible_physical_embryos,row_recovery_vs_strict,row_loss_vs_strict,physical_embryo_recovery_vs_strict,physical_embryo_loss_vs_strict
+strict_exclusion_k0.90,185119,346783,7983,2448,0,0,0,0
+lower_diagnostic_upper_strict,235888,296014,8743,1688,50769,0,760,0
+all_surface_area_diagnostic_only,237748,294154,8812,1619,52629,0,829,0
+isolated_recovered_dips_diagnostic,186274,345628,7986,2445,1155,0,3,0
+aspect_compact_lt2_diagnostic,196455,335447,8184,2247,11336,0,201,0
+compact_lt2_circularity_ge0.5_diagnostic,207960,323942,8528,1903,22841,0,545,0

@@ -1,10 +1,11 @@
 import pytorch_lightning as pl
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from typing import Any, Callable, Optional, Dict
-from torch.utils.data.sampler import SubsetRandomSampler
+from inspect import Parameter, signature
 from torch.nn import functional as F
 from torch import nn
+from src.core.data.dataset_classes import collate_manifest_dataset_output
 from src.core.models.ldm_models import AutoencoderKLModel
 from src.core.lightning.pl_utils import cosine_ramp_weight
 import warnings
@@ -49,6 +50,7 @@ class LitModel(pl.LightningModule):
         self.eval_gpu_flag = eval_gpu_flag
         self.loss_fn = loss_fn
         self.data_cfg = data_cfg
+        self._split_datasets: dict[str, Dataset] = {}
         self.current_mode = None
 
         self.train_cfg = train_cfg
@@ -316,40 +318,110 @@ class LitModel(pl.LightningModule):
             return [opt_G]
 
 
-    def train_dataloader(self):
-        ds = self.data_cfg.create_dataset()
-        # get indices for images to use for training
-        train_indices = self.data_cfg.train_indices
-        train_sampler = SubsetRandomSampler(train_indices)
+    def _dataset_for_split(self, split: str) -> Dataset:
+        """Create and cache one physical-embryo-disjoint dataset per named split."""
 
-        return DataLoader(
-            ds,
-            batch_size=self.data_cfg.batch_size,
-            num_workers=self.data_cfg.num_workers,
-            sampler=train_sampler,
-            shuffle=False,
-            drop_last=True
+        if split in self._split_datasets:
+            return self._split_datasets[split]
+
+        creator = getattr(self.data_cfg, "create_dataset", None)
+        if creator is None or not callable(creator):
+            raise TypeError(
+                "Manifest data configuration must define create_dataset(*, split=...)."
+            )
+        parameters = signature(creator).parameters.values()
+        accepts_split = any(parameter.name == "split" for parameter in parameters)
+        accepts_keywords = any(parameter.kind == Parameter.VAR_KEYWORD for parameter in parameters)
+        if not accepts_split and not accepts_keywords:
+            raise TypeError(
+                "Manifest data configuration create_dataset must accept a named split. Full-dataset "
+                "positional samplers are not supported."
+            )
+
+        dataset = creator(split=split)
+        if not isinstance(dataset, Dataset):
+            raise TypeError(
+                f"create_dataset(split={split!r}) returned {type(dataset)!r}, expected torch Dataset."
+            )
+        if len(dataset) == 0:
+            raise ValueError(f"create_dataset(split={split!r}) returned an empty required split.")
+        dataset_split = getattr(dataset, "split", None)
+        if dataset_split != split:
+            raise ValueError(
+                f"create_dataset(split={split!r}) returned dataset.split={dataset_split!r}."
+            )
+        physical_embryo_ids = getattr(dataset, "physical_embryo_ids", None)
+        if physical_embryo_ids is None:
+            raise TypeError(
+                f"Dataset for split={split!r} must expose physical_embryo_ids for leakage checks."
+            )
+        identities = frozenset(physical_embryo_ids)
+        invalid_identities = [
+            value for value in identities if not isinstance(value, str) or not value
+        ]
+        if invalid_identities:
+            raise TypeError(
+                f"Dataset for split={split!r} exposes non-string or empty physical_embryo_id "
+                f"values: {invalid_identities!r}."
+            )
+        for other_split, other_dataset in self._split_datasets.items():
+            other_identities = frozenset(getattr(other_dataset, "physical_embryo_ids"))
+            overlap = sorted(identities & other_identities)
+            if overlap:
+                raise ValueError(
+                    f"physical_embryo_id values cross split={split!r} and "
+                    f"split={other_split!r}: {overlap!r}."
+                )
+
+        self._split_datasets[split] = dataset
+        return dataset
+
+    def _loader_for_split(self, split: str, *, shuffle: bool, drop_last: bool) -> DataLoader:
+        dataset = self._dataset_for_split(split)
+        num_workers = int(self.data_cfg.num_workers)
+        generator = torch.Generator()
+        split_offset = {"train": 0, "eval": 1, "test": 2}[split]
+        generator.manual_seed(int(getattr(self.data_cfg, "loader_seed", 0)) + split_offset)
+
+        loader_kwargs: dict[str, Any] = {
+            "dataset": dataset,
+            "batch_size": int(self.data_cfg.batch_size),
+            "num_workers": num_workers,
+            "shuffle": shuffle,
+            "drop_last": drop_last,
+            "collate_fn": getattr(dataset, "collate_fn", collate_manifest_dataset_output),
+            "pin_memory": bool(getattr(self.data_cfg, "pin_memory", False)),
+            "generator": generator,
+        }
+        if num_workers > 0:
+            loader_kwargs["persistent_workers"] = bool(
+                getattr(self.data_cfg, "persistent_workers", False)
+            )
+            loader_kwargs["prefetch_factor"] = int(
+                getattr(self.data_cfg, "prefetch_factor", 2)
+            )
+        return DataLoader(**loader_kwargs)
+
+    def train_dataloader(self):
+        # Lightning can safely replace this shuffle sampler with a distributed sampler.
+        return self._loader_for_split(
+            "train",
+            shuffle=True,
+            drop_last=bool(getattr(self.data_cfg, "drop_last", True)),
         )
 
     def val_dataloader(self):
-        ds = self.data_cfg.create_dataset()
-        eval_indices = self.data_cfg.eval_indices
-        eval_sampler = SubsetRandomSampler(eval_indices)
-        return DataLoader(
-            ds,
-            batch_size=self.data_cfg.batch_size,
-            num_workers=self.data_cfg.num_workers,
-            sampler=eval_sampler,
-            shuffle=False,
-            drop_last=True
-        )
+        return self._loader_for_split("eval", shuffle=False, drop_last=False)
+
+    def test_dataloader(self):
+        return self._loader_for_split("test", shuffle=False, drop_last=False)
 
     # -------------------------------------------------------------------
     # prediction API: given a batch → return recon, recon-loss, mu, logσ²
     # -------------------------------------------------------------------
     def predict_step(self, batch, batch_idx, dataloader_idx=0, recon_loss_type="mse"):
         x = batch["data"]
-        snip_ids = batch["label"][0]  # list[str] already
+        snip_ids = batch["snip_id"]
 
         out = self.model(x)  # your plain nn.Module
         recon_x = out.recon_x

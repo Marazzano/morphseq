@@ -1,0 +1,2 @@
+rows,physical_embryos,too_small_rows,too_large_rows,surface_outlier_rows,surface_outlier_physical_embryos,isolated_surface_only_rows,valid_materialized_rows,invalid_materialized_rows,current_use_snip_rows,parity_mismatches,boundary_review_rows,contact_sheet_pages
+531902,10431,212778,28495,241273,4648,52637,531804,98,185204,1,300,15

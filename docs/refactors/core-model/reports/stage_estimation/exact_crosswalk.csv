@@ -1,0 +1,3 @@
+key,current_unique,legacy_unique,exact_intersection,crosswalk_method
+snip_id,532235,83476,0,exact_string_equality_only
+physical_embryo_id_vs_legacy_embryo_id,10764,2617,18,exact_string_equality_only

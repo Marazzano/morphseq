@@ -1,0 +1,2 @@
+provenance_tuple_count,train_dir,model_name,architecture_name,age_key_path,metadata_match_count,metadata_missing_count
+1,20241008,VAE_training_2024-10-08_21-40-44,VAE_z100_ne250_base_model,/net/trapnell/vol1/home/nlammers/projects/data/morphseq/training_data/models/metadata/age_key.csv,83476,0

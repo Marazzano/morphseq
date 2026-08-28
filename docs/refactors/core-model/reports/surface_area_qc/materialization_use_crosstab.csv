@@ -1,0 +1,5 @@
+is_valid_snip,use_snip,rows
+False,False,13
+False,True,85
+True,False,346685
+True,True,185119

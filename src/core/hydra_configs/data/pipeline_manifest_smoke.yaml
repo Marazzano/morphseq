@@ -1,0 +1,70 @@
+# Temporary Track-A plumbing policy. The root and ordered experiments are mandatory overrides;
+# this preset intentionally cannot guess either from the output tree.
+_target_: src.core.data.manifest_types.ManifestPolicy
+pipeline_output_root: ???
+experiment_ids: ???
+
+assets:
+  _target_: src.core.data.manifest_types.AssetSelectionPolicy
+  product_order:
+    - BF__projection__focus_stack__clahe_blend
+  vanilla_product_key: BF__projection__focus_stack__clahe_blend
+  z_mode: projection_null
+
+validity:
+  _target_: src.core.data.manifest_types.ValidityPolicy
+  enabled: true
+  name: require_materialized_snip_v1
+
+qc:
+  _target_: src.core.data.manifest_types.QCPolicy
+  enabled: false
+  name: temporary_smoke_qc_disabled
+  version: v1
+  accepted_statuses:
+    - evaluated
+  require_use_snip: false
+  exclude_flags: []
+
+stage:
+  _target_: src.core.data.manifest_types.StagePolicy
+  enabled: false
+  name: basic_stage_disabled
+  accepted_statuses: []
+  require_value: false
+
+covariates:
+  _target_: src.core.data.manifest_types.CovariatePolicy
+  name: temporary_smoke_require_temperature_and_time_v1
+  required_columns:
+    - incubation_temperature_c
+    - elapsed_time_s
+
+splits:
+  _target_: src.core.data.manifest_types.SplitPolicy
+  enabled: true
+  ratios:
+    - [train, 0.8]
+    - [eval, 0.1]
+    - [test, 0.1]
+  test_experiments: []
+  hash_salt: morphseq-core-v1
+  tolerance: 0.15
+  required_splits:
+    - train
+    - eval
+    - test
+
+metric_mapping:
+  _target_: src.core.data.manifest_types.MetricMappingPolicy
+  enabled: false
+  name: basic_metric_disabled
+  version: v1
+  scientific_policy: false
+  source_column: null
+  mapping: []
+  constant_group: null
+
+# Collection start-age resolution needs the acquisition inventory's declared scope.
+# Supply [experiment_id, scope] entries only for experiments where it is required.
+acquisition_scope_by_experiment: []

@@ -1,0 +1,4 @@
+experiment_id,row_count,formula_comparable_count,missing_elapsed_count,missing_start_age_count,missing_temperature_count,max_abs_formula_error_hpf,mean_abs_formula_error_hpf,temperature_values_c,start_age_values_hpf,collection_provenance_present,collection_provenance_is_collection,interpretation
+20250612_24hpf_ctrl_atf6,97,97,0,0,0,0.0,0.0,24.0|28.5|34.0|35.0,24,False,,historical_formula_reconstruction_only_missing_required_collection_provenance
+20260417_irx_pilot,4968,4968,0,0,0,3.552713678800501e-15,4.605369583630279e-16,28.5,12,False,,historical_formula_reconstruction_only_missing_required_collection_provenance
+20260418_irx_pilot,15251,15251,0,0,0,7.105427357601002e-15,6.37349985259863e-16,28.5,26,False,,historical_formula_reconstruction_only_missing_required_collection_provenance

@@ -11,16 +11,16 @@ command, a `file:line`, or a measurement date — or is marked as inference.
 | `PLAN.md` | The plan: where we stand, what blocks what, order of operations. |
 | `DECISIONS.md` | Ledger of things a human decided. No computed facts. |
 | `STATUS.md` | **Generated — do not edit.** Computed facts only. |
-| `contracts/MANIFEST_SCHEMA.md` | Binding interface between pipeline output and core. |
-| `plans/AGENT_BRIEFS_PHASE1.md` | Phase 1 spec. **Never executed** — still the brief to build against. |
+| `contracts/MANIFEST_SCHEMA.md` | Binding v2 observation/asset interface between pipeline output and core. |
+| `plans/AGENT_BRIEFS_PHASE1.md` | Current copy/paste execution briefs, file fences, tests, and handoff format. |
 
 Binding agent rules live at the repo root in `AGENTS.md` (symlinked as `CLAUDE.md`).
 
 ## Pipeline state — `pipeline/`
 
 Written 2026-08-24, **before** the `origin/main` merge (`19061cbf`, 2026-08-27) landed 116
-`src/data_pipeline` commits. Structurally correct; specific claims need refresh against the merged
-tree before work is dispatched from them.
+`src/data_pipeline` commits. These files are evidence and historical context, not execution briefs.
+Current writer/validator symbols plus `contracts/MANIFEST_SCHEMA.md` v2 govern implementation.
 
 ## Measured evidence — `reports/`
 
