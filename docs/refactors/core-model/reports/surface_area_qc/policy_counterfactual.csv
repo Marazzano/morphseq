@@ -1,0 +1,5 @@
+policy,excluded_rows,excluded_physical_embryos,retained_rows,shape_rule_definition
+strict_exclusion,223,223,1529,none
+diagnostic_only,0,0,1752,none
+candidate_aspect_rescue_v1,113,113,1639,too_large OR (too_small AND (invalid shape OR aspect_ratio < 2))
+candidate_aspect_circularity_v1,77,77,1675,too_large OR (too_small AND (invalid shape OR (aspect_ratio < 2 AND circularity >= 0.35)))

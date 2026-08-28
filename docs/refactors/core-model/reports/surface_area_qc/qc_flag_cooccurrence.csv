@@ -1,0 +1,8 @@
+other_qc_flag,other_flag_rows,surface_area_flag_rows,cooccurrence_rows,cooccurrence_physical_embryos,share_of_surface_area_flags
+discontinuous_mask_flag,0,223,0,0,0.0
+edge_flag,0,223,0,0,0.0
+focus_flag,405,223,84,84,0.37668161434977576
+motion_blur_flag,0,223,0,0,0.0
+overlapping_mask_flag,0,223,0,0,0.0
+persistence_dead_flag,0,223,0,0,0.0
+viability_dead_flag,170,223,37,37,0.16591928251121077

@@ -1,0 +1,10 @@
+metric,row_count,row_fraction,physical_embryo_count,physical_embryo_fraction
+all_rows,1752,1.0,1752,1.0
+stored_sa_outlier,223,0.12728310502283105,223,0.12728310502283105
+recomputed_too_small,211,0.1204337899543379,211,0.1204337899543379
+recomputed_too_large,12,0.00684931506849315,12,0.00684931506849315
+surface_area_only_any_flag,104,0.0593607305936073,104,0.0593607305936073
+surface_area_only_exclusion_reason,0,0.0,0,0.0
+current_use_snip,1752,1.0,1752,1.0
+recovered_if_surface_area_non_excluding,0,0.0,0,0.0
+surface_area_applicability=diagnostic_only,1752,1.0,1752,1.0
