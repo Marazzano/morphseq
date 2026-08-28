@@ -1,0 +1,6 @@
+consumer_or_policy,stage_absent_result,rows_retained_or_applicable,evidence_kind
+planned Track A basic cohort,rows retained; stage_status=unavailable,1752,binding manifest contract
+planned Track A require-stage cohort,rows rejected by explicit policy,0,binding manifest contract
+current surface_area_qc,flag false; applicability not_applicable,1752,production code
+current metric dataset age gate,no self/other options; random choice fails,0,current legacy core code
+analysis/report stage axes,zero finite rows on stage plot/bin axis,0,report code

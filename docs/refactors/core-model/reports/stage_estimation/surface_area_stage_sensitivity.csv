@@ -1,0 +1,7 @@
+axis,interpretation,rows,finite_axis_rows,flagged_rows,changed_classification_rows_vs_nominal,not_applicable_rows_if_used
+plate_metadata.stage_hpf,available_alternate_but_not_independent_anchor,1752,1752,223,0,0
+predicted_stage_hpf_offset_-3,diagnostic_uniform_offset_not_estimator,1752,1752,218,93,0
+predicted_stage_hpf_offset_-1.5,diagnostic_uniform_offset_not_estimator,1752,1752,185,48,0
+predicted_stage_hpf_offset_+0,diagnostic_uniform_offset_not_estimator,1752,1752,223,0,0
+predicted_stage_hpf_offset_+1.5,diagnostic_uniform_offset_not_estimator,1752,1752,326,119,0
+predicted_stage_hpf_offset_+3,diagnostic_uniform_offset_not_estimator,1752,1752,377,178,0

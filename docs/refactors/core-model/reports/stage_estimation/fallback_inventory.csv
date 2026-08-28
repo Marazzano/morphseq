@@ -1,0 +1,15 @@
+path_or_behavior,trigger,selected_column_or_value,signal,reachability,source_citation
+live stage elapsed alias,elapsed_time_s null/absent,experiment_time_s then time_s,silent selection; hard error if none,yes,src/data_pipeline/feature_extraction/stage_predictions/compute.py:34-45
+live collection age-map alias,start_age_by_source_ordinal absent,start_age_by_time_index,silent compatibility fallback; hard error if key absent,yes,src/data_pipeline/feature_extraction/stage_predictions/compute.py:107-128
+live single missing start age,plate start_age_hpf absent/null,null stage + missing_start_age_hpf,explicit status,yes,src/data_pipeline/feature_extraction/stage_predictions/compute.py:199-213
+live missing temperature,plate temperature absent/null,null stage + missing_temperature,explicit status,yes,src/data_pipeline/feature_extraction/stage_predictions/compute.py:205-213
+batch helper time alias,configured experiment_time_s absent/null,time_s,silent selection; hard error if none,no repository caller found,src/data_pipeline/feature_extraction/stage_inference.py:35-64
+legacy core metadata stage,inferred_stage_hpf column absent,predicted_stage_hpf renamed stage_hpf,stdout warning,current legacy Hydra path; no in planned Track A,src/core/data/dataset_utils.py:26-38
+legacy core age key,metadata/age_key.csv absent,none,hard error with misleading message,current legacy Hydra path; no in planned Track A,src/core/data/dataset_configs.py:38-66
+surface-area missing stage,stage row exists but value null,false flag + not_applicable,explicit policy,yes,src/data_pipeline/quality_control/surface_area_qc/config.py:20-31; src/data_pipeline/quality_control/surface_area_qc/compute.py:87-103
+surface-area out-of-range stage,stage outside reference range,nearest reference endpoint,silent numpy.interp clamp,yes,src/data_pipeline/quality_control/surface_area_qc/reference.py:40-51
+legacy morphology reference rows,reference_datasets is None,four hard-coded date/control selections,silent default,manual src/build launch only,src/build/infer_developmental_age.py:46-70
+legacy morphology calibration,fewer than n_ref same-experiment comparisons,same-temperature nearest references,"prints ratio, no structured status",manual src/build launch only,src/build/infer_developmental_age.py:107-153
+legacy morphology snapshot,max observations per embryo equals one,copy nominal predicted_stage_hpf,silent,manual src/build launch only,src/build/infer_developmental_age.py:123-156
+legacy combined QC stage,predicted_stage_hpf column absent,literal 0.0,silent placeholder,manual legacy main/results launch; no in planned Track A,"src/build/build04_perform_embryo_qc.py:1275-1300,1660-1678"
+legacy Build03 formula,formula input conversion raises,leave column unchanged,silent unless verbose,manual legacy script; no in planned Track A,src/build/build03A_process_images.py:1627-1674

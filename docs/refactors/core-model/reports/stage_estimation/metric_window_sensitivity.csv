@@ -1,0 +1,9 @@
+window_hpf,role_at_current_defaults,anchors,anchors_with_self_option,min_self_options_per_anchor,age_eligible_ordered_other_pairs,anchors_with_any_other_age_candidate,min_other_age_candidates,median_other_age_candidates,max_other_age_candidates,ordered_pair_membership_changes_vs_sampler_1_5,scientific_legality_status
+0.0,sensitivity,1752,1752,1,525032,1752,87,295.0,423,0,not_identifiable_without_relation_mapping_and_split
+0.75,sensitivity,1752,1752,1,525032,1752,87,295.0,423,0,not_identifiable_without_relation_mapping_and_split
+1.5,sampler_default,1752,1752,1,525032,1752,87,295.0,423,0,not_identifiable_without_relation_mapping_and_split
+2.25,sensitivity,1752,1752,1,525032,1752,87,295.0,423,0,not_identifiable_without_relation_mapping_and_split
+3.0,loss_default,1752,1752,1,525032,1752,87,295.0,423,0,not_identifiable_without_relation_mapping_and_split
+4.0,sensitivity,1752,1752,1,602984,1752,87,375.0,423,77952,not_identifiable_without_relation_mapping_and_split
+6.0,sensitivity,1752,1752,1,729320,1752,87,423.0,775,204288,not_identifiable_without_relation_mapping_and_split
+12.0,sensitivity,1752,1752,1,1044584,1752,167,511.0,887,519552,not_identifiable_without_relation_mapping_and_split

@@ -1,0 +1,2 @@
+current_rows,current_unique_snip_ids,legacy_rows,legacy_unique_snip_ids,exact_snip_id_crosswalk_rows,exact_embryo_id_crosswalk_count,exact_experiment_label_overlap_count,paired_pearson,paired_mean_bias_new_minus_legacy_hpf,paired_difference_sd_hpf,bland_altman_lower_hpf,bland_altman_upper_hpf,agreement_identifiability
+1752,1752,83476,83476,0,0,0,,,,,,not_identifiable_n_lt_2

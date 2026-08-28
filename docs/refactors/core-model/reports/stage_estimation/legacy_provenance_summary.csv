@@ -1,0 +1,2 @@
+rows,unique_snip_ids,unique_embryo_ids,unique_experiment_dates,finite_calc_stage_rows,finite_inferred_stage_rows,temperature_values,train_dir_values,model_name_values,architecture_name_values,persisted_reference_dataset_list,persisted_model_weight_checksum,persisted_estimator_hyperparameters
+83476,83476,2617,40,83476,83476,22|29|30,20241008,VAE_training_2024-10-08_21-40-44,VAE_z100_ne250_base_model,False,False,False
