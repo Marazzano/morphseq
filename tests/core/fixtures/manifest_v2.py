@@ -36,9 +36,18 @@ def synthetic_manifest_v2(asset_root: Path | None = None) -> PipelineManifestRes
 
     root = Path("/synthetic-assets") if asset_root is None else Path(asset_root)
     observation_rows = [
-        _observation("snip::alpha", "animal::alpha", "experiment::one", "well::one", 0, "train"),
-        _observation("snip::beta", "animal::beta", "experiment::one", "well::two", 1, "eval"),
-        _observation("snip::gamma", "animal::gamma", "experiment::two", "well::three", 0, "test"),
+        _observation(
+            "snip::alpha", "embryo::red", "animal::alpha", "image::seven",
+            "experiment::one", "well::one", 0, "train",
+        ),
+        _observation(
+            "snip::beta", "embryo::blue", "animal::beta", "image::eight",
+            "experiment::one", "well::two", 1, "eval",
+        ),
+        _observation(
+            "snip::gamma", "embryo::green", "animal::gamma", "image::nine",
+            "experiment::two", "well::three", 0, "test",
+        ),
     ]
     observation_table = pd.DataFrame(observation_rows).reset_index(drop=True)
 
@@ -93,7 +102,9 @@ def synthetic_manifest_v2(asset_root: Path | None = None) -> PipelineManifestRes
 
 def _observation(
     snip_id: str,
+    embryo_id: str,
     physical_embryo_id: str,
+    image_id: str,
     experiment_id: str,
     well_id: str,
     time_index: int,
@@ -101,11 +112,11 @@ def _observation(
 ) -> dict[str, object]:
     return {
         "snip_id": snip_id,
-        "embryo_id": f"explicit-embryo::{snip_id}",
+        "embryo_id": embryo_id,
         "physical_embryo_id": physical_embryo_id,
         "experiment_id": experiment_id,
         "well_id": well_id,
-        "image_id": f"explicit-image::{snip_id}",
+        "image_id": image_id,
         "time_index": time_index,
         "channel_id": "BF",
         "elapsed_time_s": float(time_index * 900),
