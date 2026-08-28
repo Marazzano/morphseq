@@ -1240,6 +1240,66 @@ def resolve_data_path(output_root: Path, value: Any) -> Path | None:
     return path if path.is_absolute() else output_root / path
 
 
+MASK_CLASS_COLORS = {
+    "high": "#D7191C",
+    "in_range": "#1A9641",
+    "low": "#2C7BB6",
+}
+OTHER_QC_FRAME_COLORS = {
+    True: "#D7191C",
+    False: "#1A9641",
+}
+
+
+def _finite_float(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _scalar_is_true(value: Any) -> bool:
+    if value is None or pd.isna(value):
+        return False
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    return str(value).strip().lower() in {"true", "1", "yes"}
+
+
+def surface_area_mask_class(row: pd.Series) -> str:
+    """Classify the displayed mask against the applicable surface-area bounds."""
+    boundary_side = str(row.get("boundary_side", "")).strip().lower()
+    if boundary_side in {"above_upper", "high", "too_large"} or _scalar_is_true(
+        row.get("recomputed_too_large")
+    ):
+        return "high"
+    if boundary_side in {"below_lower", "low", "too_small"} or _scalar_is_true(
+        row.get("recomputed_too_small")
+    ):
+        return "low"
+
+    area = _finite_float(row.get("area_um2"))
+    lower = _finite_float(row.get("lower_bound_um2"))
+    upper = _finite_float(row.get("upper_bound_um2"))
+    if area is not None and upper is not None and area > upper:
+        return "high"
+    if area is not None and lower is not None and area < lower:
+        return "low"
+    return "in_range"
+
+
+def excluded_by_other_qc(row: pd.Series) -> bool:
+    """Return whether a non-surface-area flag appears in the final QC verdict."""
+    reasons = row.get("qc_fail_reasons", "")
+    if reasons is None or pd.isna(reasons):
+        return False
+    return any(
+        reason and reason != "sa_outlier_flag"
+        for reason in str(reasons).split("|")
+    )
+
+
 def contact_sheets(boundary: pd.DataFrame, output_root: Path, report_dir: Path) -> list[Path]:
     sheets_dir = report_dir / "boundary_contact_sheets"
     sheets_dir.mkdir(parents=True, exist_ok=True)
@@ -1248,18 +1308,46 @@ def contact_sheets(boundary: pd.DataFrame, output_root: Path, report_dir: Path) 
     thumb_height = 230
     thumb_width = 104
     tile_width = 2 * thumb_width + 16
-    tile_height = thumb_height + 52
+    tile_height = thumb_height + 68
     columns = 4
-    font = ImageFont.load_default()
+    legend_height = 46
+    try:
+        font = ImageFont.truetype("DejaVuSans.ttf", 11)
+        legend_font = ImageFont.truetype("DejaVuSans.ttf", 12)
+    except OSError:
+        font = ImageFont.load_default()
+        legend_font = font
     for page_start in range(0, len(boundary), rows_per_page):
         page = boundary.iloc[page_start : page_start + rows_per_page]
-        sheet = Image.new("RGB", (columns * tile_width, 5 * tile_height), "white")
+        sheet = Image.new(
+            "RGB", (columns * tile_width, legend_height + 5 * tile_height), "white"
+        )
         draw = ImageDraw.Draw(sheet)
+        draw.text((6, 3), "MASK:", fill="black", font=legend_font)
+        legend_x = 54
+        for mask_class, label in (
+            ("high", "high"),
+            ("in_range", "in range"),
+            ("low", "low"),
+        ):
+            color = MASK_CLASS_COLORS[mask_class]
+            draw.rectangle((legend_x, 4, legend_x + 12, 16), fill=color)
+            draw.text((legend_x + 17, 2), label, fill="black", font=legend_font)
+            legend_x += 88
+        draw.text((6, 24), "FRAME:", fill="black", font=legend_font)
+        legend_x = 58
+        for other_qc, label in ((True, "other QC excluded"), (False, "no other QC exclusion")):
+            color = OTHER_QC_FRAME_COLORS[other_qc]
+            draw.rectangle((legend_x, 25, legend_x + 15, 38), outline=color, width=3)
+            draw.text((legend_x + 21, 22), label, fill="black", font=legend_font)
+            legend_x += 176
         for offset, (_, row) in enumerate(page.iterrows()):
             x = (offset % columns) * tile_width
-            y = (offset // columns) * tile_height
+            y = legend_height + (offset // columns) * tile_height
             image_path = resolve_data_path(output_root, row.get("processed_snip_path"))
             mask_path = resolve_data_path(output_root, row.get("embryo_mask_snip_path"))
+            mask_class = surface_area_mask_class(row)
+            other_qc = excluded_by_other_qc(row)
             try:
                 if image_path is None or not image_path.is_file():
                     raise FileNotFoundError(str(image_path))
@@ -1274,16 +1362,30 @@ def contact_sheets(boundary: pd.DataFrame, output_root: Path, report_dir: Path) 
                     mask.thumbnail((thumb_width, thumb_height), Image.Resampling.NEAREST)
                     mask_canvas = Image.new("L", (thumb_width, thumb_height), 0)
                     mask_canvas.paste(mask, ((thumb_width - mask.width) // 2, 0))
-                    red = Image.new("RGB", overlay.size, (255, 0, 0))
-                    overlay = Image.blend(overlay, Image.composite(red, overlay, mask_canvas), 0.35)
+                    mask_color = Image.new("RGB", overlay.size, MASK_CLASS_COLORS[mask_class])
+                    overlay = Image.blend(
+                        overlay,
+                        Image.composite(mask_color, overlay, mask_canvas),
+                        0.42,
+                    )
                 sheet.paste(overlay, (x + thumb_width + 4, y))
             except Exception:
-                draw.rectangle((x, y, x + 2 * thumb_width, y + thumb_height), outline="red", width=2)
-                draw.text((x + 4, y + 4), "asset unavailable", fill="red", font=font)
+                draw.rectangle(
+                    (x, y, x + 2 * thumb_width + 3, y + thumb_height - 1),
+                    fill="#EEEEEE",
+                )
+                draw.text((x + 4, y + 4), "asset unavailable", fill="#555555", font=font)
+            draw.rectangle(
+                (x, y, x + 2 * thumb_width + 3, y + thumb_height - 1),
+                outline=OTHER_QC_FRAME_COLORS[other_qc],
+                width=4,
+            )
             label = (
                 f"{row['review_id']} {row['boundary_side']}\n"
-                f"stage={row['stage_bin']} shape={row['shape_class']}\n"
-                f"track={row['too_small_track_class']}"
+                f"mask={mask_class} stage={row['stage_bin']}\n"
+                f"shape={row['shape_class']}\n"
+                f"track={row['too_small_track_class']}\n"
+                f"other_qc={'excluded' if other_qc else 'not excluded'}"
             )
             draw.multiline_text((x + 2, y + thumb_height + 2), label, fill="black", font=font, spacing=1)
         page_number = page_start // rows_per_page + 1
