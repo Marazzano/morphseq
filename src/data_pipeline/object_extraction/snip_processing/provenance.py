@@ -23,7 +23,21 @@ from data_pipeline.object_extraction.snip_processing.inventory_contract import (
 )
 
 
-_GLOBAL_CONTRACT_KEYS = ("contract_version", "git", "software")
+# "git" is DELIBERATELY NOT a merge gate (dropped 2026-08-28). It is still captured in every
+# sidecar for provenance -- it just no longer has to AGREE across the wells being merged.
+#
+# _git_identity() records `git rev-parse HEAD` for the WHOLE REPOSITORY, which has nothing to do
+# with how any pixel was produced. A README edit, a notebook, a docs commit -- HEAD moves, and every
+# snip rendered after it carries a different hash. A 96-well render takes long enough to straddle a
+# commit, so an unrelated commit mid-run made merge_snip_inventory refuse the experiment outright.
+# That happened to the SeaHub corpus on 2026-08-28: one shard held three commits across nine
+# minutes of rendering, and merging died on a difference no pixel could observe.
+#
+# What the gate is FOR -- refusing to stack snips made under different rendering contracts -- is
+# preserved by the two keys that remain. `contract_version` pins the sidecar schema and `software`
+# pins the libraries that actually touch pixels; per-product rendering parameters are compared
+# separately below via _fixed_product. HEAD was only ever a proxy for those, and a bad one.
+_GLOBAL_CONTRACT_KEYS = ("contract_version", "software")
 
 
 def _git_identity() -> dict[str, Any]:

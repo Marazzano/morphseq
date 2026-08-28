@@ -81,14 +81,31 @@ class TestRelativeLink:
 
 
 class TestNeverClobbers:
-    def test_a_pre_existing_real_file_fails_loud(self, tmp_path):
-        # THE DANGEROUS CASE. A real file at the legacy path means a PRE-MIGRATION run wrote actual
-        # pixels there; replacing it destroys the only copy.
+    def test_a_pre_existing_real_file_is_replaced_once_canonical_exists(self, tmp_path):
+        # CONTRACT CHANGE 2026-08-28. This used to fail loud on any real file, reasoning that
+        # replacing it would destroy the only copy. With the canonical render present that premise
+        # is false -- and since every snip in the corpus had a pre-migration file here, the refusal
+        # fired on all of them, was recorded as is_valid_snip=False by the caller's bare
+        # `except Exception`, and took down whole experiments over an un-creatable SYMLINK.
         canonical, legacy = _canonical(tmp_path), _legacy(tmp_path)
         legacy.parent.mkdir(parents=True, exist_ok=True)
         legacy.write_bytes(b"pre-migration-pixels")
 
-        with pytest.raises(LegacySnipPathConflict, match="REAL FILE"):
+        link_legacy_flat_path(canonical_path=canonical, legacy_path=legacy)
+
+        assert legacy.is_symlink(), "the stale real file must give way to the alias"
+        assert legacy.read_bytes() == b"canonical-pixels", "the alias must resolve to the canonical bytes"
+
+    def test_a_pre_existing_real_file_fails_loud_with_no_canonical(self, tmp_path):
+        # THE CASE THE GUARD WAS ACTUALLY WRITTEN FOR, and it still holds: with no canonical render
+        # on disk those pre-migration pixels really may be the only copy, so refuse rather than
+        # destroy them.
+        legacy = _legacy(tmp_path)
+        canonical = tmp_path / EMBRYO / PRODUCT / SNIP  # deliberately NOT written
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        legacy.write_bytes(b"pre-migration-pixels")
+
+        with pytest.raises(LegacySnipPathConflict, match="no canonical render exists"):
             link_legacy_flat_path(canonical_path=canonical, legacy_path=legacy)
         assert legacy.read_bytes() == b"pre-migration-pixels", "the original data must survive"
 

@@ -1,0 +1,27 @@
+# Generated 2026-08-28. Groups A + B: the 13 experiments held out of backend_rerun_ready.
+# FORMAT: <experiment> <scope>   (SGE array task N == Nth non-comment line)
+#
+# Run END TO END (target analysis_ready, no --until). Safe to mix the two groups because the
+# front half rebuilds PER WELL, so each experiment does exactly the work it needs:
+#
+#   Group A (7): product inventories absent/partial for ALL wells -> full front half.
+#   Group B (6): one well never rendered -> ~2 materialize + 1 SAM2 job, rest is backend.
+#
+# Group B was UNRUNNABLE until the 2026-08-28 alias-sentinel patch: the legacy
+# <well>_snip_inventory.csv.validated had no producing rule, so a single unrendered well
+# killed DAG construction for the whole experiment.
+# Group A:
+20240813_24hpf Keyence
+20240813_30hpf Keyence
+20240813_36hpf Keyence
+20260702_hotchem_24hpf_plate01 Keyence
+20260702_hotchem_24hpf_plate02 Keyence
+20260702_hotchem_30hpf_plate01 Keyence
+20260702_hotchem_30hpf_plate02 Keyence
+# Group B:
+20260324_cep290_18hpf_24hpf_plate02 Keyence
+20260324_cep290_18hpf_plate01 Keyence
+20260331_b9d2_18hpf_plate01 Keyence
+20260414_b9d2_14hpf_plate02 Keyence
+20230525 Keyence
+20250623_chem_35C_T02_1204 Keyence
