@@ -2,9 +2,9 @@ import pytorch_lightning as pl
 import torch
 from torch.utils.data import DataLoader
 from typing import Any, Callable, Optional, Dict
-from torch.utils.data.sampler import SubsetRandomSampler
 from torch.nn import functional as F
 from torch import nn
+from src.core.data.dataset_classes import collate_manifest_dataset_output
 from src.core.models.ldm_models import AutoencoderKLModel
 from src.core.lightning.pl_utils import cosine_ramp_weight
 import warnings
@@ -317,31 +317,35 @@ class LitModel(pl.LightningModule):
 
 
     def train_dataloader(self):
-        ds = self.data_cfg.create_dataset()
-        # get indices for images to use for training
-        train_indices = self.data_cfg.train_indices
-        train_sampler = SubsetRandomSampler(train_indices)
-
-        return DataLoader(
-            ds,
-            batch_size=self.data_cfg.batch_size,
-            num_workers=self.data_cfg.num_workers,
-            sampler=train_sampler,
-            shuffle=False,
-            drop_last=True
-        )
+        return self._manifest_dataloader("train", shuffle=True)
 
     def val_dataloader(self):
-        ds = self.data_cfg.create_dataset()
-        eval_indices = self.data_cfg.eval_indices
-        eval_sampler = SubsetRandomSampler(eval_indices)
+        return self._manifest_dataloader("eval", shuffle=False)
+
+    def test_dataloader(self):
+        return self._manifest_dataloader("test", shuffle=False)
+
+    def _manifest_dataloader(self, split: str, *, shuffle: bool) -> DataLoader:
+        """Build one compact split-local loader from the canonical resolved view.
+
+        No positional sampler is supplied, so Lightning can install its distributed
+        sampler when a distributed strategy is active.
+        """
+
+        dataset = self.data_cfg.create_dataset(split=split)
+        num_workers = int(self.data_cfg.num_workers)
+        generator = torch.Generator()
+        generator.manual_seed(int(getattr(self.data_cfg, "loader_seed", 0)))
         return DataLoader(
-            ds,
+            dataset,
             batch_size=self.data_cfg.batch_size,
-            num_workers=self.data_cfg.num_workers,
-            sampler=eval_sampler,
-            shuffle=False,
-            drop_last=True
+            num_workers=num_workers,
+            shuffle=shuffle,
+            drop_last=bool(getattr(self.data_cfg, "drop_last_train", False)) if split == "train" else False,
+            pin_memory=bool(getattr(self.data_cfg, "pin_memory", False)),
+            persistent_workers=bool(getattr(self.data_cfg, "persistent_workers", False)) and num_workers > 0,
+            collate_fn=collate_manifest_dataset_output,
+            generator=generator,
         )
 
     # -------------------------------------------------------------------
@@ -349,7 +353,7 @@ class LitModel(pl.LightningModule):
     # -------------------------------------------------------------------
     def predict_step(self, batch, batch_idx, dataloader_idx=0, recon_loss_type="mse"):
         x = batch["data"]
-        snip_ids = batch["label"][0]  # list[str] already
+        snip_ids = batch["snip_id"]
 
         out = self.model(x)  # your plain nn.Module
         recon_x = out.recon_x
