@@ -107,6 +107,19 @@ STAGE_LABELS: tuple[str, ...] = (
 )
 K_LOWER_SWEEP: tuple[float, ...] = (0.70, 0.75, 0.80, 0.85, 0.90)
 NA_LABEL = "unavailable"
+DIAGNOSTIC_CRISPANT_LABEL_TOKENS: tuple[str, ...] = (
+    "crispant",
+    "cispant",
+    "crispr-",
+)
+DIAGNOSTIC_INJECTION_CONTROL_LABEL_TOKENS: tuple[str, ...] = (
+    "inj_ctrl",
+    "inj-ctrl",
+    "ctrl-inj",
+)
+DIAGNOSTIC_CHEMICAL_CONTROL_LABELS: frozenset[str] = frozenset(
+    {"dmso_6", "dmso", "ethanol_ctrl", "tri_0"}
+)
 
 
 @dataclass(frozen=True)
@@ -1395,7 +1408,139 @@ def contact_sheets(boundary: pd.DataFrame, output_root: Path, report_dir: Path) 
     return outputs
 
 
-def write_figures(rows: pd.DataFrame, sweep: pd.DataFrame, track: pd.DataFrame, report_dir: Path) -> None:
+def threshold_population_recovery(sweep_strata: pd.DataFrame) -> pd.DataFrame:
+    """Summarize lower-bound recovery for explicit diagnostic populations."""
+
+    genotype_labels = sweep_strata["stratum"].astype("string").str.lower()
+    crispant_mask = (
+        sweep_strata["dimension"].eq("genotype_raw")
+        & genotype_labels.str.contains(
+            "|".join(DIAGNOSTIC_CRISPANT_LABEL_TOKENS), regex=True, na=False
+        )
+        & ~genotype_labels.str.contains(
+            "|".join(DIAGNOSTIC_INJECTION_CONTROL_LABEL_TOKENS), regex=True, na=False
+        )
+    )
+    chemical_labels = sweep_strata["stratum"].astype("string").str.lower()
+    active_chemical_mask = (
+        sweep_strata["dimension"].eq("chem_perturbation_raw")
+        & chemical_labels.ne(NA_LABEL)
+        & ~chemical_labels.isin(DIAGNOSTIC_CHEMICAL_CONTROL_LABELS)
+    )
+    populations = (
+        (
+            "all",
+            "all study rows",
+            sweep_strata["dimension"].eq("experiment"),
+        ),
+        (
+            "crispant",
+            "raw genotype contains crispant, cispant, or crispr-, excluding injection controls",
+            crispant_mask,
+        ),
+        (
+            "active_chemical",
+            "declared chemical treatment excluding DMSO, ethanol_ctrl, and tri_0 controls",
+            active_chemical_mask,
+        ),
+    )
+
+    records: list[dict[str, Any]] = []
+    for population, definition, population_mask in populations:
+        strata = sweep_strata.loc[population_mask].copy()
+        baseline = strata.loc[np.isclose(strata["k_lower"], 0.90)]
+        population_rows = int(baseline["rows"].sum())
+        baseline_too_small = int(baseline["too_small_rows"].sum())
+        baseline_eligible = int(baseline["eligible_rows"].sum())
+        baseline_ineligible = population_rows - baseline_eligible
+        for k_lower in K_LOWER_SWEEP:
+            local = strata.loc[np.isclose(strata["k_lower"], k_lower)]
+            current_too_small = int(local["too_small_rows"].sum())
+            no_longer_too_small = baseline_too_small - current_too_small
+            newly_eligible = int(local["row_recovery_vs_k0.90"].sum())
+            records.append(
+                {
+                    "population": population,
+                    "population_definition": definition,
+                    "k_lower": k_lower,
+                    "population_rows": population_rows,
+                    "baseline_too_small_rows_k0.90": baseline_too_small,
+                    "no_longer_too_small_rows": no_longer_too_small,
+                    "percent_baseline_too_small_reclassified": (
+                        100.0 * no_longer_too_small / baseline_too_small
+                        if baseline_too_small
+                        else np.nan
+                    ),
+                    "baseline_ineligible_rows_k0.90": baseline_ineligible,
+                    "newly_eligible_rows_after_all_qc": newly_eligible,
+                    "percent_baseline_ineligible_newly_eligible": (
+                        100.0 * newly_eligible / baseline_ineligible
+                        if baseline_ineligible
+                        else np.nan
+                    ),
+                }
+            )
+    return pd.DataFrame.from_records(records)
+
+
+def write_threshold_sweep_figure(recovery: pd.DataFrame, report_dir: Path) -> None:
+    figures = report_dir / "figures"
+    figures.mkdir(parents=True, exist_ok=True)
+    colors = {
+        "all": "#444444",
+        "crispant": "#AA4499",
+        "active_chemical": "#0072B2",
+    }
+    labels = {
+        "all": "All rows",
+        "crispant": "Crispant",
+        "active_chemical": "Active chemical",
+    }
+    fig, axes = plt.subplots(2, 1, figsize=(9, 8), sharex=True)
+    for population in ("all", "crispant", "active_chemical"):
+        local = recovery.loc[recovery["population"].eq(population)].sort_values(
+            "k_lower", ascending=False
+        )
+        population_rows = int(local["population_rows"].iloc[0])
+        line_label = f"{labels[population]} (n={population_rows:,})"
+        axes[0].plot(
+            local["k_lower"],
+            local["percent_baseline_too_small_reclassified"],
+            marker="o",
+            color=colors[population],
+            label=line_label,
+        )
+        axes[1].plot(
+            local["k_lower"],
+            local["percent_baseline_ineligible_newly_eligible"],
+            marker="o",
+            color=colors[population],
+            label=line_label,
+        )
+
+    axes[0].set_ylabel("Baseline lower-bound failures reclassified (%)")
+    axes[0].set_title("Surface status only")
+    axes[0].legend(frameon=False)
+    axes[1].set_ylabel("Baseline-ineligible rows newly eligible (%)")
+    axes[1].set_title("Usable-cohort recovery after all other QC")
+    axes[1].set_xlabel("Lower-bound multiplier k (more permissive to the right)")
+    axes[1].set_xticks(K_LOWER_SWEEP)
+    axes[1].invert_xaxis()
+    for axis in axes:
+        axis.set_ylim(bottom=0)
+        axis.grid(axis="y", alpha=0.25)
+    fig.suptitle("Offline lower-bound sweep; upper multiplier fixed at 1.4")
+    fig.tight_layout()
+    fig.savefig(figures / "threshold_sweep.png", dpi=160)
+    plt.close(fig)
+
+
+def write_figures(
+    rows: pd.DataFrame,
+    population_recovery: pd.DataFrame,
+    track: pd.DataFrame,
+    report_dir: Path,
+) -> None:
     figures = report_dir / "figures"
     figures.mkdir(parents=True, exist_ok=True)
 
@@ -1412,23 +1557,7 @@ def write_figures(rows: pd.DataFrame, sweep: pd.DataFrame, track: pd.DataFrame, 
     plt.savefig(figures / "failure_direction_by_nominal_stage.png", dpi=160)
     plt.close()
 
-    fig, ax1 = plt.subplots(figsize=(8, 5))
-    ax1.plot(sweep["k_lower"], sweep["eligible_rows"], marker="o", label="eligible rows")
-    ax1.set_xlabel("Offline k_lower")
-    ax1.set_ylabel("Rows eligible after all QC")
-    ax2 = ax1.twinx()
-    ax2.plot(
-        sweep["k_lower"],
-        sweep["eligible_physical_embryos"],
-        marker="s",
-        color="#CC6677",
-        label="eligible physical embryos",
-    )
-    ax2.set_ylabel("Physical embryos with >=1 eligible row")
-    ax1.set_title("Offline lower-bound sweep; k_upper fixed at 1.4")
-    fig.tight_layout()
-    fig.savefig(figures / "threshold_sweep.png", dpi=160)
-    plt.close(fig)
+    write_threshold_sweep_figure(population_recovery, report_dir)
 
     failed_tracks = track.loc[track["n_too_small_rows"] > 0]
     fig, ax = plt.subplots(figsize=(8, 5))
@@ -1627,6 +1756,11 @@ def run(config: StudyConfig) -> None:
     write_csv(policy_strata, config.report_dir / "counterfactual_policy_strata.csv")
     write_csv(sweep, config.report_dir / "threshold_sweep.csv")
     write_csv(sweep_strata, config.report_dir / "threshold_sweep_strata.csv")
+    population_recovery = threshold_population_recovery(sweep_strata)
+    write_csv(
+        population_recovery,
+        config.report_dir / "threshold_sweep_population_recovery.csv",
+    )
 
     boundary = round_robin_boundary(rows, config.boundary_size, config.seed)
     write_csv(boundary, config.report_dir / "boundary_review_set.csv")
@@ -1695,7 +1829,7 @@ def run(config: StudyConfig) -> None:
         if column in sensitivity.columns:
             sensitivity[column] = sensitivity[column].astype("string")
     sensitivity.to_parquet(config.report_dir / "stage_axis_sensitivity_input.parquet", index=False)
-    write_figures(rows, sweep, track, config.report_dir)
+    write_figures(rows, population_recovery, track, config.report_dir)
 
     failure_summary = pd.DataFrame(
         [

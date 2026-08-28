@@ -1,0 +1,16 @@
+population,population_definition,k_lower,population_rows,baseline_too_small_rows_k0.90,no_longer_too_small_rows,percent_baseline_too_small_reclassified,baseline_ineligible_rows_k0.90,newly_eligible_rows_after_all_qc,percent_baseline_ineligible_newly_eligible
+all,all study rows,0.7,531902,212778,45295,21.287445130605608,346783,11510,3.3190785015413096
+all,all study rows,0.75,531902,212778,36844,17.315699931383882,346783,9731,2.806077575890398
+all,all study rows,0.8,531902,212778,26651,12.525261070223426,346783,7385,2.129573825706566
+all,all study rows,0.85,531902,212778,14214,6.680201900572428,346783,4219,1.2166109642052811
+all,all study rows,0.9,531902,212778,0,0.0,346783,0,0.0
+crispant,"raw genotype contains crispant, cispant, or crispr-, excluding injection controls",0.7,142570,65074,15153,23.28579770722562,102297,4166,4.072455692737813
+crispant,"raw genotype contains crispant, cispant, or crispr-, excluding injection controls",0.75,142570,65074,12371,19.010664781633217,102297,3658,3.5758624397587417
+crispant,"raw genotype contains crispant, cispant, or crispr-, excluding injection controls",0.8,142570,65074,8817,13.549190152749178,102297,2814,2.750813806856506
+crispant,"raw genotype contains crispant, cispant, or crispr-, excluding injection controls",0.85,142570,65074,4606,7.07809570642653,102297,1665,1.6276137130121118
+crispant,"raw genotype contains crispant, cispant, or crispr-, excluding injection controls",0.9,142570,65074,0,0.0,102297,0,0.0
+active_chemical,"declared chemical treatment excluding DMSO, ethanol_ctrl, and tri_0 controls",0.7,26181,13055,2258,17.296055151283035,17505,477,2.7249357326478147
+active_chemical,"declared chemical treatment excluding DMSO, ethanol_ctrl, and tri_0 controls",0.75,26181,13055,1745,13.366526235158943,17505,394,2.25078548986004
+active_chemical,"declared chemical treatment excluding DMSO, ethanol_ctrl, and tri_0 controls",0.8,26181,13055,1173,8.985063194178476,17505,285,1.6281062553556127
+active_chemical,"declared chemical treatment excluding DMSO, ethanol_ctrl, and tri_0 controls",0.85,26181,13055,544,4.16698582918422,17505,134,0.7654955726935161
+active_chemical,"declared chemical treatment excluding DMSO, ethanol_ctrl, and tri_0 controls",0.9,26181,13055,0,0.0,17505,0,0.0
