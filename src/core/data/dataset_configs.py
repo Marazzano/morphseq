@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from pydantic.dataclasses import dataclass
-from dataclasses import field
-from typing import Literal, List, Type, Callable, Any, Dict, Optional, Union
+from dataclasses import dataclass as std_dataclass, field
+from typing import Literal, List, Type, Callable, Any, Dict, Mapping, Optional, Union
 from src.core.data.dataset_utils import make_seq_key, make_train_test_split
 from src.core.data.data_transforms import basic_transform, contrastive_transform
 from src.core.data.dataset_classes import BasicDataset, NTXentDataset, BasicEvalDataset
@@ -12,6 +12,13 @@ import pandas as pd
 from src.core.data.dataset_utils import smart_read_csv
 from pydantic   import ConfigDict
 from pathlib import Path
+from src.core.data.manifest_types import ManifestPolicy, PipelineManifestResult
+from src.core.data.pipeline_manifest import (
+    ArtifactPathFunction,
+    AssetPathResolver,
+    ExperimentSourcePaths,
+    build_pipeline_manifest,
+)
 
 
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True))
@@ -243,3 +250,66 @@ class NTXentDataConfig(UrrDataConfig):
         self.eval_bool[self.eval_indices] = True
         self.test_bool = np.zeros(pert_id_vec.shape, dtype=np.bool_)
         self.test_bool[self.test_indices] = True
+
+
+@std_dataclass
+class PipelineDataConfig:
+    """Split-aware data configuration over one built manifest result.
+
+    Manifest construction is explicit and happens once in ``make_metadata`` (or
+    lazily on the first dataset request).  A2 owns the dataset implementation;
+    this A1-owned configuration only passes the frozen resolved view and loader
+    settings across that seam.
+    """
+
+    pipeline_output_root: Union[str, Path]
+    manifest_policy: ManifestPolicy
+    source_paths: Mapping[str, ExperimentSourcePaths] | None = None
+    input_dim: tuple[int, int, int] = (1, 288, 128)
+    transform: Any = None
+    batch_size: int = 64
+    num_workers: int = 4
+    loader_seed: int = 0
+    drop_last_train: bool = False
+    pin_memory: bool = False
+    persistent_workers: bool = False
+    max_decode_failures: int = 10
+    artifact_path_authority: str = (
+        "src/data_pipeline/pipeline_orchestrator/orchestration/paths.py:artifact_path"
+    )
+    asset_path_authority: str = (
+        "src/data_pipeline/object_extraction/snip_processing/io.py:resolve_from_root"
+    )
+    artifact_path_fn: ArtifactPathFunction | None = field(default=None, repr=False)
+    asset_path_resolver: AssetPathResolver | None = field(default=None, repr=False)
+    manifest_result: PipelineManifestResult | None = field(default=None, init=False, repr=False)
+
+    @property
+    def resolved_sample_table(self) -> pd.DataFrame:
+        if self.manifest_result is None:
+            raise RuntimeError(
+                "PipelineDataConfig manifest has not been built; call make_metadata() first."
+            )
+        return self.manifest_result.resolved_sample_table
+
+    def make_metadata(self) -> PipelineManifestResult:
+        self.manifest_result = build_pipeline_manifest(
+            Path(self.pipeline_output_root),
+            self.manifest_policy,
+            source_paths=self.source_paths,
+            artifact_path_fn=self.artifact_path_fn,
+            asset_path_resolver=self.asset_path_resolver,
+        )
+        return self.manifest_result
+
+    def create_dataset(self, *, split: str):
+        if self.manifest_result is None:
+            self.make_metadata()
+        return BasicDataset(
+            resolved_sample_table=self.resolved_sample_table,
+            product_key=self.manifest_policy.selected_product_key,
+            input_dim=self.input_dim,
+            split=split,
+            transform=self.transform,
+            max_decode_failures=self.max_decode_failures,
+        )

@@ -1,402 +1,614 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 
 import pandas as pd
 import pytest
+from omegaconf import OmegaConf
 
+import src.core.data.dataset_configs as dataset_configs
+from src.core.data.dataset_configs import PipelineDataConfig
 from src.core.data.manifest_types import (
     CovariatePolicy,
-    ExperimentTables,
+    ManifestPolicy,
     MetricMappingPolicy,
     QCPolicy,
     SplitPolicy,
     StagePolicy,
-    ValidityPolicy,
 )
 from src.core.data.pipeline_manifest import (
-    build_manifest_from_tables,
-    select_vanilla_assets,
+    assign_group_splits,
+    build_pipeline_manifest,
+    preflight_pipeline_sources,
 )
+from tests.core.fixtures.pipeline_source_tables import (
+    BF_PRODUCT,
+    RFP_PRODUCT,
+    write_pipeline_source_fixture,
+)
+from tests.core.fixtures.manifest_v2 import synthetic_manifest_v2
 
 
-BF_PRODUCT = "BF__projection__focus_stack__clahe_blend"
-RFP_PRODUCT = "RFP__projection__max__no_change"
-Z_PRODUCT = "BF__z_stack__no_change"
+def _policy(
+    experiment_ids: tuple[str, ...],
+    *,
+    qc: QCPolicy | None = None,
+    stage: StagePolicy | None = None,
+    covariates: CovariatePolicy | None = None,
+    splits: SplitPolicy | None = None,
+) -> ManifestPolicy:
+    return ManifestPolicy(
+        name="test_only_pipeline_manifest",
+        version="1",
+        experiment_ids=experiment_ids,
+        allowed_product_keys=(BF_PRODUCT, RFP_PRODUCT),
+        selected_product_key=BF_PRODUCT,
+        qc=qc or QCPolicy(name="fixture_qc", version="1"),
+        stage=stage or StagePolicy(enabled=False),
+        covariates=covariates or CovariatePolicy(),
+        splits=splits or SplitPolicy(enabled=False),
+    )
 
 
-def test_builds_unique_observations_product_aware_assets_and_exact_vanilla_view(
-    manifest_bundle_factory, manifest_policy_factory
-):
-    bundle = manifest_bundle_factory()
-    result = build_manifest_from_tables(manifest_policy_factory(), [bundle])
+def test_build_carries_exact_temperature_time_stage_qc_and_assets(tmp_path: Path) -> None:
+    experiment_id = "opaque-experiment"
+    paths = write_pipeline_source_fixture(
+        tmp_path, experiment_id, booleans_as_strings=True
+    )
+    result = build_pipeline_manifest(
+        tmp_path,
+        _policy((experiment_id,)),
+        source_paths={experiment_id: paths},
+    )
 
-    assert result.observation_table["snip_id"].is_unique
-    assert len(result.observation_table) == 3
-    assert len(result.asset_table) == 7
-    first_id = "observation::exp-A::0"
-    sibling_assets = result.asset_table.loc[result.asset_table["snip_id"].eq(first_id)]
-    assert sibling_assets["snip_product_key"].tolist() == [
+    assert result.observation_table["snip_id"].tolist() == [
+        "observation-opaque-0",
+        "observation-opaque-1",
+        "observation-opaque-2",
+        "observation-opaque-3",
+    ]
+    assert len(result.asset_table) == 5
+    assert result.asset_table.iloc[:2]["snip_product_key"].tolist() == [
         BF_PRODUCT,
         RFP_PRODUCT,
-        Z_PRODUCT,
-        Z_PRODUCT,
-        Z_PRODUCT,
     ]
-    assert sibling_assets["z_index"].tolist()[:2] == [pd.NA, pd.NA]
-    assert sibling_assets.loc[sibling_assets["snip_product_key"].eq(Z_PRODUCT), "z_index"].tolist() == [
-        0,
-        1,
-        2,
+    assert result.resolved_sample_table["snip_product_key"].eq(BF_PRODUCT).all()
+    assert result.resolved_sample_table["z_index"].isna().all()
+    assert result.observation_table["incubation_temperature_c"].tolist() == pytest.approx(
+        [27.5, 27.6, 27.7, 27.8]
+    )
+    assert result.observation_table["elapsed_time_s"].tolist() == pytest.approx(
+        [0.0, 600.0, 1200.0, 1800.0]
+    )
+    assert set(result.observation_table["elapsed_time_status"]) == {"available"}
+    assert set(result.observation_table["temperature_status"]) == {"available"}
+    assert set(result.observation_table["stage_status"]) == {"predicted"}
+    assert set(result.observation_table["stage_model_version"]) == {"fixture-stage-v1"}
+    assert set(result.observation_table["qc_status"]) == {"evaluated"}
+    assert result.observation_table["use_snip"].eq(True).all()  # noqa: E712
+    assert result.observation_table["sa_outlier_flag"].eq(False).all()  # noqa: E712
+    assert set(result.observation_table["start_age_source"]) == {"plate_metadata"}
+    assert result.source_inventory[0].sha256
+    assert len(result.source_inventory[0].sha256) == 64
+    assert result.source_inventory[0].row_count == 5
+
+
+def test_invalid_asset_with_null_path_is_preserved_then_counted_out(
+    tmp_path: Path,
+) -> None:
+    experiment_id = "opaque-experiment"
+    paths = write_pipeline_source_fixture(tmp_path, experiment_id)
+    snips = pd.read_csv(paths.snip_inventory)
+    invalid_snip_id = str(snips.loc[0, "snip_id"])
+    snips["error_message"] = snips["error_message"].astype(object)
+    snips.loc[0, "is_valid_snip"] = False
+    snips.loc[0, "processed_snip_path"] = pd.NA
+    snips.loc[0, "error_message"] = "fixture materialization failure"
+    snips.to_csv(paths.snip_inventory, index=False)
+
+    result = build_pipeline_manifest(
+        tmp_path,
+        _policy((experiment_id,)),
+        source_paths={experiment_id: paths},
+    )
+
+    invalid_asset = result.asset_table[
+        result.asset_table["snip_id"].astype(str).eq(invalid_snip_id)
+        & result.asset_table["snip_product_key"].eq(BF_PRODUCT)
     ]
-    assert result.selected_sample_view["snip_product_key"].eq(BF_PRODUCT).all()
-    assert result.selected_sample_view["z_index"].isna().all()
-    assert "use_snip" not in result.asset_table.columns
-    assert "qc_status" not in result.asset_table.columns
-
-
-def test_temperature_elapsed_time_stage_and_start_age_are_exact(
-    manifest_bundle_factory, manifest_policy_factory
-):
-    result = build_manifest_from_tables(
-        manifest_policy_factory(required_covariates=("incubation_temperature_c", "elapsed_time_s")),
-        [manifest_bundle_factory()],
+    assert len(invalid_asset) == 1
+    assert invalid_asset.iloc[0]["is_valid_snip"] == False  # noqa: E712
+    assert pd.isna(invalid_asset.iloc[0]["processed_snip_path"])
+    assert invalid_snip_id not in set(result.resolved_sample_table["snip_id"].astype(str))
+    valid_filter = next(
+        record
+        for record in result.cohort_report.filters
+        if record.filter_name == "valid_asset"
     )
-    observations = result.observation_table
-    assert observations["incubation_temperature_c"].tolist() == [27.0, 27.1, 27.2]
-    assert observations["temperature_status"].tolist() == ["available"] * 3
-    assert observations["temperature_source"].eq("plate_metadata.temperature").all()
-    assert observations["elapsed_time_s"].tolist() == [7.0, 67.0, 127.0]
-    assert observations["elapsed_time_status"].tolist() == ["available"] * 3
-    assert observations["time_index"].tolist() == [0, 1, 2]
-    assert observations["predicted_stage_hpf"].tolist() == [21.0, 22.0, 23.0]
-    assert observations["stage_status"].eq("predicted").all()
-    assert observations["stage_model_version"].eq("kimmel1995_temp_rate_v1").all()
-    assert observations["plate_start_age_hpf"].tolist() == [20.0, 21.0, 22.0]
-    assert observations["start_age_hpf"].tolist() == [20.0, 21.0, 22.0]
-    assert observations["start_age_source"].eq("plate_metadata").all()
+    assert (valid_filter.rows_in, valid_filter.rows_out) == (4, 3)
 
 
-def test_collection_start_age_uses_source_ordinal_not_merged_time_index(
-    manifest_bundle_factory, manifest_policy_factory
-):
-    bundle = manifest_bundle_factory(n_observations=3)
-    observations = bundle.snip_inventory[["well_id", "time_index"]].drop_duplicates()
-    acquisition = observations.copy()
-    acquisition["experiment_id"] = "exp-A"
-    acquisition["source_ordinal"] = [4, 4, 9]
-    provenance = {
-        "experiment_id": "exp-A",
-        "is_collection": True,
-        "sources": [],
-        "start_age_by_source_ordinal": {"4": 31, "9": 55},
-        "start_age_by_time_index": {"4": 31, "9": 55},
-    }
-    bundle = replace(
-        bundle,
-        acquisition_inventory=acquisition,
-        collection_provenance=provenance,
+def test_valid_asset_with_null_path_fails_by_asset_key(tmp_path: Path) -> None:
+    experiment_id = "opaque-experiment"
+    paths = write_pipeline_source_fixture(tmp_path, experiment_id)
+    snips = pd.read_csv(paths.snip_inventory)
+    snips.loc[0, "processed_snip_path"] = pd.NA
+    snips.to_csv(paths.snip_inventory, index=False)
+
+    with pytest.raises(
+        ValueError,
+        match="valid assets require non-null processed_snip_path.*observation-opaque-0",
+    ):
+        build_pipeline_manifest(
+            tmp_path,
+            _policy((experiment_id,)),
+            source_paths={experiment_id: paths},
+        )
+
+
+@pytest.mark.parametrize("bad_time_index", [-1, 1.5, "not-an-integer", float("inf")])
+def test_time_index_must_be_nonnegative_integer(
+    tmp_path: Path, bad_time_index: object
+) -> None:
+    experiment_id = "opaque-experiment"
+    paths = write_pipeline_source_fixture(tmp_path, experiment_id)
+    snips = pd.read_csv(paths.snip_inventory)
+    snips["time_index"] = snips["time_index"].astype(object)
+    snips.loc[0, "time_index"] = bad_time_index
+    snips.to_csv(paths.snip_inventory, index=False)
+
+    with pytest.raises(
+        ValueError,
+        match="opaque-experiment:snip_inventory.time_index.*non-negative integers",
+    ):
+        build_pipeline_manifest(
+            tmp_path,
+            _policy((experiment_id,)),
+            source_paths={experiment_id: paths},
+        )
+
+
+@pytest.mark.parametrize(
+    ("column", "bad_value", "error_pattern"),
+    [
+        ("stage_prediction_status", None, "null stage_prediction_status"),
+        ("stage_prediction_status", "unknown-status", "unknown stage_prediction_status"),
+        ("predicted_stage_hpf", "not-a-stage", "nonnumeric or nonfinite"),
+        ("predicted_stage_hpf", float("inf"), "nonnumeric or nonfinite"),
+        ("predicted_stage_hpf", None, "status/value mismatch"),
+        ("stage_prediction_status", "missing_temperature", "status/value mismatch"),
+    ],
+)
+def test_stage_status_and_value_corruption_fails_with_row_identity(
+    tmp_path: Path,
+    column: str,
+    bad_value: object,
+    error_pattern: str,
+) -> None:
+    experiment_id = "opaque-experiment"
+    paths = write_pipeline_source_fixture(tmp_path, experiment_id)
+    stage = pd.read_csv(paths.stage_predictions)
+    stage[column] = stage[column].astype(object)
+    stage.loc[0, column] = bad_value
+    stage.to_csv(paths.stage_predictions, index=False)
+
+    with pytest.raises(
+        ValueError,
+        match=rf"opaque-experiment.*{error_pattern}.*observation-opaque-0",
+    ):
+        build_pipeline_manifest(
+            tmp_path,
+            _policy((experiment_id,)),
+            source_paths={experiment_id: paths},
+        )
+
+
+def test_conflicting_frame_times_fail_by_well_time_and_products(tmp_path: Path) -> None:
+    experiment_id = "opaque-experiment"
+    paths = write_pipeline_source_fixture(tmp_path, experiment_id)
+    frames = pd.read_csv(paths.frame_inventory)
+    frames.loc[1, "elapsed_time_s"] = 123.0
+    frames.to_csv(paths.frame_inventory, index=False)
+    with pytest.raises(ValueError, match="well-opaque-0.*time_index=0.*products"):
+        build_pipeline_manifest(
+            tmp_path,
+            _policy((experiment_id,)),
+            source_paths={experiment_id: paths},
+        )
+
+
+def test_relative_snip_and_mask_paths_use_declared_path_resolver(tmp_path: Path) -> None:
+    experiment_id = "opaque-experiment"
+    paths = write_pipeline_source_fixture(tmp_path, experiment_id)
+    snips = pd.read_csv(paths.snip_inventory)
+    snips["processed_snip_path"] = [f"pixels/asset-{i}.png" for i in range(len(snips))]
+    snips["embryo_mask_snip_path"] = [f"masks/asset-{i}.png" for i in range(len(snips))]
+    snips.to_csv(paths.snip_inventory, index=False)
+    calls: list[tuple[str, Path]] = []
+
+    def resolver(path_string: str, output_root: Path) -> Path:
+        calls.append((path_string, output_root))
+        return output_root / path_string
+
+    result = build_pipeline_manifest(
+        tmp_path,
+        _policy((experiment_id,)),
+        source_paths={experiment_id: paths},
+        asset_path_resolver=resolver,
     )
-    result = build_manifest_from_tables(manifest_policy_factory(), [bundle])
-    assert result.observation_table["source_ordinal"].tolist() == [4, 4, 9]
-    assert result.observation_table["collection_start_age_hpf"].tolist() == [31.0, 31.0, 55.0]
-    assert result.observation_table["start_age_hpf"].tolist() == [31.0, 31.0, 55.0]
-    assert result.observation_table["start_age_source"].eq("collection_provenance").all()
-
-
-def test_collection_without_source_ordinal_is_unavailable_not_guessed(
-    manifest_bundle_factory, manifest_policy_factory
-):
-    bundle = manifest_bundle_factory()
-    bundle = replace(
-        bundle,
-        collection_provenance={
-            "experiment_id": "exp-A",
-            "is_collection": True,
-            "sources": [],
-            "start_age_by_source_ordinal": {"0": 42},
-            "start_age_by_time_index": {"0": 42},
-        },
-        acquisition_inventory=None,
+    assert result.asset_table.loc[0, "processed_snip_path"] == str(
+        tmp_path / "pixels/asset-0.png"
     )
-    result = build_manifest_from_tables(manifest_policy_factory(), [bundle])
+    assert result.asset_table.loc[0, "embryo_mask_snip_path"] == str(
+        tmp_path / "masks/asset-0.png"
+    )
+    assert ("pixels/asset-0.png", tmp_path) in calls
+
+
+def test_collection_start_age_uses_declared_source_ordinal_not_time_guess(
+    tmp_path: Path,
+) -> None:
+    experiment_id = "opaque-collection"
+    paths = write_pipeline_source_fixture(tmp_path, experiment_id, collection=True)
+    result = build_pipeline_manifest(
+        tmp_path,
+        _policy((experiment_id,)),
+        source_paths={experiment_id: paths},
+    )
+    assert result.observation_table["start_age_hpf"].tolist() == [30, 31, 32, 33]
+    assert set(result.observation_table["start_age_source"]) == {"collection_provenance"}
+
+
+def test_collection_without_source_ordinal_mapping_never_guesses_from_time(
+    tmp_path: Path,
+) -> None:
+    experiment_id = "opaque-collection"
+    paths = write_pipeline_source_fixture(tmp_path, experiment_id, collection=True)
+    paths = replace(paths, acquisition_inventory=None)
+    result = build_pipeline_manifest(
+        tmp_path,
+        _policy((experiment_id,)),
+        source_paths={experiment_id: paths},
+    )
     assert result.observation_table["start_age_hpf"].isna().all()
-    assert result.observation_table["start_age_source"].eq("unavailable").all()
+    assert set(result.observation_table["start_age_source"]) == {"unavailable"}
     assert any(
         issue.code == "collection_source_ordinal_unavailable"
-        for issue in result.validation_report.issues
+        for issue in result.schema_report.issues
     )
 
 
-def test_conflicting_repeated_biological_parent_fails_by_snip_and_field(
-    manifest_bundle_factory, manifest_policy_factory
-):
-    bundle = manifest_bundle_factory()
-    inventory = bundle.snip_inventory.copy()
-    same_snip = inventory["snip_id"].eq("observation::exp-A::0")
-    inventory.loc[inventory.index[same_snip][1], "physical_embryo_id"] = "conflict"
-    with pytest.raises(ValueError, match="observation::exp-A::0.*physical_embryo_id"):
-        build_manifest_from_tables(
-            manifest_policy_factory(), [replace(bundle, snip_inventory=inventory)]
+def test_qc_and_stage_keep_no_artifact_row_missing_and_unavailable_distinct(
+    tmp_path: Path,
+) -> None:
+    first = "opaque-experiment-a"
+    second = "opaque-experiment-b"
+    paths_a = write_pipeline_source_fixture(tmp_path, first, row_count=3)
+    stage = pd.read_csv(paths_a.stage_predictions).drop(
+        columns=["stage_prediction_status", "model_version"]
+    )
+    stage = stage.iloc[:-1].copy()
+    stage.to_csv(paths_a.stage_predictions, index=False)
+    qc = pd.read_parquet(paths_a.snip_qc).iloc[:-1].copy()
+    qc.to_parquet(paths_a.snip_qc, index=False)
+
+    paths_b = write_pipeline_source_fixture(
+        tmp_path,
+        second,
+        row_count=2,
+        identity_offset=100,
+        include_stage=False,
+        include_qc=False,
+    )
+    policy = _policy(
+        (first, second),
+        qc=QCPolicy(
+            name="fixture_absence_allowed",
+            version="1",
+            accepted_statuses=("evaluated", "row_missing", "no_artifact"),
+            require_use_snip=None,
+        ),
+    )
+    result = build_pipeline_manifest(
+        tmp_path,
+        policy,
+        source_paths={first: paths_a, second: paths_b},
+    )
+    first_rows = result.observation_table[
+        result.observation_table["experiment_id"].eq(first)
+    ]
+    second_rows = result.observation_table[
+        result.observation_table["experiment_id"].eq(second)
+    ]
+    assert first_rows["stage_status"].tolist() == ["unavailable", "unavailable", "row_missing"]
+    assert first_rows["qc_status"].tolist() == ["evaluated", "evaluated", "row_missing"]
+    assert set(second_rows["stage_status"]) == {"no_artifact"}
+    assert set(second_rows["qc_status"]) == {"no_artifact"}
+    assert second_rows["use_snip"].isna().all()
+
+
+def test_requested_missing_per_flag_policy_fails_by_experiment_and_flag(
+    tmp_path: Path,
+) -> None:
+    experiment_id = "opaque-experiment"
+    paths = write_pipeline_source_fixture(tmp_path, experiment_id)
+    qc = pd.read_parquet(paths.snip_qc).drop(columns=["sa_outlier_flag"])
+    qc.to_parquet(paths.snip_qc, index=False)
+    policy = _policy(
+        (experiment_id,),
+        qc=QCPolicy(
+            name="fixture_per_flag",
+            version="1",
+            required_flags_false=("sa_outlier_flag",),
+        ),
+    )
+    with pytest.raises(ValueError, match="opaque-experiment.*sa_outlier_flag"):
+        build_pipeline_manifest(
+            tmp_path,
+            policy,
+            source_paths={experiment_id: paths},
         )
 
 
-def test_ids_stay_opaque_strings_and_time_index_is_integer(
-    manifest_bundle_factory, manifest_policy_factory
-):
-    bundle = manifest_bundle_factory()
-    numeric_id = bundle.snip_inventory.copy()
-    numeric_id.loc[0, "snip_id"] = 123
-    with pytest.raises(ValueError, match="opaque ID/key column 'snip_id'"):
-        build_manifest_from_tables(
-            manifest_policy_factory(), [replace(bundle, snip_inventory=numeric_id)]
+def test_one_to_one_stage_and_many_to_one_plate_contracts_fail_loudly(
+    tmp_path: Path,
+) -> None:
+    experiment_id = "opaque-experiment"
+    paths = write_pipeline_source_fixture(tmp_path, experiment_id)
+    stage = pd.read_csv(paths.stage_predictions)
+    pd.concat([stage, stage.iloc[[0]]], ignore_index=True).to_csv(
+        paths.stage_predictions, index=False
+    )
+    with pytest.raises(ValueError, match="stage_predictions.*duplicate key"):
+        build_pipeline_manifest(
+            tmp_path,
+            _policy((experiment_id,)),
+            source_paths={experiment_id: paths},
         )
 
-    fractional_time = bundle.snip_inventory.copy()
-    fractional_time["time_index"] = fractional_time["time_index"].astype(float)
-    fractional_time.loc[0, "time_index"] = 0.5
-    with pytest.raises(ValueError, match="time_index must be a non-negative integer"):
-        build_manifest_from_tables(
-            manifest_policy_factory(), [replace(bundle, snip_inventory=fractional_time)]
+    paths = write_pipeline_source_fixture(tmp_path / "plate-case", experiment_id)
+    plate = pd.read_csv(paths.plate_metadata)
+    pd.concat([plate, plate.iloc[[0]]], ignore_index=True).to_csv(
+        paths.plate_metadata, index=False
+    )
+    with pytest.raises(ValueError, match="plate_metadata.*duplicate key"):
+        build_pipeline_manifest(
+            tmp_path,
+            _policy((experiment_id,)),
+            source_paths={experiment_id: paths},
         )
 
 
-def test_selected_product_zero_and_multiple_failures_name_available_assets(
-    manifest_bundle_factory, manifest_policy_factory
-):
-    bundle = manifest_bundle_factory()
-    policy = manifest_policy_factory()
-    missing = bundle.snip_inventory.copy()
-    missing.loc[
-        missing["snip_id"].eq("observation::exp-A::1"), "snip_product_key"
-    ] = RFP_PRODUCT
-    with pytest.raises(ValueError, match="observation::exp-A::1.*0 matching.*available assets"):
-        build_manifest_from_tables(policy, [replace(bundle, snip_inventory=missing)])
+def test_group_splits_are_disjoint_reorder_stable_and_growth_stable() -> None:
+    train_experiment = "opaque-train-experiment"
+    test_experiment = "opaque-test-experiment"
+    rows = [
+        {
+            "physical_embryo_id": f"opaque-animal-{index}",
+            "experiment_id": train_experiment,
+        }
+        for index in range(300)
+    ] + [
+        {"physical_embryo_id": f"held-out-animal-{index}", "experiment_id": test_experiment}
+        for index in range(10)
+    ]
+    resolved = pd.DataFrame(rows)
+    policy = _policy(
+        (train_experiment, test_experiment),
+        splits=SplitPolicy(
+            train_fraction=0.7,
+            eval_fraction=0.2,
+            test_fraction=0.1,
+            tolerance=0.08,
+            explicit_test_experiments=(test_experiment,),
+        ),
+    )
+    original = assign_group_splits(resolved, policy).set_index("physical_embryo_id")["split"]
+    reordered = assign_group_splits(
+        resolved.sample(frac=1.0, random_state=7), policy
+    ).set_index("physical_embryo_id")["split"]
+    pd.testing.assert_series_equal(original.sort_index(), reordered.sort_index())
+    assert original.loc[[f"held-out-animal-{i}" for i in range(10)]].eq("test").all()
 
-    duplicate = pd.concat(
+    growth = pd.concat(
         [
-            bundle.snip_inventory,
-            bundle.snip_inventory.loc[
-                bundle.snip_inventory["snip_id"].eq("observation::exp-A::1")
-            ],
+            resolved,
+            pd.DataFrame(
+                {
+                    "physical_embryo_id": [f"new-opaque-animal-{i}" for i in range(50)],
+                    "experiment_id": train_experiment,
+                }
+            ),
         ],
         ignore_index=True,
     )
-    with pytest.raises(ValueError, match="duplicate.*projection null"):
-        build_manifest_from_tables(policy, [replace(bundle, snip_inventory=duplicate)])
+    grown = assign_group_splits(growth, policy).set_index("physical_embryo_id")["split"]
+    assert original.to_dict() == grown.loc[original.index].to_dict()
+    assert set(original) == {"train", "eval", "test"}
 
 
-def test_conflicting_frame_times_fail_with_product_plane_detail(
-    manifest_bundle_factory, manifest_policy_factory
-):
-    bundle = manifest_bundle_factory()
-    frame = bundle.frame_inventory.copy()
-    key = frame["well_id"].eq("well-exp-A-0")
-    frame.loc[frame.index[key][1], "elapsed_time_s"] = 99.0
-    with pytest.raises(ValueError, match="elapsed times conflict.*product/plane"):
-        build_manifest_from_tables(
-            manifest_policy_factory(), [replace(bundle, frame_inventory=frame)]
-        )
-
-
-def test_one_to_one_join_coverage_reports_missing_and_extra_ids(
-    manifest_bundle_factory, manifest_policy_factory
-):
-    bundle = manifest_bundle_factory()
-    stage = bundle.stage_predictions.iloc[:-1].copy()
-    extra = stage.iloc[[0]].copy()
-    extra["snip_id"] = "stage-extra-observation"
-    stage = pd.concat([stage, extra], ignore_index=True)
-    qc = bundle.snip_qc.iloc[:-1].copy()
-    result = build_manifest_from_tables(
-        manifest_policy_factory(stage_enabled=False, qc_enabled=False),
-        [replace(bundle, stage_predictions=stage, snip_qc=qc)],
+def test_split_tolerance_and_empty_required_splits_are_enforced() -> None:
+    resolved = pd.DataFrame(
+        {"physical_embryo_id": ["one-animal"], "experiment_id": ["one-experiment"]}
     )
-    stage_report = next(
-        report for report in result.validation_report.joins if report.source_name == "stage_predictions"
+    empty_policy = _policy(
+        ("one-experiment",),
+        splits=SplitPolicy(tolerance=1.0),
     )
-    qc_report = next(
-        report for report in result.validation_report.joins if report.source_name == "snip_qc"
+    with pytest.raises(ValueError, match="required split.*empty"):
+        assign_group_splits(resolved, empty_policy)
+
+    tolerance_policy = replace(
+        empty_policy,
+        splits=SplitPolicy(tolerance=0.0, required_splits=()),
     )
-    assert "observation::exp-A::2" in stage_report.missing_left_keys
-    assert "stage-extra-observation" in stage_report.extra_source_keys
-    assert qc_report.missing_left_keys == ("observation::exp-A::2",)
-    assert result.observation_table.loc[2, "stage_status"] == "row_missing"
-    assert result.observation_table.loc[2, "qc_status"] == "row_missing"
+    with pytest.raises(ValueError, match="split ratios exceed tolerance"):
+        assign_group_splits(resolved, tolerance_policy)
 
 
-def test_many_to_one_plate_join_duplicate_fails(manifest_bundle_factory, manifest_policy_factory):
-    bundle = manifest_bundle_factory()
-    plate = pd.concat([bundle.plate_metadata, bundle.plate_metadata.iloc[[0]]], ignore_index=True)
-    with pytest.raises(ValueError, match="many-to-one.*duplicate source rows"):
-        build_manifest_from_tables(
-            manifest_policy_factory(), [replace(bundle, plate_metadata=plate)]
-        )
-
-
-def test_qc_and_stage_three_state_absence_is_not_failure(
-    manifest_bundle_factory, manifest_policy_factory
-):
-    bundle = manifest_bundle_factory(qc=False, stage=False)
-    result = build_manifest_from_tables(
-        manifest_policy_factory(qc_enabled=False, stage_enabled=False), [bundle]
+def test_inference_switches_disable_qc_stage_splits_and_metric_mapping(
+    tmp_path: Path,
+) -> None:
+    experiment_id = "opaque-inference"
+    paths = write_pipeline_source_fixture(
+        tmp_path, experiment_id, include_stage=False, include_qc=False
     )
-    observations = result.observation_table
-    assert observations["qc_status"].eq("no_artifact").all()
-    assert observations["use_snip"].isna().all()
-    assert observations["stage_status"].eq("unavailable").all()
-    assert observations["selected_by_policy"].all()
-
-
-def test_stage_schema_without_status_keeps_value_and_marks_unavailable(
-    manifest_bundle_factory, manifest_policy_factory
-):
-    bundle = manifest_bundle_factory()
-    legacy_stage = bundle.stage_predictions.drop(
-        columns=["stage_prediction_status", "model_version"]
+    policy = _policy(
+        (experiment_id,),
+        qc=QCPolicy(name="disabled", version="1", enabled=False),
+        stage=StagePolicy(enabled=False),
+        splits=SplitPolicy(enabled=False),
     )
-    result = build_manifest_from_tables(
-        manifest_policy_factory(stage_enabled=False),
-        [replace(bundle, stage_predictions=legacy_stage)],
-    )
-    assert result.observation_table["predicted_stage_hpf"].notna().all()
-    assert result.observation_table["stage_status"].eq("unavailable").all()
-    schema = next(
-        report
-        for report in result.validation_report.schemas
-        if report.source_name == "stage_predictions"
-    )
-    assert schema.status == "loaded"
-
-
-def test_string_false_qc_flag_is_not_truthy(manifest_bundle_factory, manifest_policy_factory):
-    bundle = manifest_bundle_factory()
-    result = build_manifest_from_tables(
-        manifest_policy_factory(exclude_flags=("sa_outlier_flag",)), [bundle]
-    )
-    assert result.observation_table["sa_outlier_flag"].eq(False).all()
-    assert result.observation_table["selected_by_policy"].all()
-
-
-def test_requested_missing_per_flag_fails_by_experiment_and_flag(
-    manifest_bundle_factory, manifest_policy_factory
-):
-    bundle = manifest_bundle_factory()
-    qc = bundle.snip_qc.drop(columns="sa_outlier_flag")
-    with pytest.raises(ValueError, match="exp-A.*sa_outlier_flag"):
-        build_manifest_from_tables(
-            manifest_policy_factory(exclude_flags=("sa_outlier_flag",)),
-            [replace(bundle, snip_qc=qc)],
-        )
-
-
-def test_inference_switches_disable_qc_stage_split_and_metric(
-    manifest_bundle_factory, manifest_policy_factory
-):
-    bundle = manifest_bundle_factory(qc=False, stage=False)
-    policy = manifest_policy_factory(qc_enabled=False, stage_enabled=False)
-    policy = replace(
+    result = build_pipeline_manifest(
+        tmp_path,
         policy,
-        validity=ValidityPolicy(False, "inference_validity_disabled"),
-        splits=SplitPolicy(enabled=False, required_splits=()),
-        metric_mapping=MetricMappingPolicy(False, "inference_metric_disabled", "v1"),
+        source_paths={experiment_id: paths},
     )
-    result = build_manifest_from_tables(policy, [bundle])
-    assert result.observation_table["selected_by_policy"].all()
-    assert result.observation_table["split"].isna().all()
-    assert "metric_group" not in result.observation_table
+    assert len(result.resolved_sample_table) == 4
+    assert result.resolved_sample_table["split"].isna().all()
     assert result.split_assignments.empty
 
-
-def test_metric_test_stub_switch_is_separate(manifest_bundle_factory, manifest_policy_factory):
-    result = build_manifest_from_tables(
-        manifest_policy_factory(metric_enabled=True), [manifest_bundle_factory()]
+    science_policy = replace(
+        policy,
+        metric_mapping=MetricMappingPolicy(
+            enabled=True, name="scientific_mapping", scientific_policy=True
+        ),
     )
-    assert result.observation_table["metric_group"].eq("test_group").all()
-    assert not result.policy.metric_mapping.scientific_policy
-
-
-def test_validity_filter_counts_invalid_selected_asset(
-    manifest_bundle_factory, manifest_policy_factory
-):
-    bundle = manifest_bundle_factory()
-    inventory = bundle.snip_inventory.copy()
-    target = inventory["snip_id"].eq("observation::exp-A::2") & inventory[
-        "snip_product_key"
-    ].eq(BF_PRODUCT)
-    inventory.loc[target, "is_valid_snip"] = False
-    result = build_manifest_from_tables(
-        manifest_policy_factory(), [replace(bundle, snip_inventory=inventory)]
-    )
-    assert result.observation_table["selected_by_policy"].tolist() == [True, True, False]
-    validity_count = next(
-        count
-        for count in result.cohort_report.counts
-        if count.filter_name.startswith("validity:")
-    )
-    assert validity_count.rows_removed == 1
-
-
-def test_explicit_experiment_order_and_output_are_deterministic(
-    manifest_bundle_factory, manifest_policy_factory
-):
-    first = manifest_bundle_factory("exp-A", n_observations=2)
-    second = manifest_bundle_factory("exp-B", n_observations=2)
-    policy = manifest_policy_factory(experiment_ids=("exp-B", "exp-A"))
-    one = build_manifest_from_tables(policy, [first, second])
-    two = build_manifest_from_tables(policy, [second, first])
-    expected = (
-        "observation::exp-B::0",
-        "observation::exp-B::1",
-        "observation::exp-A::0",
-        "observation::exp-A::1",
-    )
-    assert one.observation_order == expected
-    assert two.observation_order == expected
-    assert one.asset_order == two.asset_order
-
-
-def test_missing_snip_z_column_reports_current_writer_gap_and_normalizes_null(
-    manifest_bundle_factory, manifest_policy_factory
-):
-    bundle = manifest_bundle_factory(include_siblings=False)
-    inventory = bundle.snip_inventory.drop(columns="z_index")
-    result = build_manifest_from_tables(
-        manifest_policy_factory(), [replace(bundle, snip_inventory=inventory)]
-    )
-    assert result.asset_table["z_index"].isna().all()
-    assert str(result.asset_table["z_index"].dtype) == "Int64"
-    assert any(
-        issue.code == "current_z_snip_writer_gap"
-        for issue in result.validation_report.issues
-    )
-
-
-def test_relative_asset_path_requires_pipeline_path_authority(
-    manifest_bundle_factory, manifest_policy_factory
-):
-    bundle = manifest_bundle_factory(include_siblings=False)
-    inventory = bundle.snip_inventory.copy()
-    inventory.loc[0, "processed_snip_path"] = "relative/asset.png"
-    with pytest.raises(ValueError, match="requires the pipeline path resolver"):
-        build_manifest_from_tables(
-            manifest_policy_factory(), [replace(bundle, snip_inventory=inventory)]
+    with pytest.raises(ValueError, match="test_only or dummy"):
+        build_pipeline_manifest(
+            tmp_path,
+            science_policy,
+            source_paths={experiment_id: paths},
         )
-    result = build_manifest_from_tables(
-        manifest_policy_factory(),
-        [replace(bundle, snip_inventory=inventory)],
-        path_resolver=lambda value, root: root / value,
-    )
-    assert result.asset_table.loc[0, "processed_snip_path"] == (
-        "/pipeline/output/relative/asset.png"
-    )
-    assert result.asset_table.loc[0, "processed_snip_path_source"] == "relative/asset.png"
 
 
-def test_selector_can_be_called_again_on_frozen_tables(
-    manifest_bundle_factory, manifest_policy_factory
-):
-    policy = manifest_policy_factory()
-    result = build_manifest_from_tables(policy, [manifest_bundle_factory()])
-    selected = select_vanilla_assets(result.observation_table, result.asset_table, policy)
-    assert selected["snip_id"].tolist() == list(result.observation_order)
+def test_deterministic_experiment_observation_and_product_order(tmp_path: Path) -> None:
+    first = "opaque-first"
+    second = "opaque-second"
+    first_paths = write_pipeline_source_fixture(
+        tmp_path, first, row_count=2, identity_offset=20
+    )
+    second_paths = write_pipeline_source_fixture(
+        tmp_path, second, row_count=2, identity_offset=40
+    )
+    policy = replace(
+        _policy((second, first)),
+        allowed_product_keys=(RFP_PRODUCT, BF_PRODUCT),
+    )
+    result = build_pipeline_manifest(
+        tmp_path,
+        policy,
+        source_paths={first: first_paths, second: second_paths},
+    )
+    assert result.observation_table["experiment_id"].tolist() == [second, second, first, first]
+    first_observation_assets = result.asset_table[
+        result.asset_table["snip_id"].eq("observation-opaque-40")
+    ]
+    assert first_observation_assets["snip_product_key"].tolist() == [RFP_PRODUCT, BF_PRODUCT]
+
+
+def test_preflight_collects_schema_variant_and_build_error(tmp_path: Path) -> None:
+    experiment_id = "opaque-preflight"
+    paths = write_pipeline_source_fixture(tmp_path, experiment_id)
+    snips = pd.read_csv(paths.snip_inventory).drop(columns=["snip_product_key"])
+    snips.to_csv(paths.snip_inventory, index=False)
+    report = preflight_pipeline_sources(
+        tmp_path,
+        _policy((experiment_id,)),
+        source_paths={experiment_id: paths},
+    )
+    assert report.build_error is not None
+    assert "snip_product_key" in report.build_error
+    assert any(
+        issue.code == "missing_required_columns" and "snip_product_key" in issue.columns
+        for issue in report.schema_report.issues
+    )
+    assert report.experiment_summaries[0]["product_keys"] == ()
+
+
+def test_pipeline_data_config_matches_split_aware_a2_constructor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = synthetic_manifest_v2()
+    captured: dict[str, object] = {}
+
+    class FakeDataset:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setattr(dataset_configs, "BasicDataset", FakeDataset)
+    config = PipelineDataConfig(
+        pipeline_output_root=Path("/declared-output"),
+        manifest_policy=fixture.policy,
+        input_dim=(1, 144, 64),
+        batch_size=7,
+        num_workers=2,
+        loader_seed=13,
+        drop_last_train=True,
+        pin_memory=True,
+        persistent_workers=True,
+    )
+    config.manifest_result = fixture
+    dataset = config.create_dataset(split="eval")
+    assert isinstance(dataset, FakeDataset)
+    resolved_table = captured.pop("resolved_sample_table")
+    assert resolved_table is fixture.resolved_sample_table
+    assert captured == {
+        "product_key": fixture.policy.selected_product_key,
+        "input_dim": (1, 144, 64),
+        "split": "eval",
+        "transform": None,
+        "max_decode_failures": 10,
+    }
+    assert (config.batch_size, config.num_workers, config.loader_seed) == (7, 2, 13)
+    assert (config.drop_last_train, config.pin_memory, config.persistent_workers) == (
+        True,
+        True,
+        True,
+    )
+
+
+def test_pipeline_data_config_passes_injected_path_authorities(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = synthetic_manifest_v2()
+    captured: dict[str, object] = {}
+
+    def artifact_path_fn(*args: object, **kwargs: object) -> Path:
+        return Path("/declared-artifact")
+
+    def asset_path_resolver(path_string: str, output_root: Path) -> Path:
+        return output_root / path_string
+
+    def fake_build(*args: object, **kwargs: object):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return fixture
+
+    monkeypatch.setattr(dataset_configs, "build_pipeline_manifest", fake_build)
+    config = PipelineDataConfig(
+        pipeline_output_root=Path("/declared-output"),
+        manifest_policy=fixture.policy,
+        artifact_path_fn=artifact_path_fn,
+        asset_path_resolver=asset_path_resolver,
+        artifact_path_authority="declared.config:artifact_path",
+        asset_path_authority="declared.config:asset_path",
+    )
+    assert config.make_metadata() is fixture
+    kwargs = captured["kwargs"]
+    assert isinstance(kwargs, dict)
+    assert kwargs["artifact_path_fn"] is artifact_path_fn
+    assert kwargs["asset_path_resolver"] is asset_path_resolver
+    assert config.artifact_path_authority == "declared.config:artifact_path"
+    assert config.asset_path_authority == "declared.config:asset_path"
+
+
+def test_manifest_smoke_hydra_config_requires_explicit_authorities() -> None:
+    path = Path("src/core/hydra_configs/data/pipeline_manifest_smoke.yaml")
+    config = OmegaConf.load(path)
+    assert OmegaConf.is_missing(config, "pipeline_output_root")
+    assert OmegaConf.is_missing(config.manifest_policy, "experiment_ids")
+    assert config.manifest_policy.name == "temporary_pipeline_manifest_smoke"
+    assert config.manifest_policy.z_selection_mode == "projection"
+    assert config.input_dim == [1, 288, 128]

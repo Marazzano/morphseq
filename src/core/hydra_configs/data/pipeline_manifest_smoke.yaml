@@ -1,70 +1,68 @@
-# Temporary Track-A plumbing policy. The root and ordered experiments are mandatory overrides;
-# this preset intentionally cannot guess either from the output tree.
-_target_: src.core.data.manifest_types.ManifestPolicy
+_target_: src.core.data.dataset_configs.PipelineDataConfig
+
+# Required authorities. The ordered experiment list is never discovered from the output tree.
 pipeline_output_root: ???
-experiment_ids: ???
+source_paths: null
+artifact_path_authority: src/data_pipeline/pipeline_orchestrator/orchestration/paths.py:artifact_path
+asset_path_authority: src/data_pipeline/object_extraction/snip_processing/io.py:resolve_from_root
+artifact_path_fn: null
+asset_path_resolver: null
 
-assets:
-  _target_: src.core.data.manifest_types.AssetSelectionPolicy
-  product_order:
+manifest_policy:
+  _target_: src.core.data.manifest_types.ManifestPolicy
+  name: temporary_pipeline_manifest_smoke
+  version: "1"
+  experiment_ids: ???
+  allowed_product_keys:
     - BF__projection__focus_stack__clahe_blend
-  vanilla_product_key: BF__projection__focus_stack__clahe_blend
-  z_mode: projection_null
+  selected_product_key: BF__projection__focus_stack__clahe_blend
+  z_selection_mode: projection
+  require_valid_snip: true
+  qc:
+    _target_: src.core.data.manifest_types.QCPolicy
+    name: temporary_evaluated_use_snip
+    version: "1"
+    enabled: true
+    accepted_statuses:
+      - evaluated
+    require_use_snip: true
+    required_flags_false: []
+  stage:
+    _target_: src.core.data.manifest_types.StagePolicy
+    enabled: false
+    required: false
+    accepted_statuses: []
+  covariates:
+    _target_: src.core.data.manifest_types.CovariatePolicy
+    enabled: true
+    required_columns:
+      - incubation_temperature_c
+      - elapsed_time_s
+  splits:
+    _target_: src.core.data.manifest_types.SplitPolicy
+    enabled: true
+    train_fraction: 0.8
+    eval_fraction: 0.1
+    test_fraction: 0.1
+    tolerance: 0.1
+    salt: morphseq-core-split-v1
+    explicit_test_experiments: []
+    required_splits:
+      - train
+      - eval
+      - test
+  metric_mapping:
+    _target_: src.core.data.manifest_types.MetricMappingPolicy
+    enabled: false
+    name: null
+    scientific_policy: false
 
-validity:
-  _target_: src.core.data.manifest_types.ValidityPolicy
-  enabled: true
-  name: require_materialized_snip_v1
-
-qc:
-  _target_: src.core.data.manifest_types.QCPolicy
-  enabled: false
-  name: temporary_smoke_qc_disabled
-  version: v1
-  accepted_statuses:
-    - evaluated
-  require_use_snip: false
-  exclude_flags: []
-
-stage:
-  _target_: src.core.data.manifest_types.StagePolicy
-  enabled: false
-  name: basic_stage_disabled
-  accepted_statuses: []
-  require_value: false
-
-covariates:
-  _target_: src.core.data.manifest_types.CovariatePolicy
-  name: temporary_smoke_require_temperature_and_time_v1
-  required_columns:
-    - incubation_temperature_c
-    - elapsed_time_s
-
-splits:
-  _target_: src.core.data.manifest_types.SplitPolicy
-  enabled: true
-  ratios:
-    - [train, 0.8]
-    - [eval, 0.1]
-    - [test, 0.1]
-  test_experiments: []
-  hash_salt: morphseq-core-v1
-  tolerance: 0.15
-  required_splits:
-    - train
-    - eval
-    - test
-
-metric_mapping:
-  _target_: src.core.data.manifest_types.MetricMappingPolicy
-  enabled: false
-  name: basic_metric_disabled
-  version: v1
-  scientific_policy: false
-  source_column: null
-  mapping: []
-  constant_group: null
-
-# Collection start-age resolution needs the acquisition inventory's declared scope.
-# Supply [experiment_id, scope] entries only for experiments where it is required.
-acquisition_scope_by_experiment: []
+input_dim: [1, 288, 128]
+transform: null
+batch_size: 64
+num_workers: 4
+loader_seed: 0
+drop_last_train: false
+pin_memory: false
+persistent_workers: false
+max_decode_failures: 10

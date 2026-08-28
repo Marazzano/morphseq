@@ -1,0 +1,23 @@
+# Pipeline-backed vanilla VAE entry point. Required data authorities remain
+# unresolved until supplied explicitly by a run configuration or CLI override.
+defaults:
+  - _self_
+  - model: vae_pipeline_vanilla
+  - data: pipeline_manifest_smoke
+
+hydra:
+  run:
+    dir: "${oc.env:MORPHSEQ_OUTPUT_ROOT}/runs/${hydra.job.name}_${now:%Y%m%d_%H%M%S}"
+  sweep:
+    dir: "${oc.env:MORPHSEQ_OUTPUT_ROOT}/sweeps/${hydra.job.name}_${now:%Y%m%d_%H%M%S}"
+    subdir: "${hydra.job.num}"
+
+# Resolved by Hydra to one absolute, per-run local directory. Provenance is
+# written here even when W&B is disabled.
+run_artifacts_dir: "${hydra:runtime.output_dir}/provenance"
+
+wandb:
+  enabled: false
+  project: morphseq-core
+  run_name: "${hydra:job.name}_${now:%Y%m%d_%H%M%S}"
+  offline: true

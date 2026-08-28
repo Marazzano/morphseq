@@ -1,0 +1,27 @@
+config_target: src.core.models.model_configs.VAEConfig
+
+ddconfig:
+  name: convVAE
+  input_dim: [1, 288, 128]
+  latent_dim: 64
+
+lossconfig:
+  reconstruction_loss: L2
+  kld_weight: 1.0
+  schedule_kld: false
+  pips_flag: false
+  pips_weight: 0.0
+  schedule_pips: false
+  use_gan: false
+  gan_weight: 0.0
+  schedule_gan: false
+  use_pips_eval: false
+
+trainconfig:
+  benchmark: true
+  max_epochs: 40
+  accelerator: gpu
+  devices: auto
+  strategy: ddp_find_unused_parameters_true
+  precision: 16
+  eval_gpu_flag: true

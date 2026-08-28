@@ -1,424 +1,408 @@
-"""Pipeline contract/path adapter used only by :mod:`pipeline_manifest`.
+"""Source-contract checks for the pipeline-to-core manifest adapter.
 
-No other core module should import ``data_pipeline``.  Imports are deliberately lazy: the
-repository currently exposes ``src.data_pipeline`` while pipeline modules import the top-level
-``data_pipeline`` package.  If the package is not installed correctly, the production boundary
-fails with an actionable packaging error instead of suggesting ``PYTHONPATH`` or mutating
-``sys.path``.
+The declarations in this module are transcribed from current writer/validator
+symbols at the cited source locations.  Pipeline imports cannot currently be used
+from a clean ``src.*`` installation because those modules import the top-level
+``data_pipeline`` package; the adapter reports that packaging discrepancy rather
+than manipulating ``sys.path`` or weakening these checks.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
-import importlib
-import json
-from pathlib import Path
-from typing import Any, Mapping
+from typing import Iterable
 
 import pandas as pd
 
-from src.core.data.manifest_types import SourceArtifactRecord
+from src.core.data.manifest_types import SchemaIssue
 
 
-class PipelineContractImportError(ImportError):
-    """Raised when the pipeline's public helper package is not importable."""
-
-
-def _pipeline_symbol(module: str, symbol: str) -> Any:
-    try:
-        imported = importlib.import_module(module)
-    except ModuleNotFoundError as exc:
-        raise PipelineContractImportError(
-            "The manifest adapter could not import the pipeline contract/path helpers from "
-            f"{module!r}. Install the repository so the top-level 'data_pipeline' package is "
-            "importable. Do not work around this with PYTHONPATH or sys.path manipulation."
-        ) from exc
-    try:
-        return getattr(imported, symbol)
-    except AttributeError as exc:
-        raise PipelineContractImportError(
-            f"Pipeline helper {module}.{symbol} does not exist in the installed pipeline revision."
-        ) from exc
-
-
-@dataclass(frozen=True)
-class SourceContract:
-    source_name: str
-    adapter_required: tuple[str, ...]
-    current_writer_columns: tuple[str, ...]
-    writer_symbol: str
-    boolean_columns: tuple[str, ...] = ()
-    nullable_integer_columns: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
-class ResolvedExperimentPaths:
-    experiment_id: str
-    paths: Mapping[str, Path]
-
-
-# The adapter-required subset is owned by MANIFEST_SCHEMA.md v2.0. Current-writer supersets are
-# loaded from the named symbols below rather than copied here.
-ADAPTER_REQUIRED_COLUMNS: dict[str, tuple[str, ...]] = {
+# These are the current writer/validator authorities used below.  Keep the symbol
+# names in the report so a future writer change can be reconciled explicitly.
+SOURCE_SYMBOL_CITATIONS: dict[str, tuple[str, ...]] = {
     "snip_inventory": (
-        "experiment_id",
-        "well_id",
-        "physical_embryo_id",
-        "embryo_id",
-        "snip_id",
-        "image_id",
-        "time_index",
-        "channel_id",
-        "snip_product_key",
-        "processed_snip_path",
-        "is_valid_snip",
+        "src/data_pipeline/object_extraction/segmentation/physical_embryo_registry/"
+        "snip_identity_contract.py:SNIP_INVENTORY_COLUMNS",
+        "src/data_pipeline/object_extraction/segmentation/physical_embryo_registry/"
+        "snip_identity_contract.py:validate_snip_inventory_contract",
     ),
     "frame_inventory": (
-        "experiment_id",
-        "well_id",
-        "time_index",
-        "channel_id",
-        "z_index",
-        "image_product_type",
-        "projection_method",
-        "elapsed_time_s",
+        "src/data_pipeline/acquisition/image_materialization/frame_inventory_contract.py:"
+        "REQUIRED_FRAME_INVENTORY_COLUMNS",
+        "src/data_pipeline/acquisition/image_materialization/"
+        "materialized_image_write_policy.py:MATERIALIZED_IMAGE_WRITE_POLICY_COLUMNS",
+        "src/data_pipeline/acquisition/metadata_ingest/frame_inventory/"
+        "frame_inventory_validation.py:validate_frame_inventory",
     ),
-    "stage_predictions": ("snip_id", "predicted_stage_hpf"),
-    "snip_qc": ("snip_id", "use_snip", "qc_fail_reasons"),
+    "stage_predictions": (
+        "src/data_pipeline/feature_extraction/stage_predictions/contract.py:"
+        "STAGE_PREDICTION_TABLE_COLUMNS",
+        "src/data_pipeline/feature_extraction/stage_predictions/contract.py:"
+        "validate_stage_prediction_features",
+    ),
+    "snip_qc": (
+        "src/data_pipeline/quality_control/snip_qc/contract.py:SNIP_QC_TABLE_COLUMNS",
+        "src/data_pipeline/quality_control/snip_qc/contract.py:validate_snip_qc",
+    ),
     "plate_metadata": (
-        "experiment_id",
-        "well_id",
-        "genotype",
-        "start_age_hpf",
-        "temperature",
-        "medium",
+        "src/data_pipeline/acquisition/metadata_ingest/plate/"
+        "plate_metadata_contract.py:REQUIRED_PLATE_METADATA_COLUMNS",
+        "src/data_pipeline/acquisition/metadata_ingest/plate/"
+        "plate_metadata_contract.py:validate_plate_metadata",
     ),
     "collection_provenance": (
-        "experiment_id",
-        "is_collection",
-        "sources",
-        "start_age_by_source_ordinal",
-        "start_age_by_time_index",
+        "src/data_pipeline/acquisition/metadata_ingest/"
+        "collection_provenance_contract.py:REQUIRED_COLLECTION_PROVENANCE_KEYS",
+        "src/data_pipeline/acquisition/metadata_ingest/"
+        "collection_provenance_contract.py:validate_collection_provenance",
     ),
-    "acquisition_inventory": ("well_id", "time_index", "source_ordinal"),
+    "acquisition_inventory": (
+        "src/data_pipeline/feature_extraction/stage_predictions/compute.py:"
+        "_source_ordinal_by_frame",
+        "src/data_pipeline/feature_extraction/stage_predictions/compute.py:"
+        "_start_age_hpf_for_snip",
+    ),
+    "path_authority": (
+        "src/data_pipeline/pipeline_orchestrator/orchestration/paths.py:artifact_path",
+    ),
+    "snip_path_authority": (
+        "src/data_pipeline/object_extraction/snip_processing/io.py:resolve_from_root",
+    ),
 }
 
 
-def current_writer_contracts() -> dict[str, SourceContract]:
-    """Load column authorities from the live pipeline writer/validator symbols."""
+SNIP_IDENTITY_COLUMNS: tuple[str, ...] = (
+    "experiment_id",
+    "well_id",
+    "physical_embryo_id",
+    "embryo_id",
+    "snip_id",
+    "image_id",
+    "time_index",
+    "channel_id",
+)
 
-    # Product-aware inventory authority:
-    # physical_embryo_registry.snip_identity_contract.SNIP_INVENTORY_COLUMNS and the rendering
-    # extension inventory_contract.SNIP_INVENTORY_WRITE_COLUMNS.
-    snip_columns = tuple(
-        _pipeline_symbol(
-            "data_pipeline.object_extraction.snip_processing.inventory_contract",
-            "SNIP_INVENTORY_WRITE_COLUMNS",
-        )
-    )
-    frame_columns = tuple(
-        _pipeline_symbol(
-            "data_pipeline.acquisition.image_materialization.frame_inventory_contract",
-            "REQUIRED_FRAME_INVENTORY_COLUMNS",
-        )
-    )
-    frame_derived_columns = tuple(
-        _pipeline_symbol(
-            "data_pipeline.acquisition.image_materialization.frame_inventory_contract",
-            "DERIVED_FRAME_INVENTORY_COLUMNS",
-        )
-    )
-    stage_columns = tuple(
-        _pipeline_symbol(
-            "data_pipeline.feature_extraction.stage_predictions.contract",
-            "STAGE_PREDICTION_TABLE_COLUMNS",
-        )
-    )
-    qc_columns = tuple(
-        _pipeline_symbol(
-            "data_pipeline.quality_control.snip_qc.contract",
-            "SNIP_QC_TABLE_COLUMNS",
-        )
-    )
-    qc_flags = tuple(
-        _pipeline_symbol(
-            "data_pipeline.quality_control.snip_qc.contract",
-            "SNIP_QC_EXCLUSION_FLAGS",
-        )
-    )
-    qc_applicability = tuple(
-        dict.fromkeys(
-            _pipeline_symbol(
-                "data_pipeline.quality_control.applicability",
-                "FLAG_APPLICABILITY_COLUMNS",
-            ).values()
-        )
-    )
-    plate_columns = tuple(
-        _pipeline_symbol(
-            "data_pipeline.acquisition.metadata_ingest.plate.plate_metadata_contract",
-            "REQUIRED_PLATE_METADATA_COLUMNS",
-        )
-    )
-    collection_keys = tuple(
-        _pipeline_symbol(
-            "data_pipeline.acquisition.metadata_ingest.collection_provenance_contract",
-            "REQUIRED_COLLECTION_PROVENANCE_KEYS",
-        )
-    )
+SNIP_ADAPTER_REQUIRED_COLUMNS: tuple[str, ...] = SNIP_IDENTITY_COLUMNS + (
+    "processed_snip_path",
+    "snip_product_key",
+    "is_valid_snip",
+    "error_message",
+)
 
-    return {
-        "snip_inventory": SourceContract(
-            "snip_inventory",
-            ADAPTER_REQUIRED_COLUMNS["snip_inventory"],
-            snip_columns,
-            "data_pipeline.object_extraction.snip_processing.inventory_contract."
-            "SNIP_INVENTORY_WRITE_COLUMNS",
-            boolean_columns=("is_valid_snip", "flip_x"),
-            nullable_integer_columns=("z_index",),
-        ),
-        "frame_inventory": SourceContract(
-            "frame_inventory",
-            ADAPTER_REQUIRED_COLUMNS["frame_inventory"],
-            tuple(dict.fromkeys((*frame_columns, *frame_derived_columns))),
-            "data_pipeline.acquisition.image_materialization.frame_inventory_contract."
-            "REQUIRED_FRAME_INVENTORY_COLUMNS",
-            nullable_integer_columns=("z_index",),
-        ),
-        "stage_predictions": SourceContract(
-            "stage_predictions",
-            ADAPTER_REQUIRED_COLUMNS["stage_predictions"],
-            stage_columns,
-            "data_pipeline.feature_extraction.stage_predictions.contract."
-            "STAGE_PREDICTION_TABLE_COLUMNS",
-        ),
-        "snip_qc": SourceContract(
-            "snip_qc",
-            ADAPTER_REQUIRED_COLUMNS["snip_qc"],
-            tuple(dict.fromkeys((*qc_columns, *qc_flags, *qc_applicability))),
-            "data_pipeline.quality_control.snip_qc.contract.SNIP_QC_TABLE_COLUMNS + "
-            "SNIP_QC_EXCLUSION_FLAGS",
-            boolean_columns=("use_snip", *qc_flags),
-        ),
-        "plate_metadata": SourceContract(
-            "plate_metadata",
-            ADAPTER_REQUIRED_COLUMNS["plate_metadata"],
-            plate_columns,
-            "data_pipeline.acquisition.metadata_ingest.plate.plate_metadata_contract."
-            "REQUIRED_PLATE_METADATA_COLUMNS",
-        ),
-        "acquisition_inventory": SourceContract(
-            "acquisition_inventory",
-            ADAPTER_REQUIRED_COLUMNS["acquisition_inventory"],
-            ADAPTER_REQUIRED_COLUMNS["acquisition_inventory"],
-            "data_pipeline.acquisition.metadata_ingest.collection_acquisition_union."
-            "union_collection_acquisition_inventories",
-        ),
-        "collection_provenance": SourceContract(
-            "collection_provenance",
-            ADAPTER_REQUIRED_COLUMNS["collection_provenance"],
-            collection_keys,
-            "data_pipeline.acquisition.metadata_ingest.collection_provenance_contract."
-            "REQUIRED_COLLECTION_PROVENANCE_KEYS",
-        ),
-    }
+# Current construction/provenance fields are required by the cited live writer
+# contract. They are non-fatal at the adapter boundary so older artifacts can be
+# inspected and reported as explicit current-writer schema variants; the
+# key/path/validity subset above remains fatal.
+SNIP_CURRENT_WRITER_ADDITIONAL_COLUMNS: tuple[str, ...] = (
+    "mask_id",
+    "track_id",
+    "image_path",
+    "legacy_flat_snip_path",
+    "embryo_mask",
+    "embryo_mask_snip_path",
+    "crop_x_min_px",
+    "crop_y_min_px",
+    "crop_x_max_px",
+    "crop_y_max_px",
+    "crop_width_px",
+    "crop_height_px",
+    "source_micrometers_per_pixel",
+    "snip_micrometers_per_pixel",
+    "crop_x_min_um",
+    "crop_y_min_um",
+    "crop_x_max_um",
+    "crop_y_max_um",
+    "orientation_policy",
+    "orientation_source",
+    "no_yolk_policy",
+    "rotation_angle_rad",
+    "flip_x",
+    "crop_center_um_x",
+    "crop_center_um_y",
+    "source_height_px",
+    "source_width_px",
+    "source_um_per_px",
+    "target_um_per_px",
+    "output_height_px",
+    "output_width_px",
+    "border_mode",
+    "image_interpolation",
+    "mask_interpolation",
+    "realized_scale_y",
+    "realized_scale_x",
+    "centering",
+    "snip_transform_id",
+    "resolved_transform_chain_json",
+    "source_image_product_key",
+    "output_grid_id",
+    "pixel_dtype",
+)
+
+FRAME_ADAPTER_REQUIRED_COLUMNS: tuple[str, ...] = (
+    "experiment_id",
+    "well_id",
+    "image_id",
+    "channel_id",
+    "time_index",
+    "z_index",
+    "image_product_type",
+    "projection_method",
+    "elapsed_time_s",
+)
+
+FRAME_CURRENT_WRITER_COLUMNS: tuple[str, ...] = (
+    "experiment_id",
+    "well_index",
+    "channel_id",
+    "time_index",
+    "z_index",
+    "image_product_type",
+    "projection_method",
+    "acquisition_time_s",
+    "elapsed_time_s",
+    "image_path",
+    "image_micrometers_per_pixel",
+    "image_width_px",
+    "image_height_px",
+    "n_sources",
+    "orientation",
+    "image_file_format",
+    "pixel_dtype",
+    "downsample_factor",
+    "downsample_method",
+    "jpeg_quality",
+    "flip_polarity",
+)
+FRAME_VARIANT_COLUMNS: tuple[str, ...] = ("source_ordinal",)
+
+STAGE_ADAPTER_REQUIRED_COLUMNS: tuple[str, ...] = SNIP_IDENTITY_COLUMNS + (
+    "predicted_stage_hpf",
+)
+STAGE_CURRENT_WRITER_ADDITIONAL_COLUMNS: tuple[str, ...] = (
+    "stage_prediction_status",
+    "model_version",
+)
+
+SNIP_QC_REQUIRED_COLUMNS: tuple[str, ...] = (
+    "experiment_id",
+    "well_id",
+    "physical_embryo_id",
+    "embryo_id",
+    "snip_id",
+    "use_snip",
+    "qc_fail_reasons",
+)
+
+PLATE_METADATA_REQUIRED_COLUMNS: tuple[str, ...] = (
+    "experiment_id",
+    "well_id",
+    "well_index",
+    "genotype",
+    "start_age_hpf",
+    "temperature",
+    "medium",
+)
+PLATE_METADATA_VARIANT_COLUMNS: tuple[str, ...] = (
+    "strain",
+    "chem_perturbation",
+)
+
+COLLECTION_PROVENANCE_REQUIRED_KEYS: tuple[str, ...] = (
+    "experiment_id",
+    "is_collection",
+    "sources",
+    "start_age_by_source_ordinal",
+    "start_age_by_time_index",
+)
+
+ACQUISITION_INVENTORY_REQUIRED_COLUMNS: tuple[str, ...] = (
+    "well_id",
+    "time_index",
+    "source_ordinal",
+)
+
+QC_BASE_COLUMNS: frozenset[str] = frozenset(SNIP_QC_REQUIRED_COLUMNS)
+QC_FLAG_SUFFIX = "_flag"
 
 
-def resolve_experiment_paths(
-    *, output_root: Path, experiment_id: str, acquisition_scope: str | None = None
-) -> ResolvedExperimentPaths:
-    """Resolve one explicit experiment through the pipeline path authority."""
+@dataclass(frozen=True)
+class TableContract:
+    source_name: str
+    adapter_required_columns: tuple[str, ...]
+    current_writer_columns: tuple[str, ...]
+    variant_columns: tuple[str, ...] = ()
 
-    artifact_path = _pipeline_symbol(
-        "data_pipeline.pipeline_orchestrator.orchestration.paths", "artifact_path"
+
+TABLE_CONTRACTS: dict[str, TableContract] = {
+    "snip_inventory": TableContract(
+        "snip_inventory",
+        SNIP_ADAPTER_REQUIRED_COLUMNS,
+        tuple(dict.fromkeys(SNIP_ADAPTER_REQUIRED_COLUMNS + SNIP_CURRENT_WRITER_ADDITIONAL_COLUMNS)),
+    ),
+    "frame_inventory": TableContract(
+        "frame_inventory",
+        FRAME_ADAPTER_REQUIRED_COLUMNS,
+        FRAME_CURRENT_WRITER_COLUMNS,
+        FRAME_VARIANT_COLUMNS,
+    ),
+    "stage_predictions": TableContract(
+        "stage_predictions",
+        STAGE_ADAPTER_REQUIRED_COLUMNS,
+        STAGE_ADAPTER_REQUIRED_COLUMNS + STAGE_CURRENT_WRITER_ADDITIONAL_COLUMNS,
+    ),
+    "snip_qc": TableContract(
+        "snip_qc", SNIP_QC_REQUIRED_COLUMNS, SNIP_QC_REQUIRED_COLUMNS
+    ),
+    "plate_metadata": TableContract(
+        "plate_metadata",
+        PLATE_METADATA_REQUIRED_COLUMNS,
+        PLATE_METADATA_REQUIRED_COLUMNS,
+        PLATE_METADATA_VARIANT_COLUMNS,
+    ),
+    "acquisition_inventory": TableContract(
+        "acquisition_inventory",
+        ACQUISITION_INVENTORY_REQUIRED_COLUMNS,
+        ACQUISITION_INVENTORY_REQUIRED_COLUMNS,
+    ),
+}
+
+
+def inspect_table_schema(
+    table: pd.DataFrame,
+    *,
+    experiment_id: str,
+    contract: TableContract,
+) -> tuple[SchemaIssue, ...]:
+    """Collect required and optional column differences without mutating data."""
+
+    issues: list[SchemaIssue] = []
+    missing_required = tuple(
+        c for c in contract.adapter_required_columns if c not in table.columns
     )
-    path_mode_merged = _pipeline_symbol(
-        "data_pipeline.pipeline_orchestrator.orchestration.paths", "PATH_MODE_MERGED"
-    )
-
-    paths: dict[str, Path] = {
-        "snip_inventory": Path(
-            artifact_path(
-                output_root,
-                "snip_inventory",
-                "snip_inventory",
-                experiment_id,
-                path_mode=path_mode_merged,
+    if missing_required:
+        issues.append(
+            SchemaIssue(
+                experiment_id=experiment_id,
+                source_name=contract.source_name,
+                severity="warning",
+                code="missing_required_columns",
+                message=(
+                    f"{experiment_id}: {contract.source_name} is missing required column(s) "
+                    f"{list(missing_required)} from {SOURCE_SYMBOL_CITATIONS[contract.source_name]}."
+                ),
+                columns=missing_required,
             )
-        ),
-        "frame_inventory": Path(
-            artifact_path(
-                output_root,
-                "frame_inventory",
-                "inventory",
-                experiment_id,
-                path_mode=path_mode_merged,
-            )
-        ),
-        "stage_predictions": Path(
-            artifact_path(
-                output_root,
-                "stage_predictions",
-                "stage_predictions",
-                experiment_id,
-                path_mode=path_mode_merged,
-            )
-        ),
-        "snip_qc": Path(
-            artifact_path(
-                output_root,
-                "snip_qc",
-                "verdict",
-                experiment_id,
-                path_mode=path_mode_merged,
-            )
-        ),
-        "plate_metadata": Path(
-            artifact_path(output_root, "ingest_plate_metadata", "csv", experiment_id)
-        ),
-        "collection_provenance": Path(
-            artifact_path(
-                output_root, "collection_provenance", "provenance", experiment_id
-            )
-        ),
-    }
-    if acquisition_scope is not None:
-        paths["acquisition_inventory"] = Path(
-            artifact_path(
-                output_root,
-                "ingest_scope_metadata",
-                "acquisition_inventory",
-                experiment_id,
-                format_vars={"scope": acquisition_scope},
+        )
+    missing_current = tuple(
+        c
+        for c in contract.current_writer_columns
+        if c not in table.columns and c not in contract.adapter_required_columns
+    )
+    if missing_current:
+        issues.append(
+            SchemaIssue(
+                experiment_id=experiment_id,
+                source_name=contract.source_name,
+                severity="info",
+                code="missing_current_writer_columns",
+                message=(
+                    f"{experiment_id}: {contract.source_name} omits current-writer column(s) "
+                    f"{list(missing_current)} from {SOURCE_SYMBOL_CITATIONS[contract.source_name]}. "
+                    "The adapter can inspect this schema variant because its fatal subset is "
+                    "present; present columns remain source-authoritative."
+                ),
+                columns=missing_current,
             )
         )
-    return ResolvedExperimentPaths(experiment_id=experiment_id, paths=paths)
-
-
-def resolve_pipeline_path(value: str, output_root: Path) -> Path:
-    """Resolve a stored pipeline-relative path through its declared helper."""
-
-    resolver = _pipeline_symbol(
-        "data_pipeline.object_extraction.snip_processing.io", "resolve_from_root"
-    )
-    return Path(resolver(value, output_root=output_root))
-
-
-def read_artifact_table(path: Path, *, source_name: str, experiment_id: str) -> pd.DataFrame:
-    """Read CSV/Parquet and make a missing Parquet engine a named hard failure."""
-
-    path = Path(path)
-    if not path.exists():
-        raise FileNotFoundError(
-            f"experiment {experiment_id!r}: required {source_name} artifact is missing: {path}"
+    missing_variants = tuple(c for c in contract.variant_columns if c not in table.columns)
+    if missing_variants:
+        issues.append(
+            SchemaIssue(
+                experiment_id=experiment_id,
+                source_name=contract.source_name,
+                severity="info",
+                code="missing_variant_columns",
+                message=(
+                    f"{experiment_id}: {contract.source_name} omits supported variant column(s) "
+                    f"{list(missing_variants)}."
+                ),
+                columns=missing_variants,
+            )
         )
-    suffix = path.suffix.casefold()
-    if suffix in {".parquet", ".pq"}:
-        try:
-            return pd.read_parquet(path)
-        except (ImportError, ModuleNotFoundError) as exc:
-            raise RuntimeError(
-                f"experiment {experiment_id!r}: cannot read {source_name} Parquet artifact "
-                f"{path}; install a pandas Parquet engine such as pyarrow. QC must not be skipped."
-            ) from exc
-        except ValueError as exc:
-            if "engine" in str(exc).lower() or "pyarrow" in str(exc).lower():
-                raise RuntimeError(
-                    f"experiment {experiment_id!r}: cannot read {source_name} Parquet artifact "
-                    f"{path}; install a pandas Parquet engine such as pyarrow. QC must not be skipped."
-                ) from exc
-            raise
-    if suffix == ".csv":
-        return pd.read_csv(path)
-    raise ValueError(
-        f"experiment {experiment_id!r}: unsupported {source_name} table format at {path}; "
-        "expected CSV or Parquet"
-    )
+    return tuple(issues)
 
 
-def read_collection_provenance(path: Path, *, experiment_id: str) -> Mapping[str, Any]:
-    if not path.exists():
-        raise FileNotFoundError(
-            f"experiment {experiment_id!r}: collection provenance artifact is missing: {path}"
-        )
-    reader = _pipeline_symbol(
-        "data_pipeline.acquisition.metadata_ingest.collection_provenance",
-        "read_collection_provenance",
-    )
-    return reader(path)
+def require_table_contract(
+    table: pd.DataFrame,
+    *,
+    experiment_id: str,
+    contract: TableContract,
+) -> tuple[SchemaIssue, ...]:
+    """Return optional differences or fail with every missing required column."""
+
+    issues = inspect_table_schema(table, experiment_id=experiment_id, contract=contract)
+    missing = [i for i in issues if i.code == "missing_required_columns"]
+    if missing:
+        raise ValueError(missing[0].message)
+    return issues
 
 
-def fingerprint_artifact(
+def normalize_boolean_series(
+    values: pd.Series,
     *,
     experiment_id: str,
     source_name: str,
-    path: Path,
-    required: bool,
-    row_count: int | None,
-    schema_version: str | None = None,
-) -> SourceArtifactRecord:
-    """Fingerprint a source table/JSON; image contents are intentionally not hashed."""
+    column: str,
+    nullable: bool = False,
+) -> pd.Series:
+    """Parse real booleans and exact True/False tokens without ``bool(value)``."""
 
-    path = Path(path)
-    if not path.exists():
-        return SourceArtifactRecord(
-            experiment_id,
-            source_name,
-            path,
-            False,
-            required,
-            None,
-            None,
-            row_count,
-            None,
-            schema_version,
+    def _parse(value: object) -> object:
+        if pd.isna(value):
+            if nullable:
+                return pd.NA
+            raise ValueError(
+                f"{experiment_id}: {source_name}.{column} contains null; a non-null boolean is required."
+            )
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int) and value in (0, 1):
+            return bool(value)
+        if isinstance(value, str):
+            token = value.strip()
+            if token == "True":
+                return True
+            if token == "False":
+                return False
+        raise ValueError(
+            f"{experiment_id}: {source_name}.{column} has unparseable boolean value {value!r}; "
+            "expected bool, 0/1, or exact 'True'/'False'."
         )
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    stat = path.stat()
-    return SourceArtifactRecord(
-        experiment_id=experiment_id,
-        source_name=source_name,
-        path=path,
-        exists=True,
-        required=required,
-        size_bytes=stat.st_size,
-        mtime_ns=stat.st_mtime_ns,
-        row_count=row_count,
-        sha256=digest.hexdigest(),
-        schema_version=schema_version,
-    )
+
+    dtype = "boolean" if nullable else bool
+    return pd.Series((_parse(v) for v in values), index=values.index, dtype=dtype)
 
 
-CURRENT_WRITER_SYMBOLS: tuple[str, ...] = (
-    "data_pipeline.object_extraction.snip_processing.inventory_contract."
-    "SNIP_INVENTORY_WRITE_COLUMNS",
-    "data_pipeline.object_extraction.snip_processing.inventory_contract."
-    "validate_snip_inventory",
-    "data_pipeline.acquisition.image_materialization.frame_inventory_contract."
-    "REQUIRED_FRAME_INVENTORY_COLUMNS",
-    "data_pipeline.acquisition.image_materialization.frame_inventory_contract."
-    "validate_frame_inventory_identity_contract",
-    "data_pipeline.feature_extraction.stage_predictions.contract."
-    "STAGE_PREDICTION_TABLE_COLUMNS",
-    "data_pipeline.feature_extraction.stage_predictions.contract."
-    "validate_stage_prediction_features",
-    "data_pipeline.quality_control.snip_qc.contract.SNIP_QC_TABLE_COLUMNS",
-    "data_pipeline.quality_control.snip_qc.contract.SNIP_QC_EXCLUSION_FLAGS",
-    "data_pipeline.quality_control.snip_qc.contract.validate_snip_qc",
-    "data_pipeline.acquisition.metadata_ingest.plate.plate_metadata_contract."
-    "REQUIRED_PLATE_METADATA_COLUMNS",
-    "data_pipeline.acquisition.metadata_ingest.plate.plate_metadata_contract."
-    "validate_plate_metadata",
-    "data_pipeline.acquisition.metadata_ingest.collection_provenance_contract."
-    "REQUIRED_COLLECTION_PROVENANCE_KEYS",
-    "data_pipeline.acquisition.metadata_ingest.collection_provenance_contract."
-    "validate_collection_provenance",
-    "data_pipeline.acquisition.metadata_ingest.collection_acquisition_union."
-    "union_collection_acquisition_inventories",
-    "data_pipeline.pipeline_orchestrator.orchestration.paths.artifact_path",
-    "data_pipeline.object_extraction.snip_processing.io.resolve_from_root",
-)
+def require_non_null(table: pd.DataFrame, columns: Iterable[str], *, label: str) -> None:
+    for column in columns:
+        null_mask = table[column].isna()
+        if null_mask.any():
+            indices = table.index[null_mask].tolist()[:5]
+            raise ValueError(
+                f"{label}: required column {column!r} has null values at source rows {indices}."
+            )
+
+
+def require_unique(table: pd.DataFrame, columns: list[str], *, label: str) -> None:
+    """Require uniqueness with nullable values participating in the key."""
+
+    duplicate_mask = table.duplicated(subset=columns, keep=False)
+    if duplicate_mask.any():
+        examples = table.loc[duplicate_mask, columns].head(5).to_dict("records")
+        raise ValueError(f"{label}: duplicate key {columns}; examples: {examples}.")
+
+
+def qc_flag_and_applicability_columns(table: pd.DataFrame) -> tuple[str, ...]:
+    """Return every non-base QC decision/applicability column in source order."""
+
+    return tuple(c for c in table.columns if c not in QC_BASE_COLUMNS)

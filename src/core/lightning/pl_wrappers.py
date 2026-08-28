@@ -1,8 +1,7 @@
 import pytorch_lightning as pl
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 from typing import Any, Callable, Optional, Dict
-from inspect import Parameter, signature
 from torch.nn import functional as F
 from torch import nn
 from src.core.data.dataset_classes import collate_manifest_dataset_output
@@ -50,7 +49,6 @@ class LitModel(pl.LightningModule):
         self.eval_gpu_flag = eval_gpu_flag
         self.loss_fn = loss_fn
         self.data_cfg = data_cfg
-        self._split_datasets: dict[str, Dataset] = {}
         self.current_mode = None
 
         self.train_cfg = train_cfg
@@ -318,103 +316,37 @@ class LitModel(pl.LightningModule):
             return [opt_G]
 
 
-    def _dataset_for_split(self, split: str) -> Dataset:
-        """Create and cache one physical-embryo-disjoint dataset per named split."""
-
-        if split in self._split_datasets:
-            return self._split_datasets[split]
-
-        creator = getattr(self.data_cfg, "create_dataset", None)
-        if creator is None or not callable(creator):
-            raise TypeError(
-                "Manifest data configuration must define create_dataset(*, split=...)."
-            )
-        parameters = signature(creator).parameters.values()
-        accepts_split = any(parameter.name == "split" for parameter in parameters)
-        accepts_keywords = any(parameter.kind == Parameter.VAR_KEYWORD for parameter in parameters)
-        if not accepts_split and not accepts_keywords:
-            raise TypeError(
-                "Manifest data configuration create_dataset must accept a named split. Full-dataset "
-                "positional samplers are not supported."
-            )
-
-        dataset = creator(split=split)
-        if not isinstance(dataset, Dataset):
-            raise TypeError(
-                f"create_dataset(split={split!r}) returned {type(dataset)!r}, expected torch Dataset."
-            )
-        if len(dataset) == 0:
-            raise ValueError(f"create_dataset(split={split!r}) returned an empty required split.")
-        dataset_split = getattr(dataset, "split", None)
-        if dataset_split != split:
-            raise ValueError(
-                f"create_dataset(split={split!r}) returned dataset.split={dataset_split!r}."
-            )
-        physical_embryo_ids = getattr(dataset, "physical_embryo_ids", None)
-        if physical_embryo_ids is None:
-            raise TypeError(
-                f"Dataset for split={split!r} must expose physical_embryo_ids for leakage checks."
-            )
-        identities = frozenset(physical_embryo_ids)
-        invalid_identities = [
-            value for value in identities if not isinstance(value, str) or not value
-        ]
-        if invalid_identities:
-            raise TypeError(
-                f"Dataset for split={split!r} exposes non-string or empty physical_embryo_id "
-                f"values: {invalid_identities!r}."
-            )
-        for other_split, other_dataset in self._split_datasets.items():
-            other_identities = frozenset(getattr(other_dataset, "physical_embryo_ids"))
-            overlap = sorted(identities & other_identities)
-            if overlap:
-                raise ValueError(
-                    f"physical_embryo_id values cross split={split!r} and "
-                    f"split={other_split!r}: {overlap!r}."
-                )
-
-        self._split_datasets[split] = dataset
-        return dataset
-
-    def _loader_for_split(self, split: str, *, shuffle: bool, drop_last: bool) -> DataLoader:
-        dataset = self._dataset_for_split(split)
-        num_workers = int(self.data_cfg.num_workers)
-        generator = torch.Generator()
-        split_offset = {"train": 0, "eval": 1, "test": 2}[split]
-        generator.manual_seed(int(getattr(self.data_cfg, "loader_seed", 0)) + split_offset)
-
-        loader_kwargs: dict[str, Any] = {
-            "dataset": dataset,
-            "batch_size": int(self.data_cfg.batch_size),
-            "num_workers": num_workers,
-            "shuffle": shuffle,
-            "drop_last": drop_last,
-            "collate_fn": getattr(dataset, "collate_fn", collate_manifest_dataset_output),
-            "pin_memory": bool(getattr(self.data_cfg, "pin_memory", False)),
-            "generator": generator,
-        }
-        if num_workers > 0:
-            loader_kwargs["persistent_workers"] = bool(
-                getattr(self.data_cfg, "persistent_workers", False)
-            )
-            loader_kwargs["prefetch_factor"] = int(
-                getattr(self.data_cfg, "prefetch_factor", 2)
-            )
-        return DataLoader(**loader_kwargs)
-
     def train_dataloader(self):
-        # Lightning can safely replace this shuffle sampler with a distributed sampler.
-        return self._loader_for_split(
-            "train",
-            shuffle=True,
-            drop_last=bool(getattr(self.data_cfg, "drop_last", True)),
-        )
+        return self._manifest_dataloader("train", shuffle=True)
 
     def val_dataloader(self):
-        return self._loader_for_split("eval", shuffle=False, drop_last=False)
+        return self._manifest_dataloader("eval", shuffle=False)
 
     def test_dataloader(self):
-        return self._loader_for_split("test", shuffle=False, drop_last=False)
+        return self._manifest_dataloader("test", shuffle=False)
+
+    def _manifest_dataloader(self, split: str, *, shuffle: bool) -> DataLoader:
+        """Build one compact split-local loader from the canonical resolved view.
+
+        No positional sampler is supplied, so Lightning can install its distributed
+        sampler when a distributed strategy is active.
+        """
+
+        dataset = self.data_cfg.create_dataset(split=split)
+        num_workers = int(self.data_cfg.num_workers)
+        generator = torch.Generator()
+        generator.manual_seed(int(getattr(self.data_cfg, "loader_seed", 0)))
+        return DataLoader(
+            dataset,
+            batch_size=self.data_cfg.batch_size,
+            num_workers=num_workers,
+            shuffle=shuffle,
+            drop_last=bool(getattr(self.data_cfg, "drop_last_train", False)) if split == "train" else False,
+            pin_memory=bool(getattr(self.data_cfg, "pin_memory", False)),
+            persistent_workers=bool(getattr(self.data_cfg, "persistent_workers", False)) and num_workers > 0,
+            collate_fn=collate_manifest_dataset_output,
+            generator=generator,
+        )
 
     # -------------------------------------------------------------------
     # prediction API: given a batch → return recon, recon-loss, mu, logσ²
