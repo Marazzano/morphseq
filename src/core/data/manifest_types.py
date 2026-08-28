@@ -156,4 +156,3 @@ class PipelineManifestResult:
     cohort_report: CohortReport
     split_assignments: pd.DataFrame
     policy: ManifestPolicy
-
