@@ -6,6 +6,15 @@ from src.core.models.model_utils import ModelOutput
 import lpips
 from torch.amp import autocast
 
+from src.core.losses.metric_loss import (
+    MetricLossConfigurationError,
+    MetricTargetMasks,
+    build_metric_target_masks,
+    euclidean_supcon_lout,
+    supcon_lout_from_logits,
+    validate_metric_parameters,
+)
+
 
 # ---------------------------------------------------------------------------
 # Module-level helpers (pure functions, no state)
@@ -289,6 +298,22 @@ class NTXentLoss(_VAELossBase):
         self.nuisance_indices   = cfg.nuisance_indices
         self.cfg                = cfg   # keep whole config for convenience
 
+        validate_metric_parameters(
+            temperature=cfg.temperature,
+            metric_weight=cfg.metric_weight,
+            sampler_age_window=cfg.sampler_age_window,
+            loss_age_window=cfg.loss_age_window,
+        )
+        if not 0.0 <= cfg.self_target_prob <= 1.0:
+            raise MetricLossConfigurationError(
+                f"self_target_prob must be in [0, 1], got {cfg.self_target_prob!r}"
+            )
+        if cfg.relation_policy is not None and cfg.loss_age_window is None:
+            raise MetricLossConfigurationError(
+                f"relation policy {cfg.relation_policy.name!r}@"
+                f"{cfg.relation_policy.version} requires an explicit loss_age_window"
+            )
+
     def forward(self, model_input, model_output, batch_key="data"):
         x = model_input[batch_key]
         x0, _ = x.unbind(dim=1)   # split paired views; reconstruct from view 0 only
@@ -326,57 +351,103 @@ class NTXentLoss(_VAELossBase):
     # -----------------------------------------------------------------------
 
     def _nt_xent_loss_euclidean(self, features, self_stats=None, other_stats=None, n_views=2):
+        if n_views != 2:
+            raise MetricLossConfigurationError(
+                f"paired metric input requires n_views=2, got {n_views!r}"
+            )
+        if features.shape[0] % n_views:
+            raise MetricLossConfigurationError(
+                f"feature count {features.shape[0]} is not divisible by n_views={n_views}"
+            )
 
-        temperature = self.cfg.temperature
-        features    = features[:, self.cfg.biological_indices]
-        device      = features.device
-        batch_size  = int(features.shape[0] / n_views)
+        features = features[:, self.cfg.biological_indices]
+        batch_size = features.shape[0] // n_views
+        explicit_pairs = tuple(
+            (index, index + batch_size) for index in range(batch_size)
+        )
 
-        # Positive-pair indicator matrix (1 = positive, -1 = exclude self)
-        pair_matrix = torch.cat([torch.arange(batch_size) for _ in range(n_views)], dim=0)
-        pair_matrix = (pair_matrix.unsqueeze(0) == pair_matrix.unsqueeze(1)).float()
-        mask = torch.eye(pair_matrix.shape[0], dtype=torch.bool, device=device)
-        pair_matrix[mask] = -1
+        relation_policy = self.cfg.relation_policy
+        if relation_policy is None:
+            if self.cfg.self_target_prob != 1.0:
+                raise MetricLossConfigurationError(
+                    "relation-aware metric loss requires a C1 relation_policy; the "
+                    "legacy smoke path is allowed only when self_target_prob=1.0 "
+                    "and uses explicit paired-view positives"
+                )
+            targets = build_metric_target_masks(
+                num_features=features.shape[0],
+                explicit_positive_pairs=explicit_pairs,
+                device=features.device,
+            )
+        else:
+            if self_stats is None or other_stats is None:
+                raise MetricLossConfigurationError(
+                    f"relation policy {relation_policy.name!r}@{relation_policy.version} "
+                    "requires self_stats and other_stats"
+                )
+            ages = torch.cat(
+                [torch.as_tensor(self_stats[1]), torch.as_tensor(other_stats[1])],
+                dim=0,
+            )
+            metric_groups = self._metric_group_names(
+                list(self_stats[2]) + list(other_stats[2])
+            )
+            targets = build_metric_target_masks(
+                num_features=features.shape[0],
+                explicit_positive_pairs=explicit_pairs,
+                relation_policy=relation_policy,
+                metric_groups=metric_groups,
+                ages=ages,
+                loss_age_window=self.cfg.loss_age_window,
+                sampler_age_window=self.cfg.sampler_age_window,
+                device=features.device,
+            )
 
-        # Normalised squared Euclidean distance
-        dist_matrix = torch.cdist(features, features, p=2).pow(2)
-        N     = self.cfg.latent_dim_bio / 2
-        sigma = N
-        dist_normed = -(dist_matrix / sigma).pow(0.5) / temperature
+        return euclidean_supcon_lout(
+            features,
+            targets,
+            temperature=self.cfg.temperature,
+        )
 
-        # Build target matrix: 1 = positive, 0 = negative, -1 = exclude
-        target_matrix = torch.zeros(pair_matrix.shape, dtype=torch.float32)
-        if self_stats is not None:
-            age_vec    = torch.cat([self_stats[1], other_stats[1]], axis=0)
-            age_deltas = torch.abs(age_vec.unsqueeze(-1) - age_vec.unsqueeze(0))
-            age_bool   = age_deltas <= (self.cfg.time_window + 1.5)
+    def _metric_group_names(self, values):
+        """Resolve runtime codes to C1 canonical names without encoding policy."""
 
-            pert_cross = torch.zeros_like(age_bool, dtype=torch.bool)
-            pert_bool  = torch.ones_like(age_bool,  dtype=torch.bool)
-
-            if self.cfg.self_target_prob < 1.0:
-                pert_vec      = torch.cat([self_stats[2], other_stats[2]], axis=0)
-                metric_array  = torch.tensor(self.cfg.metric_array).type(torch.int8)
-                metric_matrix = metric_array.clone().to(pert_vec.device)
-                metric_matrix = metric_matrix[pert_vec, :][:, pert_vec]
-                pert_bool  = metric_matrix == 1
-                pert_cross = metric_matrix == -1
-
-            target_matrix[age_bool & pert_bool] = 1
-            target_matrix[pert_cross]            = -1
-
-        target_matrix[pair_matrix == 1]  = 1
-        target_matrix[pair_matrix == -1] = -1
-        target_matrix = target_matrix.to(device)
-
-        return self._nt_xent_loss_multiclass(dist_normed, target_matrix)
+        names = tuple(self.cfg.metric_group_names)
+        resolved = []
+        for feature_index, value in enumerate(values):
+            if isinstance(value, str):
+                resolved.append(value)
+                continue
+            if isinstance(value, torch.Tensor):
+                if value.numel() != 1:
+                    raise MetricLossConfigurationError(
+                        f"metric group at feature index {feature_index} is not scalar"
+                    )
+                value = value.item()
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise MetricLossConfigurationError(
+                    f"metric group at feature index {feature_index} must be a canonical "
+                    f"name or integer runtime code, got {value!r}"
+                )
+            if not names:
+                raise MetricLossConfigurationError(
+                    "integer metric group codes require configured metric_group_names "
+                    "derived from C1 mapping identities"
+                )
+            if not 0 <= value < len(names):
+                raise MetricLossConfigurationError(
+                    f"metric group code {value} at feature index {feature_index} is outside "
+                    f"configured metric_group_names length {len(names)}"
+                )
+            resolved.append(names[value])
+        return tuple(resolved)
 
     def _nt_xent_loss_multiclass(self, logits_tempered, target):
-        logits_tempered[target == -1] = -torch.inf   # exclude flagged pairs
+        """Compatibility adapter over the ratified ``L_out`` reduction."""
 
-        logits_num = logits_tempered.clone()
-        logits_num[target == 0] = -torch.inf          # exclude negatives from numerator
-
-        numerator   = torch.logsumexp(logits_num,      axis=1)
-        denominator = torch.logsumexp(logits_tempered, axis=1)
-        return torch.mean(-(numerator - denominator))
+        targets = MetricTargetMasks(
+            positive=target == 1,
+            denominator=target != -1,
+            context="policy=precompiled_runtime_targets, loss_age_window=caller_defined",
+        )
+        return supcon_lout_from_logits(logits_tempered, targets)

@@ -1,11 +1,11 @@
 from typing import Literal, Optional, Tuple
 from pydantic.dataclasses import dataclass
-from dataclasses import field
 from importlib import import_module
 import torch
-import numpy as np
 from pydantic import ConfigDict
 import math
+
+from src.core.metric import MetricRelationPolicy
 
 
 @dataclass
@@ -127,15 +127,19 @@ class MetricLoss(BasicLoss):
     # model arch info
     frac_nuisance_latents: float = 0.2
     latent_dim: Optional[int] = None
-    metric_array: np.ndarray = field(default_factory=lambda: np.array([], dtype=float))
-
     # metric learning
     temperature: float = 0.1  # sets sharpness of loss 'gradient'
     metric_weight: float = 1.0  # tunes weight of contastive loss within the loss function
     distance_metric: Literal["euclidean"] = "euclidean"  # Could/should add cosine
 
+    # C1 is the sole class-relation authority.  Integer batch codes, when used,
+    # resolve through this deterministic code-to-name sequence before lookup.
+    relation_policy: Optional[MetricRelationPolicy] = None
+    metric_group_names: Tuple[str, ...] = ()
+
     # params to structure interactions
-    time_window: float = 1.5  # max permitted age difference between sequential pairs
+    sampler_age_window: float = 1.5
+    loss_age_window: Optional[float] = None
     self_target_prob: float = 0.5  # fraction of time to load self-pair vs. alternative comparison
 
     # apply KLD reg to bio latents only?
@@ -195,6 +199,12 @@ class MetricLoss(BasicLoss):
     @property
     def latent_dim_nuisance(self) -> int:
         return self.latent_dim - self.latent_dim_bio
+
+    @property
+    def time_window(self) -> float:
+        """Legacy dataset-facing alias for the distinct sampler-age window."""
+
+        return self.sampler_age_window
 
     @property
     def biological_indices(self):
