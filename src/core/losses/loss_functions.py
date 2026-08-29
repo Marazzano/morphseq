@@ -8,10 +8,8 @@ from torch.amp import autocast
 
 from src.core.losses.metric_loss import (
     MetricLossConfigurationError,
-    MetricTargetMasks,
     build_metric_target_masks,
     euclidean_supcon_lout,
-    supcon_lout_from_logits,
     validate_metric_parameters,
 )
 
@@ -441,13 +439,3 @@ class NTXentLoss(_VAELossBase):
                 )
             resolved.append(names[value])
         return tuple(resolved)
-
-    def _nt_xent_loss_multiclass(self, logits_tempered, target):
-        """Compatibility adapter over the ratified ``L_out`` reduction."""
-
-        targets = MetricTargetMasks(
-            positive=target == 1,
-            denominator=target != -1,
-            context="policy=precompiled_runtime_targets, loss_age_window=caller_defined",
-        )
-        return supcon_lout_from_logits(logits_tempered, targets)

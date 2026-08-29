@@ -30,6 +30,10 @@ def _directed_cycle_targets() -> MetricTargetMasks:
     )
 
 
+def test_production_loss_has_no_independent_legacy_target_matrix_entrypoint() -> None:
+    assert not hasattr(NTXentLoss, "_nt_xent_loss_multiclass")
+
+
 def test_lout_matches_hand_computed_one_positive_per_anchor() -> None:
     logits = torch.tensor(
         [[0.0, 2.0, 0.0], [1.0, 0.0, 3.0], [4.0, 2.0, 0.0]],
