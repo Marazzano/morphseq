@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pydantic.dataclasses import dataclass
-from dataclasses import dataclass as std_dataclass, field
+from dataclasses import dataclass as std_dataclass, field, replace
 from typing import Literal, List, Type, Callable, Any, Dict, Mapping, Optional, Union
 from src.core.data.dataset_utils import make_seq_key, make_train_test_split
 from src.core.data.data_transforms import basic_transform, contrastive_transform
@@ -18,6 +18,18 @@ from src.core.data.pipeline_manifest import (
     AssetPathResolver,
     ExperimentSourcePaths,
     build_pipeline_manifest,
+)
+from src.core.metric import (
+    CompiledMetricMapping,
+    MetricMappingArtifact,
+    MetricPairIndex,
+    MetricPairSampler,
+    MetricPairingPolicy,
+    MetricRelationPolicy,
+    PairPreflightReport,
+    build_metric_provenance_payload,
+    preflight_pair_indices,
+    validate_metric_bundle_for_preset,
 )
 
 
@@ -313,3 +325,128 @@ class PipelineDataConfig:
             transform=self.transform,
             max_decode_failures=self.max_decode_failures,
         )
+
+
+@std_dataclass
+class PipelineMetricDataConfig(PipelineDataConfig):
+    """Manifest-backed metric configuration with C1 mapping and C2 pair indexes."""
+
+    metric_mapping_artifact: MetricMappingArtifact | None = None
+    relation_policy: MetricRelationPolicy | None = None
+    pairing_policy: MetricPairingPolicy | None = None
+    distributed_rank: int = 0
+    pair_indices: Mapping[str, MetricPairIndex] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    pair_preflight_reports: tuple[PairPreflightReport, ...] = field(
+        default=(), init=False
+    )
+
+    @property
+    def metric_provenance_payload(self) -> dict[str, Any]:
+        mapping, relation = self._require_metric_policies()
+        return build_metric_provenance_payload(
+            mapping=mapping,
+            relation_policy=relation,
+        )
+
+    def make_metadata(self) -> PipelineManifestResult:
+        mapping, relation = self._require_metric_policies()
+        pairing = self._require_pairing_policy()
+        declared_mapping = self.manifest_policy.metric_mapping
+        if not declared_mapping.enabled:
+            raise ValueError(
+                "PipelineMetricDataConfig requires manifest_policy.metric_mapping.enabled=True."
+            )
+        if declared_mapping.name != mapping.name:
+            raise ValueError(
+                f"manifest metric mapping name={declared_mapping.name!r} disagrees with "
+                f"artifact name={mapping.name!r}."
+            )
+        if declared_mapping.scientific_policy != mapping.scientific_policy:
+            raise ValueError(
+                "manifest metric_mapping.scientific_policy disagrees with the mapping artifact."
+            )
+        if pairing.scientific_policy != mapping.scientific_policy:
+            raise ValueError(
+                "pairing_policy.scientific_policy disagrees with the mapping artifact."
+            )
+        validate_metric_bundle_for_preset(
+            mapping=mapping,
+            relation_policy=relation,
+            scientific_preset=pairing.scientific_policy,
+        )
+
+        result = super().make_metadata()
+        resolved = result.resolved_sample_table.copy()
+        mapped = CompiledMetricMapping(mapping).map_records(
+            resolved.to_dict(orient="records")
+        )
+        unassigned_indices = [
+            index for index, group_name in enumerate(mapped.group_names)
+            if group_name is None
+        ]
+        if unassigned_indices:
+            snip_ids = resolved.iloc[unassigned_indices]["snip_id"].tolist()
+            raise ValueError(
+                f"metric mapping {mapping.name!r}@{mapping.version} left accepted rows "
+                f"unassigned; snip_id values={snip_ids!r}."
+            )
+        resolved["metric_group"] = mapped.group_names
+        resolved["metric_group_code"] = mapped.group_codes
+        self.manifest_result = replace(result, resolved_sample_table=resolved)
+
+        pair_indices: dict[str, MetricPairIndex] = {}
+        for split in ("train", "eval", "test"):
+            split_table = resolved.loc[resolved["split"].eq(split)].reset_index(drop=True)
+            if split_table.empty:
+                continue
+            pair_indices[split] = MetricPairIndex(
+                split_table,
+                relation_policy=relation,
+                pairing_policy=pairing,
+                split=split,
+            )
+        self.pair_preflight_reports = preflight_pair_indices(pair_indices)
+        self.pair_indices = pair_indices
+        return self.manifest_result
+
+    def create_dataset(self, *, split: str):
+        if self.manifest_result is None or not self.pair_indices:
+            self.make_metadata()
+        try:
+            pair_index = self.pair_indices[split]
+        except KeyError as exc:
+            raise ValueError(
+                f"metric manifest has no preflighted pair index for split={split!r}."
+            ) from exc
+        pairing = self._require_pairing_policy()
+        return NTXentDataset(
+            resolved_sample_table=self.resolved_sample_table,
+            product_key=self.manifest_policy.selected_product_key,
+            pair_sampler=MetricPairSampler(pair_index, rank=self.distributed_rank),
+            policy_name=pairing.name,
+            scientific_policy=pairing.scientific_policy,
+            input_dim=self.input_dim,
+            split=split,
+            transform=self.transform,
+            max_decode_failures=self.max_decode_failures,
+        )
+
+    def _require_metric_policies(
+        self,
+    ) -> tuple[MetricMappingArtifact, MetricRelationPolicy]:
+        if not isinstance(self.metric_mapping_artifact, MetricMappingArtifact):
+            raise TypeError(
+                "PipelineMetricDataConfig requires a MetricMappingArtifact."
+            )
+        if not isinstance(self.relation_policy, MetricRelationPolicy):
+            raise TypeError(
+                "PipelineMetricDataConfig requires a C1 MetricRelationPolicy."
+            )
+        return self.metric_mapping_artifact, self.relation_policy
+
+    def _require_pairing_policy(self) -> MetricPairingPolicy:
+        if not isinstance(self.pairing_policy, MetricPairingPolicy):
+            raise TypeError("PipelineMetricDataConfig requires a MetricPairingPolicy.")
+        return self.pairing_policy

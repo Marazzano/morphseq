@@ -19,11 +19,12 @@ import pandas as pd
 from PIL import Image
 from pythae.data.datasets import DatasetOutput
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, get_worker_info
 from torch.utils.data._utils.collate import default_collate
 
 from src.core.data.asset_selection import validate_vanilla_resolved_view
 from src.core.data.data_transforms import basic_transform, contrastive_transform
+from src.core.metric.pairing import MetricPairSampler, PairSelection
 
 
 REQUIRED_RESOLVED_COLUMNS = frozenset(
@@ -456,36 +457,60 @@ class BasicEvalDataset(BasicDataset):
 
 
 class NTXentDataset(BasicDataset):
-    """Explicit test-only paired plumbing over precomputed same-split pairs.
-
-    Pair semantics are intentionally absent.  The caller provides one dataset-row
-    reference per anchor and declares an unmistakably test-only/dummy policy.
-    """
+    """Paired views from either the A4 static stub or C2's indexed sampler."""
 
     def __init__(
         self,
         resolved_sample_table: pd.DataFrame,
         product_key: str,
-        pair_row_references: Sequence[int],
+        pair_row_references: Sequence[int] | None = None,
         *,
-        policy_name: str,
-        scientific_policy: bool = False,
-        stats_columns: tuple[str, str, str] = (
-            "physical_embryo_id",
-            "predicted_stage_hpf",
-            "metric_group_code",
-        ),
+        policy_name: str | None = None,
+        scientific_policy: bool | None = None,
+        pair_sampler: MetricPairSampler | None = None,
+        distributed_rank: int = 0,
+        stats_columns: tuple[str, str, str] | None = None,
         input_dim: Sequence[int] = (1, 288, 128),
         split: str | None = None,
         transform: Callable[[Image.Image], torch.Tensor] | None = None,
         max_decode_failures: int = 10,
         expected_observation_ids: Sequence[str] | None = None,
     ) -> None:
-        if scientific_policy or not any(token in policy_name.lower() for token in ("test_only", "dummy")):
+        if (pair_row_references is None) == (pair_sampler is None):
             raise ValueError(
-                "Track A paired dataset requires a policy name containing 'test_only' or 'dummy' "
-                "and scientific_policy=False."
+                "NTXentDataset requires exactly one pair source: pair_row_references for the "
+                "A4 static stub or pair_sampler for C2 indexed selection."
             )
+        if pair_sampler is None:
+            is_scientific = bool(scientific_policy)
+            if policy_name is None or is_scientific or not any(
+                token in policy_name.lower() for token in ("test_only", "dummy")
+            ):
+                raise ValueError(
+                    "Static Track A pairs require a policy name containing 'test_only' or "
+                    "'dummy' and scientific_policy=False."
+                )
+        else:
+            sampler_policy = pair_sampler.policy
+            if policy_name is not None and policy_name != sampler_policy.name:
+                raise ValueError(
+                    f"dataset policy_name={policy_name!r} disagrees with indexed pair policy "
+                    f"{sampler_policy.name!r}."
+                )
+            if (
+                scientific_policy is not None
+                and bool(scientific_policy) != sampler_policy.scientific_policy
+            ):
+                raise ValueError(
+                    "dataset scientific_policy disagrees with the indexed pairing policy."
+                )
+            policy_name = sampler_policy.name
+        if (
+            isinstance(distributed_rank, bool)
+            or not isinstance(distributed_rank, int)
+            or distributed_rank < 0
+        ):
+            raise ValueError("distributed_rank must be a non-negative integer.")
         paired_transform = transform or contrastive_transform(tuple(input_dim)[1:])
         super().__init__(
             resolved_sample_table=resolved_sample_table,
@@ -496,39 +521,171 @@ class NTXentDataset(BasicDataset):
             max_decode_failures=max_decode_failures,
             expected_observation_ids=expected_observation_ids,
         )
-        if len(pair_row_references) != len(self):
-            raise ValueError(
-                f"pair_row_references length {len(pair_row_references)} does not match dataset length {len(self)}."
+        self._pair_sampler = pair_sampler
+        self._distributed_rank = distributed_rank
+        if pair_sampler is None:
+            assert pair_row_references is not None
+            if len(pair_row_references) != len(self):
+                raise ValueError(
+                    f"pair_row_references length {len(pair_row_references)} does not match "
+                    f"dataset length {len(self)}."
+                )
+            self._pair_row_references = np.asarray(pair_row_references, dtype=np.int64)
+            default_stats = (
+                "physical_embryo_id",
+                "predicted_stage_hpf",
+                "metric_group_code",
             )
-        self._pair_row_references = np.asarray(pair_row_references, dtype=np.int64)
-        self._stats_columns = stats_columns
-        missing_stats = [column for column in stats_columns if column not in self.metadata_columns]
+        else:
+            self._pair_row_references = None
+            dataset_snip_ids = tuple(
+                self._rows.get("snip_id", index) for index in range(len(self))
+            )
+            if dataset_snip_ids != pair_sampler.snip_ids:
+                raise ValueError(
+                    "C2 pair index row order does not match the dataset's split-local resolved "
+                    "observation order."
+                )
+            default_stats = (
+                "physical_embryo_id",
+                pair_sampler.policy.stage_column,
+                "metric_group",
+            )
+        self._stats_columns = default_stats if stats_columns is None else stats_columns
+        missing_stats = [
+            column for column in self._stats_columns if column not in self.metadata_columns
+        ]
         if missing_stats:
-            raise ValueError(f"Test-only metric stats columns are missing: {missing_stats}.")
-        for anchor_index, pair_index in enumerate(self._pair_row_references.tolist()):
-            if not 0 <= pair_index < len(self):
-                raise ValueError(
-                    f"Pair row reference {pair_index} for anchor index {anchor_index} "
-                    f"is outside dataset length {len(self)}."
-                )
-            anchor_split = self._rows.get("split", anchor_index)
-            pair_split = self._rows.get("split", pair_index)
-            if anchor_split != pair_split:
-                raise ValueError(
-                    "Test-only pair crosses splits: "
-                    f"anchor snip_id={self._rows.get('snip_id', anchor_index)!r} split={anchor_split!r}, "
-                    f"other snip_id={self._rows.get('snip_id', pair_index)!r} split={pair_split!r}."
-                )
+            raise ValueError(f"Metric stats columns are missing: {missing_stats}.")
+        if self._pair_row_references is not None:
+            for anchor_index, pair_index in enumerate(self._pair_row_references.tolist()):
+                if not 0 <= pair_index < len(self):
+                    raise ValueError(
+                        f"Pair row reference {pair_index} for anchor index {anchor_index} "
+                        f"is outside dataset length {len(self)}."
+                    )
+                anchor_split = self._rows.get("split", anchor_index)
+                pair_split = self._rows.get("split", pair_index)
+                if anchor_split != pair_split:
+                    raise ValueError(
+                        "Test-only pair crosses splits: "
+                        f"anchor snip_id={self._rows.get('snip_id', anchor_index)!r} split={anchor_split!r}, "
+                        f"other snip_id={self._rows.get('snip_id', pair_index)!r} split={pair_split!r}."
+                    )
+        self._policy_name = policy_name
 
     def _stats(self, index: int) -> list[Any]:
         return [self._rows.get(column, index) for column in self._stats_columns]
+
+    def set_epoch(self, epoch: int) -> None:
+        """Advance C2's deterministic pair seed coordinate."""
+
+        if self._pair_sampler is not None:
+            self._pair_sampler.set_epoch(epoch)
+
+    def _indexed_selection(self, anchor_index: int, *, draw_index: int = 0) -> PairSelection:
+        if self._pair_sampler is None:
+            raise AssertionError("indexed selection requested for a static-pair dataset")
+        worker = get_worker_info()
+        worker_id = 0 if worker is None else worker.id
+        return self._pair_sampler.sample(
+            anchor_index,
+            worker_id=worker_id,
+            rank=self._distributed_rank,
+            draw_index=draw_index,
+        )
+
+    def _load_indexed_other(
+        self, anchor_index: int, selection: PairSelection
+    ) -> tuple[torch.Tensor, int, str]:
+        """Retry only legal indexed positives after a pair-image decode failure."""
+
+        if self._pair_sampler is None:
+            raise AssertionError("indexed pair loading requested for a static-pair dataset")
+        tensor = self._decode_indexed_candidate(anchor_index, selection.other_index)
+        if tensor is not None:
+            return tensor, selection.other_index, selection.candidate_kind
+
+        # Candidate materialization is confined to the exceptional decode-recovery
+        # path; normal __getitem__ selection remains an indexed range query.
+        fallback_indices = (
+            index
+            for index in self._pair_sampler.pair_index.candidate_indices(anchor_index)
+            if index != selection.other_index
+        )
+        for other_index in fallback_indices:
+            tensor = self._decode_indexed_candidate(anchor_index, other_index)
+            if tensor is None:
+                continue
+            candidate_kind = (
+                "same_embryo"
+                if self._rows.get("physical_embryo_id", anchor_index)
+                == self._rows.get("physical_embryo_id", other_index)
+                else "different_embryo"
+            )
+            return tensor, other_index, candidate_kind
+        raise ManifestDecodeError(
+            "No decodable legal metric positive remains for "
+            f"anchor_snip_id={self._rows.get('snip_id', anchor_index)!r}, "
+            f"policy={self._policy_name!r}, split={self._rows.get('split', anchor_index)!r}."
+        )
+
+    def _decode_indexed_candidate(
+        self, anchor_index: int, other_index: int
+    ) -> torch.Tensor | None:
+        try:
+            return self._decode(other_index)
+        except OSError as error:
+            resolved_reference = int(self._resolved_row_references[other_index])
+            failure_count = self._decode_failures.record(resolved_reference)
+            snip_id = self._rows.get("snip_id", other_index)
+            path = self._rows.get("processed_snip_path", other_index)
+            LOGGER.warning(
+                "Failed to decode indexed metric positive: anchor_snip_id=%r "
+                "other_snip_id=%r product=%r split=%r path=%r failure_count=%d "
+                "threshold=%d error=%s",
+                self._rows.get("snip_id", anchor_index),
+                snip_id,
+                self.product_key,
+                self._rows.get("split", other_index),
+                path,
+                failure_count,
+                self.max_decode_failures,
+                error,
+            )
+            if failure_count > self.max_decode_failures:
+                raise ManifestDecodeError(
+                    "Metric-pair decode failure threshold exceeded: "
+                    f"count={failure_count}, threshold={self.max_decode_failures}, "
+                    f"anchor_snip_id={self._rows.get('snip_id', anchor_index)!r}, "
+                    f"other_snip_id={snip_id!r}, policy={self._policy_name!r}."
+                ) from error
+            return None
 
     def __getitem__(self, index: int) -> DatasetOutput:
         if not 0 <= index < len(self):
             raise IndexError(index)
         anchor_tensor, anchor_index = self._load_with_same_split_resampling(index)
-        pair_requested_index = int(self._pair_row_references[anchor_index])
-        other_tensor, other_index = self._load_with_same_split_resampling(pair_requested_index)
+        if self._pair_sampler is None:
+            assert self._pair_row_references is not None
+            pair_requested_index = int(self._pair_row_references[anchor_index])
+            other_tensor, other_index = self._load_with_same_split_resampling(
+                pair_requested_index
+            )
+            candidate_kind = (
+                "same_embryo"
+                if self._rows.get("physical_embryo_id", anchor_index)
+                == self._rows.get("physical_embryo_id", other_index)
+                else "different_embryo"
+            )
+            pair_seed = None
+        else:
+            selection = self._indexed_selection(anchor_index)
+            pair_requested_index = selection.other_index
+            other_tensor, other_index, candidate_kind = self._load_indexed_other(
+                anchor_index, selection
+            )
+            pair_seed = selection.seed
         output = self._item_from_loaded(anchor_tensor, anchor_index, index)
         output["data"] = torch.stack([anchor_tensor, other_tensor], dim=0)
         output["label"] = [
@@ -545,6 +702,13 @@ class NTXentDataset(BasicDataset):
             self._rows.get("z_index", other_index),
         )
         output["other_metadata"] = self._rows.row(other_index)
+        output["pair_candidate_kind"] = candidate_kind
+        output["pair_policy_name"] = self._policy_name
+        output["pair_seed"] = pair_seed
+        output["pair_requested_index"] = pair_requested_index
+        if self._pair_sampler is not None:
+            output["pair_sampler_age_window"] = self._pair_sampler.policy.sampler_age_window
+            output["pair_stage_source"] = self._pair_sampler.policy.stage_source
         return output
 
 
