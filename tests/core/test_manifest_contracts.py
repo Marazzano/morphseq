@@ -4,6 +4,7 @@ from dataclasses import replace
 from pathlib import Path
 import importlib
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -149,6 +150,22 @@ def test_safe_string_boolean_parsing_does_not_treat_false_as_truthy() -> None:
             source_name="snip_qc",
             column="use_snip",
         )
+
+
+def test_numpy_boolean_and_integer_scalars_are_normalized() -> None:
+    values = pd.Series(
+        [np.bool_(True), np.bool_(False), np.int64(1), np.int64(0)],
+        dtype=object,
+    )
+
+    parsed = normalize_boolean_series(
+        values,
+        experiment_id="opaque-experiment",
+        source_name="snip_qc",
+        column="persistence_dead_flag",
+    )
+
+    assert parsed.tolist() == [True, False, True, False]
 
 
 def test_path_resolution_calls_only_declared_pipeline_authority() -> None:

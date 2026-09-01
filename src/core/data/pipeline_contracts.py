@@ -10,8 +10,10 @@ than manipulating ``sys.path`` or weakening these checks.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from numbers import Integral
 from typing import Iterable
 
+import numpy as np
 import pandas as pd
 
 from src.core.data.manifest_types import SchemaIssue
@@ -364,9 +366,9 @@ def normalize_boolean_series(
             raise ValueError(
                 f"{experiment_id}: {source_name}.{column} contains null; a non-null boolean is required."
             )
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, int) and value in (0, 1):
+        if isinstance(value, (bool, np.bool_)):
+            return bool(value)
+        if isinstance(value, Integral) and value in (0, 1):
             return bool(value)
         if isinstance(value, str):
             token = value.strip()
