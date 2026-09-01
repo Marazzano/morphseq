@@ -51,10 +51,12 @@ class SaveRunProvenance(Callback):
                 "SaveRunProvenance requires a built manifest_result; "
                 "call PipelineDataConfig.make_metadata() first."
             )
+        mapping_policy = getattr(data_cfg, "metric_provenance_payload", None)
         self.bundle = RunProvenanceBundle.from_manifest_result(
             manifest_result=manifest_result,
             resolved_config=resolved_config,
             adapter_git_revision=adapter_git_revision,
+            mapping_policy=mapping_policy,
         )
         self.run_artifacts_dir = Path(run_artifacts_dir)
         self.publish_to_wandb = bool(publish_to_wandb)

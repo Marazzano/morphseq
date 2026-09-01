@@ -24,6 +24,7 @@ from pathlib import Path
 from pytorch_lightning.loggers import WandbLogger
 from hydra.utils import instantiate
 from src.core.data.manifest_types import ManifestPolicy
+from src.core.data.dataset_configs import PipelineMetricDataConfig
 import src.core.run.compat  # noqa: F401 — register legacy module aliases
 from src.core.models.arch_spec import save_arch_spec, load_encoder  # noqa: F401 — re-exported for convenience
 
@@ -404,6 +405,23 @@ def initialize_model(config):
     # parse dataset related options and merge with defaults as needed
     data_config = model_config.dataconfig
     data_config.make_metadata()
+
+    if isinstance(data_config, PipelineMetricDataConfig):
+        pairing_policy = data_config._require_pairing_policy()
+        configured_sampler_window = float(model_config.lossconfig.sampler_age_window)
+        indexed_sampler_window = float(pairing_policy.sampler_age_window)
+        if configured_sampler_window != indexed_sampler_window:
+            raise ValueError(
+                "Metric sampler age-window mismatch: "
+                f"lossconfig.sampler_age_window={configured_sampler_window:g}, "
+                f"pairing_policy.sampler_age_window={indexed_sampler_window:g}. "
+                "Sampler and loss windows are distinct settings, but the sampler-window "
+                "value must agree at their integration boundary."
+            )
+        model_config.lossconfig.relation_policy = data_config.relation_policy
+        model_config.lossconfig.metric_group_names = (
+            data_config.metric_mapping_artifact.group_names
+        )
 
     # initialize model
     model = build_from_config(model_config)

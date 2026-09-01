@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pydantic.dataclasses import dataclass
-from dataclasses import dataclass as std_dataclass, field, replace
+from dataclasses import asdict, dataclass as std_dataclass, field, replace
 from typing import Literal, List, Type, Callable, Any, Dict, Mapping, Optional, Union
 from src.core.data.dataset_utils import make_seq_key, make_train_test_split
 from src.core.data.data_transforms import basic_transform, contrastive_transform
@@ -345,10 +345,16 @@ class PipelineMetricDataConfig(PipelineDataConfig):
     @property
     def metric_provenance_payload(self) -> dict[str, Any]:
         mapping, relation = self._require_metric_policies()
-        return build_metric_provenance_payload(
+        payload = build_metric_provenance_payload(
             mapping=mapping,
             relation_policy=relation,
         )
+        pairing = self._require_pairing_policy()
+        payload["pairing_policy"] = asdict(pairing)
+        payload["pair_preflight"] = [
+            asdict(report) for report in self.pair_preflight_reports
+        ]
+        return payload
 
     def make_metadata(self) -> PipelineManifestResult:
         mapping, relation = self._require_metric_policies()
