@@ -46,14 +46,14 @@ def _extract_position_xy_from_scope_csv(scope_df: pd.DataFrame) -> pd.DataFrame:
     The scope CSV has one row per (position, timepoint, channel).  We only need
     the T=0, first-channel row for each position to get stage XY.
     """
-    required = {"raw_position_label", "x_um", "y_um", "time_int"}
+    required = {"raw_position_label", "x_um", "y_um", "time_index"}
     missing = required - set(scope_df.columns)
     if missing:
         raise ValueError(
             f"scope_metadata CSV is missing columns for CSV→CSV XY mapping: {sorted(missing)}. "
             "Re-run ingest_scope_metadata to regenerate it with x_um/y_um columns."
         )
-    t0 = scope_df[scope_df["time_int"] == scope_df["time_int"].min()]
+    t0 = scope_df[scope_df["time_index"] == scope_df["time_index"].min()]
     # One row per position (drop duplicates from multiple channels)
     per_position = t0.drop_duplicates(subset=["raw_position_label"])[
         ["raw_position_label", "x_um", "y_um"]

@@ -1,0 +1,417 @@
+---
+title: "Foxj1a sensitivity on the global cell-type graph"
+output: html_document
+---
+
+This figure asks a simple question: are the cell types that normally express
+more `foxj1a` also the cell types that lose more motile-cilia activity after
+foxj1a perturbation?
+
+We keep the two measurements separate:
+
+- node color shows normal foxj1a expression;
+- node size shows motile-cilia score loss after perturbation;
+- a black outline marks cell types passing BH FDR.
+
+The concurrence helper in `0_shared/effect_concurrence.R` is intentionally not
+used here. It compares two effects measured in the same units. Baseline gene
+expression and a module-score change are different quantities, so combining
+them into one number would be difficult to interpret.
+
+```{r setup, message=FALSE, warning=FALSE}
+library(igraph)
+library(platt)
+library(dplyr)
+library(tibble)
+library(readr)
+library(ggplot2)
+library(ggrepel)
+library(stringr)
+library(patchwork)
+
+knitr::opts_chunk$set(
+  dev = "ragg_png",
+  fig.bg = "white"
+)
+
+PROJECT_DIR <- paste0(
+  "/net/trapnell/vol1/home/mdcolon/proj/morphseq/results/",
+  "mcolon/20260727_gene14_clean"
+)
+HERE <- file.path(
+  PROJECT_DIR,
+  "cilia_gene_module",
+  "foxj1a_48hpf_inspection"
+)
+DATA_DIR <- file.path(HERE, "data")
+FIGURE_DIR <- file.path(HERE, "figures")
+
+CELLTYPE_RESULTS_FILE <- file.path(
+  DATA_DIR,
+  "celltype_baseline_and_motile_response.tsv"
+)
+CELLTYPE_LINEAGE_FILE <- file.path(
+  PROJECT_DIR,
+  "0_shared",
+  "cell_type_lineage.tsv"
+)
+STATE_GRAPH_FILE <- paste0(
+  "/net/seahub_zfish/vol1/data/graphs/",
+  "v3.1.0/combined_graph.rds"
+)
+
+dir.create(FIGURE_DIR, recursive = TRUE, showWarnings = FALSE)
+```
+
+## Step 1: Join the measurements to the global graph
+
+Most graph nodes are not present in this 48-hpf contrast. We keep those nodes
+and draw them in light gray so the developmental map stays intact.
+
+```{r prepare-graph}
+celltype_results <- readr::read_tsv(
+  CELLTYPE_RESULTS_FILE,
+  show_col_types = FALSE
+) |>
+  dplyr::mutate(
+    motile_score_loss = pmax(-.data$score_difference, 0)
+  )
+
+celltype_lineage <- readr::read_tsv(
+  CELLTYPE_LINEAGE_FILE,
+  show_col_types = FALSE
+)
+
+state_graph <- readRDS(STATE_GRAPH_FILE)
+
+# Platt's layout keeps related cell types together in the familiar atlas map.
+node_metadata <- tibble::tibble(
+  id = igraph::V(state_graph)$name
+) |>
+  dplyr::left_join(
+    dplyr::select(celltype_lineage, cell_type, sulston_group),
+    by = c("id" = "cell_type")
+  ) |>
+  dplyr::mutate(
+    group_nodes_by = dplyr::coalesce(.data$sulston_group, "Unknown")
+  )
+
+graph_layout <- platt:::layout_state_graph(
+  G = state_graph,
+  node_metadata = node_metadata
+)
+
+graph_nodes <- as.data.frame(graph_layout$gvizl_coords)
+names(graph_nodes) <- c("x", "y")
+graph_nodes <- graph_nodes |>
+  tibble::rownames_to_column("cell_type") |>
+  dplyr::left_join(celltype_results, by = "cell_type") |>
+  dplyr::mutate(
+    # Untested atlas nodes stay visible as small gray reference points.
+    motile_score_loss_for_plot = dplyr::coalesce(.data$motile_score_loss, 0),
+    fdr_outline_for_plot = dplyr::coalesce(.data$is_fdr_significant, FALSE)
+  )
+
+graph_edges <- graph_layout$bezier_df
+
+readr::write_tsv(
+  graph_nodes,
+  file.path(DATA_DIR, "global_graph_node_metrics.tsv")
+)
+
+results_missing_from_graph <- celltype_results |>
+  dplyr::anti_join(graph_nodes, by = "cell_type")
+readr::write_tsv(
+  results_missing_from_graph,
+  file.path(DATA_DIR, "celltype_results_missing_from_global_graph.tsv")
+)
+
+message(
+  sum(!is.na(graph_nodes$score_difference)),
+  " tested cell types mapped onto ",
+  nrow(graph_nodes),
+  " global graph nodes."
+)
+```
+
+## Step 2: Measure the relationship
+
+The all-cell-type correlation answers the global question. The top-ten result
+shows whether the relationship is concentrated in cell types that normally
+express foxj1a, rather than spread uniformly across the atlas.
+
+```{r correlations}
+tested_nodes <- graph_nodes |>
+  dplyr::filter(
+    !is.na(.data$control_foxj1a_expression),
+    !is.na(.data$score_difference)
+  ) |>
+  dplyr::arrange(dplyr::desc(.data$control_foxj1a_expression))
+
+top_ten_nodes <- tested_nodes |>
+  dplyr::slice_head(n = 10)
+
+correlation_summary <- tibble::tibble(
+  cell_types = c("all tested", "top 10 foxj1a-expressing"),
+  n_cell_types = c(nrow(tested_nodes), nrow(top_ten_nodes)),
+  pearson = c(
+    cor(
+      tested_nodes$control_foxj1a_expression,
+      -tested_nodes$score_difference,
+      method = "pearson"
+    ),
+    cor(
+      top_ten_nodes$control_foxj1a_expression,
+      -top_ten_nodes$score_difference,
+      method = "pearson"
+    )
+  ),
+  spearman = c(
+    cor(
+      tested_nodes$control_foxj1a_expression,
+      -tested_nodes$score_difference,
+      method = "spearman"
+    ),
+    cor(
+      top_ten_nodes$control_foxj1a_expression,
+      -top_ten_nodes$score_difference,
+      method = "spearman"
+    )
+  )
+)
+
+readr::write_tsv(
+  correlation_summary,
+  file.path(DATA_DIR, "global_graph_expression_loss_correlations.tsv")
+)
+
+correlation_summary
+```
+
+## Step 3: Draw the global map
+
+The first two panels show each measurement alone. The last panel overlays them:
+large, brightly colored nodes are the cell types that both express foxj1a and
+lose motile-cilia activity after perturbation. Color scales are capped at the
+95th percentile so a few outliers do not flatten the rest of the graph. Node
+size uses a looser 97.5th-percentile cap. The underlying values are not changed.
+
+```{r draw-graph, fig.width=24, fig.height=9}
+edge_layer <- geom_path(
+  data = graph_edges,
+  aes(x = .data$x, y = .data$y, group = .data$edge_name),
+  color = "grey84",
+  linewidth = 0.18,
+  lineend = "round"
+)
+
+graph_theme <- theme_void(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(size = 10),
+    legend.position = "bottom",
+    legend.title = element_text(size = 9),
+    legend.text = element_text(size = 8),
+    plot.margin = margin(8, 8, 8, 8)
+  )
+
+# Robust display limits: only the plotting scales are capped. The node table
+# written above always contains the original, uncapped measurements.
+expression_color_limit <- stats::quantile(
+  graph_nodes$control_foxj1a_expression,
+  0.95,
+  na.rm = TRUE
+)
+change_color_limit <- stats::quantile(
+  abs(graph_nodes$score_difference),
+  0.95,
+  na.rm = TRUE
+)
+loss_size_limit <- stats::quantile(
+  graph_nodes$motile_score_loss,
+  0.975,
+  na.rm = TRUE
+)
+graph_nodes <- graph_nodes |>
+  dplyr::mutate(
+    motile_score_loss_capped = pmin(
+      .data$motile_score_loss_for_plot,
+      .env$loss_size_limit
+    )
+  )
+
+expression_graph <- ggplot() +
+  edge_layer +
+  geom_point(
+    data = graph_nodes,
+    aes(x = .data$x, y = .data$y, fill = .data$control_foxj1a_expression),
+    shape = 21,
+    size = 2.7,
+    stroke = 0.2,
+    color = "grey35"
+  ) +
+  scale_fill_viridis_c(
+    option = "C",
+    limits = c(0, expression_color_limit),
+    oob = scales::squish,
+    breaks = scales::breaks_pretty(n = 4),
+    labels = scales::label_number(accuracy = 0.001),
+    na.value = "grey90",
+    name = "mean control foxj1a (95th-pct cap)",
+    guide = guide_colorbar(
+      title.position = "top",
+      barwidth = grid::unit(2.8, "in"),
+      barheight = grid::unit(0.15, "in")
+    )
+  ) +
+  labs(
+    title = "A. Normal foxj1a expression",
+    subtitle = "Robust color scale; gray nodes were not tested at 48 hpf"
+  ) +
+  graph_theme
+
+change_graph <- ggplot() +
+  edge_layer +
+  geom_point(
+    data = graph_nodes,
+    aes(x = .data$x, y = .data$y, fill = .data$score_difference),
+    shape = 21,
+    size = 2.7,
+    stroke = 0.2,
+    color = "grey35"
+  ) +
+  scale_fill_gradient2(
+    low = "#3B6FB6",
+    mid = "white",
+    high = "#D95F59",
+    midpoint = 0,
+    limits = c(-change_color_limit, change_color_limit),
+    oob = scales::squish,
+    breaks = scales::breaks_pretty(n = 4),
+    labels = scales::label_number(accuracy = 0.001),
+    na.value = "grey90",
+    name = "motile-score change (95th-pct cap)",
+    guide = guide_colorbar(
+      title.position = "top",
+      barwidth = grid::unit(2.8, "in"),
+      barheight = grid::unit(0.15, "in")
+    )
+  ) +
+  labs(
+    title = "B. Motile-cilia response",
+    subtitle = "Blue means lower activity; robust color scale"
+  ) +
+  graph_theme
+
+# Label the strongest linked responses, plus the ependymoglial result that
+# extends the radial-glia pattern. Keeping this list explicit makes it auditable.
+cell_types_to_label <- c(
+  "glial cell, floor plate (hpgd+)",
+  "ciliated olfactory receptor neuron, olfactory organ",
+  "radial glial cell, spinal cord",
+  "radial glial cell, midbrain",
+  "endodermal cell, intestinal bulb",
+  "ependymoglial cell, central nervous system"
+)
+
+overlay_labels <- graph_nodes |>
+  dplyr::filter(.data$cell_type %in% cell_types_to_label)
+
+overlay_graph <- ggplot() +
+  edge_layer +
+  geom_point(
+    data = graph_nodes,
+    aes(
+      x = .data$x,
+      y = .data$y,
+      fill = .data$control_foxj1a_expression,
+      size = .data$motile_score_loss_capped,
+      color = .data$fdr_outline_for_plot
+    ),
+    shape = 21,
+    stroke = 0.7
+  ) +
+  ggrepel::geom_text_repel(
+    data = overlay_labels,
+    aes(x = .data$x, y = .data$y, label = .data$cell_type),
+    size = 2.5,
+    max.overlaps = Inf,
+    min.segment.length = 0,
+    box.padding = 0.6,
+    point.padding = 0.25,
+    force = 8,
+    seed = 1
+  ) +
+  scale_fill_viridis_c(
+    option = "C",
+    limits = c(0, expression_color_limit),
+    oob = scales::squish,
+    breaks = scales::breaks_pretty(n = 4),
+    labels = scales::label_number(accuracy = 0.001),
+    na.value = "grey90",
+    name = "mean control foxj1a (95th-pct cap)",
+    guide = guide_colorbar(
+      title.position = "top",
+      barwidth = grid::unit(2.8, "in"),
+      barheight = grid::unit(0.15, "in"),
+      order = 1
+    )
+  ) +
+  scale_size_continuous(
+    # Match Panel A at zero loss; module loss can only enlarge a node.
+    range = c(2.7, 8),
+    limits = c(0, loss_size_limit),
+    breaks = c(0, loss_size_limit / 2, loss_size_limit),
+    labels = scales::label_number(accuracy = 0.001),
+    name = "motile-score loss (97.5th-pct cap)",
+    guide = guide_legend(
+      title.position = "top",
+      nrow = 1,
+      order = 2
+    )
+  ) +
+  scale_color_manual(
+    values = c(`TRUE` = "black", `FALSE` = "grey45"),
+    na.value = "grey75",
+    guide = "none"
+  ) +
+  labs(
+    title = "C. Foxj1a-linked sensitivity",
+    subtitle = paste0(
+      "Expression versus loss across tested nodes: Pearson r = ",
+      sprintf("%.2f", correlation_summary$pearson[1]),
+      "; Spearman rho = ",
+      sprintf("%.2f", correlation_summary$spearman[1]),
+      ". Top 10: r = ",
+      sprintf("%.2f", correlation_summary$pearson[2]),
+      ", rho = ",
+      sprintf("%.2f", correlation_summary$spearman[2]),
+      ". Black outline = BH q < 0.05."
+    )
+  ) +
+  graph_theme +
+  theme(legend.box = "vertical")
+
+global_graph_figure <- expression_graph | change_graph | overlay_graph
+
+ggsave(
+  file.path(FIGURE_DIR, "09_foxj1a_global_celltype_graph.pdf"),
+  global_graph_figure,
+  width = 24,
+  height = 9,
+  limitsize = FALSE
+)
+ggsave(
+  file.path(FIGURE_DIR, "09_foxj1a_global_celltype_graph.png"),
+  global_graph_figure,
+  device = ragg::agg_png,
+  width = 24,
+  height = 9,
+  units = "in",
+  dpi = 200,
+  bg = "white",
+  limitsize = FALSE
+)
+
+global_graph_figure
+```

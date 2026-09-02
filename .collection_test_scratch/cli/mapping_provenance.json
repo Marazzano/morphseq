@@ -1,0 +1,18 @@
+{
+  "experiment_id": "chem28c_coll_plate01",
+  "microscope": "Keyence",
+  "mapping_method": "collection_per_source_map",
+  "n_sources": 2,
+  "n_rows": 4,
+  "n_wells": 2,
+  "sources": [
+    {
+      "source_file": "20250622_plate01_t28hpf",
+      "time_index": 0
+    },
+    {
+      "source_file": "20250623_plate01_t52hpf",
+      "time_index": 1
+    }
+  ]
+}

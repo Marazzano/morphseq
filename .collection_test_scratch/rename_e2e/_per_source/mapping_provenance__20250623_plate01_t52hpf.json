@@ -1,0 +1,18 @@
+{
+  "experiment_id": "20250623_plate01_t52hpf",
+  "microscope": "Keyence",
+  "mapping_method": "keyence_xy_well_marker",
+  "n_positions": 2,
+  "n_wells": 2,
+  "mapping_summary": {
+    "total_positions": 2,
+    "total_wells": 2,
+    "wells_with_multiple_positions": 0,
+    "min_position_index": 1,
+    "max_position_index": 2
+  },
+  "warnings": null,
+  "source_files": {
+    "scope_metadata": ".collection_test_scratch/rename_e2e/_per_source/scope_metadata__20250623_plate01_t52hpf.csv"
+  }
+}

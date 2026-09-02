@@ -11,6 +11,7 @@ from __future__ import annotations
 import pandas as pd
 
 from data_pipeline.object_extraction.segmentation.physical_embryo_registry.physical_embryo_registry_contract import (
+    MERGE_POLICY_VALUES,
     PHYSICAL_EMBRYO_REGISTRY_REQUIRED_COLUMNS,
 )
 from data_pipeline.shared.identifiers import (
@@ -39,7 +40,14 @@ def validate_physical_embryo_registry(physical_embryo_registry: pd.DataFrame) ->
       (round-trip; delegates the string check to validate_physical_embryo_id);
     - track_id non-null; maps to exactly one physical_embryo_id within a well_id;
     - no duplicate (well_id, local_embryo_index); no duplicate (well_id, track_id);
-    - track_id_source non-empty.
+    - track_id_source non-empty;
+    - merge_policy is one of the three EmbryoMergePolicy values
+      ("normal"/"bridged"/"fractured");
+    - n_sources is an integer >= 1.
+
+    A FRACTURED animal legally exists at a single time_index (its snip chain is
+    single-timepoint) — the registry makes no full-timecourse claim, so no check here
+    rejects that layout (EXPERIMENT_GROUP_PLATE_MODEL.md "Known layout consequence").
     """
     _require_columns(physical_embryo_registry, PHYSICAL_EMBRYO_REGISTRY_REQUIRED_COLUMNS, "physical_embryo_registry")
 
@@ -65,6 +73,19 @@ def validate_physical_embryo_registry(physical_embryo_registry: pd.DataFrame) ->
         raise ValueError("physical_embryo_registry track_id must be non-null (the resolved tracking identity)")
     if df["track_id_source"].astype(str).str.len().eq(0).any():
         raise ValueError("physical_embryo_registry track_id_source must be non-empty")
+
+    # Payload: merge_policy is a known EmbryoMergePolicy value; n_sources is a positive int.
+    bad_policy = set(df["merge_policy"].astype(str)) - MERGE_POLICY_VALUES
+    if bad_policy:
+        raise ValueError(
+            "physical_embryo_registry merge_policy must be one of "
+            f"{sorted(MERGE_POLICY_VALUES)}; got unexpected value(s): {sorted(bad_policy)}"
+        )
+    n_sources = pd.to_numeric(df["n_sources"], errors="coerce")
+    if n_sources.isna().any() or (n_sources != n_sources.round()).any():
+        raise ValueError("physical_embryo_registry n_sources must be an integer")
+    if (n_sources < 1).any():
+        raise ValueError("physical_embryo_registry n_sources must be >= 1 (a well has at least one acquisition)")
 
     # Round-trip: physical_embryo_id is the constructor-minted id for (well_id, local_embryo_index),
     # and its embedded well_id agrees with the well_id column.

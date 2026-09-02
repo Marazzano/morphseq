@@ -87,7 +87,15 @@ def _snip_rows(tmp_path, *, mask, planes):
                 "image_product_type": "z_stack",
                 "projection_method": pd.NA,
                 "image_path": str(path),
-                "image_micrometers_per_pixel": 15.0889,
+                # Required by _resample_to_qc_resolution once config.qc_micrometers_per_pixel is
+                # set (it is, by default). Pinned EQUAL to that QC target so resampling is a
+                # deliberate no-op and these metric assertions stay about motion, not rescaling.
+                #
+                # Derived rather than written as the literal 15.0889 (which is what the default
+                # happens to be today): the assertions depend on this being the SAME value as the
+                # QC target, not on it being any particular number, so a change to the default
+                # must not silently turn the no-op into a real rescale.
+                "image_micrometers_per_pixel": resolve_config().qc_micrometers_per_pixel,
             }
         )
     return pd.DataFrame(inv_rows), pd.DataFrame(mask_rows), pd.DataFrame(fi_rows)

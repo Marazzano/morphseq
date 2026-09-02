@@ -1,0 +1,6 @@
+well_id,time_index,tile_index,dy,dx,n_tiles_placed
+chem28c_coll_plate01_A01,1,0,0.4732666015625,-679.6741790771484,2
+chem28c_coll_plate01_A01,1,1,0.0,0.0,2
+chem28c_coll_plate01_A02,1,0,-0.13037109375,-679.3032531738281,3
+chem28c_coll_plate01_A02,1,1,0.0,0.0,3
+chem28c_coll_plate01_A02,1,2,-0.0632476806640625,677.1647033691406,3

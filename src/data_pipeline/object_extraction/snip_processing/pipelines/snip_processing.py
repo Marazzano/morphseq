@@ -69,7 +69,7 @@ def run_snip_processing_well(
 
     frame_df = pd.read_csv(
         frame_contract_csv,
-        usecols=["image_id", "image_micrometers_per_pixel", "well_index", "well_id", "time_int"],
+        usecols=["image_id", "image_micrometers_per_pixel", "well_index", "well_id", "time_index"],
     )
     frame_df["image_id"] = frame_df["image_id"].astype(str)
     tracking_df["image_id"] = tracking_df["image_id"].astype(str)
@@ -147,7 +147,7 @@ def run_snip_processing_well(
                     "well_index": row.get("well_index"),
                     "image_id": str(row["image_id"]),
                     "embryo_id": str(row["embryo_id"]),
-                    "time_int": int(row["time_int"]),
+                    "time_index": int(row["time_index"]),
                     "image_path": str(row["image_path"]),
                     "exported_mask_path": str(row["exported_mask_path"]),
                     "yolk_mask_path": None,

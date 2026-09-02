@@ -31,6 +31,13 @@ def _frame_masks_per_well_csv(experiment: str, *, well_id: str):
 def _frame_masks_per_well_validated(experiment: str, *, well_id: str):
     return rule_validated(FRAME_MASKS_STEP, "frame_masks", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
+def _registry_collection_provenance(experiment: str):
+    # The DECLARED collection fact (experiment-grain). OWNS the n_sources merge count that selects
+    # the EmbryoMergePolicy; every experiment declares one (a single experiment is a collection of
+    # ONE source), so the count is always available at its source.
+    return rule_artifact("collection_provenance", "provenance", experiment, path_mode=PATH_MODE_EXPERIMENT)
+
+
 def _registry_artifact(experiment: str, *, path_mode: str, well_id: str | None = None):
     return rule_artifact(PHYSICAL_EMBRYO_REGISTRY_STEP, PHYSICAL_EMBRYO_REGISTRY_ARTIFACT, experiment, path_mode=path_mode, well_id=well_id)
 
@@ -46,7 +53,7 @@ def _registry_validated_for_run(wc):
 
 
 rule build_physical_embryo_registry_for_well:
-    """Mint one per-well registry shard from the per-well frame_masks shard.
+    """Mint one per-well registry shard from the per-well frame_masks shard + collection provenance.
 
     One job per well (cheap CPU: drop-duplicates + the track_id -> physical_embryo_id mint chain).
     The task verb validates the shard before writing.
@@ -58,6 +65,11 @@ rule build_physical_embryo_registry_for_well:
         # its contract.
         frame_masks=str(_frame_masks_per_well_csv("{experiment}", well_id="{well_id}")),
         frame_masks_validated=str(_frame_masks_per_well_validated("{experiment}", well_id="{well_id}")),
+        # The collection provenance artifact OWNS the n_sources merge count (len(sources)) that
+        # selects the EmbryoMergePolicy (NORMAL / BRIDGE / FRACTURE). Read from its owner rather
+        # than from a per-frame column: n_sources is an experiment-grain constant, so carrying it
+        # on every frame row made frame_inventory a courier for a fact it does not own.
+        collection_provenance=str(_registry_collection_provenance("{experiment}")),
     output:
         registry=str(_registry_artifact(
             "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
@@ -66,6 +78,7 @@ rule build_physical_embryo_registry_for_well:
         """
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks build-physical-embryo-registry \
           --frame-masks-csv "{input.frame_masks}" \
+          --collection-provenance-json "{input.collection_provenance}" \
           --output-csv "{output.registry}"
         """
 

@@ -14,10 +14,10 @@ def _stage_validated(experiment, *, path_mode, well_id=None):
     return rule_validated(STAGE_PREDICTIONS_STEP, "stage_predictions", experiment, path_mode=path_mode, well_id=well_id)
 
 def _stage_snip_inventory(experiment, *, well_id):
-    return rule_artifact("snip_inventory", "snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
+    return rule_artifact("snip_inventory", "legacy_default_snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _stage_snip_inventory_validated(experiment, *, well_id):
-    return rule_validated("snip_inventory", "snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
+    return rule_validated("snip_inventory", "legacy_default_snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _stage_frame_inventory(experiment, *, well_id):
     return rule_artifact("frame_inventory", "inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
@@ -27,6 +27,11 @@ def _stage_registry(experiment, *, well_id):
 
 def _stage_registry_validated(experiment, *, well_id):
     return rule_validated("physical_embryo_registry", "physical_embryo_registry", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
+
+def _stage_collection_provenance(experiment):
+    # The DECLARED collection fact (experiment-grain). compute branches on its is_collection:
+    # a collection reads start_age_hpf by time_index; a single experiment stays byte-identical.
+    return rule_artifact("collection_provenance", "provenance", experiment, path_mode=PATH_MODE_EXPERIMENT)
 
 
 def _stage_artifacts_for_run(wc):
@@ -44,6 +49,8 @@ rule build_stage_predictions_for_well:
         plate_metadata=PLATE_METADATA_CSV,
         physical_embryo_registry=str(_stage_registry("{experiment}", well_id="{well_id}")),
         physical_embryo_registry_validated=str(_stage_registry_validated("{experiment}", well_id="{well_id}")),
+        collection_provenance=str(_stage_collection_provenance("{experiment}")),
+        acquisition_inventory=SCOPE_ACQUISITION_INVENTORY_CSV,
     output:
         stage_predictions=str(_stage_artifact(
             "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
@@ -55,6 +62,8 @@ rule build_stage_predictions_for_well:
           --frame-inventory-csv "{input.frame_inventory}" \
           --plate-metadata-csv "{input.plate_metadata}" \
           --physical-embryo-registry-csv "{input.physical_embryo_registry}" \
+          --collection-provenance-json "{input.collection_provenance}" \
+          --acquisition-inventory-csv "{input.acquisition_inventory}" \
           --output-csv "{output.stage_predictions}"
         """
 

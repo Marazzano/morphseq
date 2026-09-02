@@ -15,7 +15,7 @@ try:
 except Exception:  # pragma: no cover
     cv2 = None
 
-from .transforms import GridTransform, TransformChain
+from image_geometry import GridTransform, TransformChain, affine_step
 from .types import RegisterResult
 
 
@@ -137,13 +137,13 @@ def register_to_fixed(
             dtype=np.float64,
         )
         transforms.append(
-            GridTransform(
+            affine_step(
                 name="pivot_rotate",
                 affine_2x3=M,
                 in_shape_yx=(h, w),
                 out_shape_yx=(h, w),
                 interp="nearest",
-                params={"angle_deg": float(angle_out), "pivot_yx": (float(cy), float(cx)), "affine_convention": "opencv_xy"},
+                params={"angle_deg": float(angle_out), "pivot_yx": (float(cy), float(cx))},
             )
         )
 
@@ -153,13 +153,13 @@ def register_to_fixed(
         translate_dyx = (float(src_pivot[0] - tgt_pivot[0]), float(src_pivot[1] - tgt_pivot[1]))
         M_t = np.array([[1.0, 0.0, float(translate_dyx[1])], [0.0, 1.0, float(translate_dyx[0])]], dtype=np.float64)
         transforms.append(
-            GridTransform(
+            affine_step(
                 name="translate",
                 affine_2x3=M_t,
                 in_shape_yx=(h, w),
                 out_shape_yx=(h, w),
                 interp="nearest",
-                params={"translate_dyx": translate_dyx, "affine_convention": "opencv_xy"},
+                params={"translate_dyx": translate_dyx},
             )
         )
 

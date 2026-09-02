@@ -17,10 +17,10 @@ def _mg_validated(experiment, *, path_mode, well_id=None):
     return rule_validated(MASK_GEOMETRY_STEP, "mask_geometry", experiment, path_mode=path_mode, well_id=well_id)
 
 def _mg_snip_inventory(experiment, *, well_id):
-    return rule_artifact("snip_inventory", "snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
+    return rule_artifact("snip_inventory", "legacy_default_snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _mg_snip_inventory_validated(experiment, *, well_id):
-    return rule_validated("snip_inventory", "snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
+    return rule_validated("snip_inventory", "legacy_default_snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _mg_frame_masks(experiment, *, well_id):
     return rule_artifact("frame_masks", "frame_masks", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)

@@ -62,14 +62,31 @@ def validate_position_well_mapping(
             f"First offenders: {sample}"
         )
 
-    duplicate_position = checked.duplicated(
-        subset=["experiment_id", "position_index"], keep=False
-    )
+    # Uniqueness is per SOURCE, not per frame. A collection plate concatenates one mapping block per
+    # raw source, so the same physical position_index legitimately recurs once per source — what must
+    # never repeat is (position_index) WITHIN one source. `source_ordinal` is that key.
+    #
+    # It is deliberately NOT `time_index`: the mapping is a per-SOURCE fact (which well is at which
+    # stage position for that acquisition), and one source can span MANY merged time_index values.
+    # Keying on time_index would force one mapping row per frame and reintroduce the
+    # source-vs-frame conflation this design removes.
+    #
+    # Gated on the column being present, so a single (non-collection) experiment — which has one
+    # implicit source and no source_ordinal column — validates exactly as before.
+    uniqueness_subset = ["experiment_id", "position_index"]
+    if "source_ordinal" in checked.columns:
+        checked["source_ordinal"] = pd.to_numeric(
+            checked["source_ordinal"], errors="raise"
+        ).astype(int)
+        uniqueness_subset.append("source_ordinal")
+
+    duplicate_position = checked.duplicated(subset=uniqueness_subset, keep=False)
     if duplicate_position.any():
+        report_cols = uniqueness_subset + ["well_index", "well_id"]
         sample = checked.loc[
-            duplicate_position, ["experiment_id", "position_index", "well_index", "well_id"]
+            duplicate_position, report_cols
         ].head(10).to_dict(orient="records")
         raise ValueError(
-            f"[{scope_label}] duplicate experiment_id + position_index rows. "
+            f"[{scope_label}] duplicate {' + '.join(uniqueness_subset)} rows. "
             f"First offenders: {sample}"
         )

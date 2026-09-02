@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+#$ -N pbx_full_plate
+#$ -q trapnell-login.q
+#$ -l gpgpu=TRUE,cuda=1
+#$ -l mfree=64G
+#$ -l h_rt=24:00:00
+#$ -j y
+#$ -pe serial 4
+#$ -cwd
+#$ -V
+#$ -o logs
+#$ -e logs
+
+# Two-product smoke: raw ND2 -> BF + RFP snips, through the geometry gate.
+#
+# THE POINT. Every layer beneath this is unit-tested and the DAG shape is proven by dry run, but
+# nothing has rendered a real RFP snip. This is the first run where:
+#   - snip_geometry derives ONE transform per embryo-time from BF masks
+#   - TWO render jobs resolve that shared recipe onto their own product grids
+#   - the RFP product comes back uint16 with dosage intact
+#
+# TARGET IS THE MERGED SNIP INVENTORY, not `through_line`. through_line runs to snip_qc, which
+# requires BF__z_stack for its motion_blur flag -- a product this config does not declare, so the
+# DAG refused to build (correctly: "No QC flag is removed automatically"). QC passing is a separate
+# claim from "RFP snips render with dosage intact", so the target stops at the snip layer.
+#
+# Experiment: 20260624_2x_td_bf_pbx_coll_plate01 -- 96 positions x 3 timepoints, C=2
+# (BF-no bin + tdtomato -> RFP), uint16 native. The tdtomato -> RFP mapping already exists in the
+# YX1 channel map, so no new vocabulary is needed.
+#
+# NOT the legacy run_experiment_manager_qsub.sh: that drives
+# src.run_morphseq_pipeline.cli (the build0N chain). This drives the Snakemake workflow, which is
+# where the snip product fanout lives. There is no cluster profile in this repo, so Snakemake runs
+# locally on this one node rather than submitting its own jobs.
+
+set -euo pipefail
+
+REPO_ROOT="/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt"
+ENV_NAME="segmentation_grounded_sam"
+CONDA_BASE="/net/trapnell/vol1/home/mdcolon/software/miniconda3"
+PYTHON_EXEC="${CONDA_BASE}/envs/${ENV_NAME}/bin/python"
+
+WORKFLOW_DIR="${REPO_ROOT}/src/data_pipeline/pipeline_orchestrator"
+CONFIG="${CONFIG:-${REPO_ROOT}/config_pbx_two_product.yaml}"
+
+# ROOTS COME FROM A DEDICATED env.yaml, swapped in for the run and restored after.
+# env.yaml is gitignored and machine-specific -- this job must not leave it modified, and must not
+# depend on whatever it happened to contain. Input is SYMLINKS to the real raw tree; output goes to
+# disposable scratch, so the shared pipeline tree is untouched on this first-ever run of the path.
+SMOKE_ROOT="${REPO_ROOT}/.pbx_smoke"
+LIVE_ENV="${WORKFLOW_DIR}/env.yaml"
+ENV_BACKUP="$(mktemp)"
+
+restore_env() {
+  if [[ -s "${ENV_BACKUP}" ]]; then
+    cp "${ENV_BACKUP}" "${LIVE_ENV}"
+    echo "[pbx-smoke] env.yaml restored"
+  fi
+  rm -f "${ENV_BACKUP}"
+}
+# Restore on ANY exit -- success, failure, or SGE kill. A job that dies leaving env.yaml pointing at
+# scratch would silently redirect the next unrelated run.
+trap restore_env EXIT INT TERM
+
+echo "[pbx-smoke] JOB_ID=${JOB_ID:-interactive}"
+echo "[pbx-smoke] repo   : ${REPO_ROOT}"
+echo "[pbx-smoke] config : ${CONFIG}"
+
+mkdir -p logs
+
+[[ -x "${PYTHON_EXEC}" ]] || { echo "[pbx-smoke] ERROR: no interpreter at ${PYTHON_EXEC}" >&2; exit 2; }
+[[ -f "${CONFIG}" ]]      || { echo "[pbx-smoke] ERROR: no config at ${CONFIG}" >&2; exit 2; }
+
+[[ -f "${SMOKE_ROOT}/env.yaml" ]] || { echo "[pbx-smoke] ERROR: no ${SMOKE_ROOT}/env.yaml" >&2; exit 2; }
+# CONDITIONAL: env.yaml is gitignored and may legitimately not exist (a manual run that cleaned up
+# after itself leaves none). Under `set -e` an unconditional cp here kills the job before a single
+# rule runs -- which is exactly how the first full-plate submission died. No env.yaml to back up
+# simply means there is nothing to restore afterwards.
+if [[ -f "${LIVE_ENV}" ]]; then
+  cp "${LIVE_ENV}" "${ENV_BACKUP}"
+fi
+cp "${SMOKE_ROOT}/env.yaml" "${LIVE_ENV}"
+echo "[pbx-smoke] env.yaml -> smoke roots (${SMOKE_ROOT})"
+
+export PYTHONPATH="${REPO_ROOT}/src:${PYTHONPATH:-}"
+cd "${REPO_ROOT}"
+
+# --keep-going is REQUIRED for a 96-well run. The DAG is per-well parallel, but Snakemake's DEFAULT
+# is to stop SCHEDULING new jobs the moment any job fails ("Exiting because a job execution
+# failed") -- it drains what is in flight and quits. That is why one bad well (B03) ended the run at
+# 812/1197 with ~70 wells never even attempted: nothing blocked them, the scheduler simply stopped
+# feeding the DAG. Per-well independence buys nothing without this flag.
+#
+# --resources gpu=1 is REQUIRED, not decorative. frame_masks declares gpu=1 so SAM2 holds the card
+# for its duration, but Snakemake only enforces that if the budget is also passed on the CLI --
+# without it, --cores 8 would start four SAM2 jobs on one GPU.
+# CLEAR A STALE LOCK FIRST. A killed job (qdel, SGE timeout, OOM) leaves Snakemake's directory
+# lock behind, and the NEXT submission then dies instantly with LockException having run zero
+# rules -- which is exactly how 23443514 was lost. This is safe here because the qsub owns the
+# whole run: if another snakemake were genuinely live on this directory, it would be this
+# script's own earlier invocation, which SGE has already reaped.
+"${PYTHON_EXEC}" -m snakemake \
+  --snakefile "${WORKFLOW_DIR}/Snakefile" \
+  --profile "${WORKFLOW_DIR}/profiles/default" \
+  --configfile "${CONFIG}" \
+  --cores 1 --unlock || true
+
+"${PYTHON_EXEC}" -m snakemake \
+  --snakefile "${WORKFLOW_DIR}/Snakefile" \
+  --profile "${WORKFLOW_DIR}/profiles/default" \
+  --configfile "${CONFIG}" \
+  --cores 8 \
+  "${TARGET:-${SMOKE_ROOT}/out/object_extraction/20260624_2x_td_bf_pbx_coll_plate01/channel_intensity/20260624_2x_td_bf_pbx_coll_plate01_channel_intensity.csv}"
+
+echo "[pbx-smoke] Done."
+
+# Dry run first (fast, no GPU needed):
+#   python -m snakemake --snakefile src/data_pipeline/pipeline_orchestrator/Snakefile \
+#     --configfile config_pbx_two_product.yaml -n through_line
+#
+# Submit:
+#   qsub run_pbx_two_product_smoke.qsub
+#
+# Scope to fewer wells by adding `wells: ["...A01", "...A02"]` to the config.

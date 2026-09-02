@@ -1,0 +1,61 @@
+=== resolve + Step 0 (build collection provenance) ===
+resolved: ['20260624_2x_td_bf_pbx_coll_plate01']
+  PASS  ONE plate id resolved   [['20260624_2x_td_bf_pbx_coll_plate01']]
+  PASS  id ends _coll_plate01   [20260624_2x_td_bf_pbx_coll_plate01]
+  PASS  3 sources, ordinals 0..2   [[0, 1, 2]]
+  PASS  ages parsed t33/t52/t77   [{'0': 33, '1': 52, '2': 77}]
+=== Step 1 (scope union + acquisition inventory) ===
+scope rows=576 cols=19
+  PASS  scope has stage geometry (YX1 needs x/y)
+  PASS  scope has channel token
+  PASS  3 source ordinals present
+  PASS  raw_time_index preserved
+  PASS  YX1 scope has NO well_id at ingest
+distinct stage positions per source:
+source_ordinal
+0    96
+1    96
+2    96
+  PASS  every source contributes rows   [{0: 192, 1: 192, 2: 192}]
+  PASS  sources contribute EQUAL row counts (same plate, same layout)   [{0: 192, 1: 192, 2: 192}]
+inventory rows=5184
+=== keystone: cross-artifact agreement ===
+scope  ordinal -> (raw_min,raw_max, merged_min,merged_max): {0: (0, 0, 0, 0), 1: (0, 0, 1, 1), 2: (0, 0, 2, 2)}
+inv    ordinal -> (raw_min,raw_max, merged_min,merged_max): {0: (0, 0, 0, 0), 1: (0, 0, 1, 1), 2: (0, 0, 2, 2)}
+  PASS  (ordinal, raw_time_index) -> time_index IDENTICAL
+  PASS  same source ordinals
+  PASS  each source owns a contiguous merged block   [{0: (0, 0, 0, 0), 1: (0, 0, 1, 1), 2: (0, 0, 2, 2)}]
+  PASS  blocks are disjoint and consecutive
+  PASS  every source restarts its OWN numbering at 0
+=== Step 2 (per-source position mapping) ===
+mapping rows=288
+                         experiment_id  position_index well_index                                 well_id mapping_method  source_ordinal                                       source_file
+0   20260624_2x_td_bf_pbx_coll_plate01               0        A01  20260624_2x_td_bf_pbx_coll_plate01_A01   xy_reference               0  20260624_pbx_flouresence_bf_pilot_plate01_t33hpf
+1   20260624_2x_td_bf_pbx_coll_plate01               1        B01  20260624_2x_td_bf_pbx_coll_plate01_B01   xy_reference               0  20260624_pbx_flouresence_bf_pilot_plate01_t33hpf
+2   20260624_2x_td_bf_pbx_coll_plate01               2        C01  20260624_2x_td_bf_pbx_coll_plate01_C01   xy_reference               0  20260624_pbx_flouresence_bf_pilot_plate01_t33hpf
+3   20260624_2x_td_bf_pbx_coll_plate01               3        D01  20260624_2x_td_bf_pbx_coll_plate01_D01   xy_reference               0  20260624_pbx_flouresence_bf_pilot_plate01_t33hpf
+4   20260624_2x_td_bf_pbx_coll_plate01               4        E01  20260624_2x_td_bf_pbx_coll_plate01_E01   xy_reference               0  20260624_pbx_flouresence_bf_pilot_plate01_t33hpf
+5   20260624_2x_td_bf_pbx_coll_plate01               5        F01  20260624_2x_td_bf_pbx_coll_plate01_F01   xy_reference               0  20260624_pbx_flouresence_bf_pilot_plate01_t33hpf
+6   20260624_2x_td_bf_pbx_coll_plate01               6        G01  20260624_2x_td_bf_pbx_coll_plate01_G01   xy_reference               0  20260624_pbx_flouresence_bf_pilot_plate01_t33hpf
+7   20260624_2x_td_bf_pbx_coll_plate01               7        H01  20260624_2x_td_bf_pbx_coll_plate01_H01   xy_reference               0  20260624_pbx_flouresence_bf_pilot_plate01_t33hpf
+8   20260624_2x_td_bf_pbx_coll_plate01               8        H02  20260624_2x_td_bf_pbx_coll_plate01_H02   xy_reference               0  20260624_pbx_flouresence_bf_pilot_plate01_t33hpf
+9   20260624_2x_td_bf_pbx_coll_plate01               9        G02  20260624_2x_td_bf_pbx_coll_plate01_G02   xy_reference               0  20260624_pbx_flouresence_bf_pilot_plate01_t33hpf
+10  20260624_2x_td_bf_pbx_coll_plate01              10        F02  20260624_2x_td_bf_pbx_coll_plate01_F02   xy_reference               0  20260624_pbx_flouresence_bf_pilot_plate01_t33hpf
+11  20260624_2x_td_bf_pbx_coll_plate01              11        E02  20260624_2x_td_bf_pbx_coll_plate01_E02   xy_reference               0  20260624_pbx_flouresence_bf_pilot_plate01_t33hpf
+  PASS  mapping has source_ordinal
+  PASS  one block per source
+  PASS  well_id PLATE-keyed
+  PASS  positions mapped in every source   [{0: 96, 1: 96, 2: 96}]
+=== Step 3 (apply — the many_to_one blocker) ===
+mapped rows=576
+  PASS  apply did not drop rows   [576 vs 576]
+  PASS  every row got a well_id
+merged timepoints: 3
+  PASS  merged timepoints preserved through apply   [3 vs 3]
+distinct wells: 96
+  PASS  wells resolved   [96]
+wells present in all 3 sources: 96/96
+  PASS  wells shared across all 3 sources   [96/96]
+
+RESULT: ALL PASS
+EXIT_CODE:0

@@ -1,0 +1,5 @@
+{
+  "mapping_method": "collection_union",
+  "source": "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_out/acquisition/chem28c_coll_plate01/ingest_metadata/scope_metadata__keyence.csv",
+  "n_rows": 96
+}

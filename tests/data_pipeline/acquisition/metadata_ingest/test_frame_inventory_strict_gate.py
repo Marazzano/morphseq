@@ -41,6 +41,7 @@ def _row(well_id: str, channel: str, time_index: int, *, src: str, w: int = 16, 
         "downsample_factor": 1,
         "downsample_method": "none",
         "jpeg_quality": pd.NA,
+        "flip_polarity": True,
     }
 
 
@@ -249,10 +250,61 @@ def _npz(path: Path, *, n_z: int = 3, w: int = 16, h: int = 16, bad_range: bool 
     return str(path)
 
 
-def _proj_row_with_provenance(well_id, time_index, *, src, fim_path):
+def _proj_row_with_provenance(well_id, time_index, *, src, fim_path, write_index_map=True):
     r = _row(well_id, "BF", time_index, src=src)
-    r["focus_index_map_path"] = fim_path
+    r["index_map_path"] = fim_path
+    r["write_index_map"] = write_index_map
     return r
+
+
+def test_max_projection_may_carry_an_index_map(tmp_path):
+    """A max projection WITH a sidecar must validate.
+
+    The old rule keyed off the method and forced index_map_path to be NA for anything that was not
+    focus_stack, which made a max index map impossible to record at all. The rule now keys off the
+    row's write_index_map flag, so any projection method may carry one.
+    """
+    img = _png(tmp_path / "imgs" / "rfp.png", w=16, h=16)
+    fim = _npz(tmp_path / "prov" / "rfp.npz")
+    rfp = _proj_row_with_provenance(A01, 0, src=img, fim_path=fim)
+    rfp["channel_id"] = "RFP"
+    rfp["projection_method"] = "max"
+    # BF must accompany it: it anchors the segmentation timeline, and all channels must share the
+    # same time_index set (rectangular).
+    bf = _proj_row_with_provenance(A01, 0, src=img, fim_path=_npz(tmp_path / "prov" / "bf.npz"))
+    shard = _write(tmp_path / f"{A01}_frame_inventory.csv", [bf, rfp])
+
+    validate_frame_inventory(shard, tmp_path / "f.validated", check_sources=True)
+    assert (tmp_path / "f.validated").exists()
+
+
+def test_projection_declining_an_index_map_validates_with_na(tmp_path):
+    """write_index_map=False with an NA path is the shipped RFP default; it must pass."""
+    img = _png(tmp_path / "imgs" / "rfp2.png", w=16, h=16)
+    rfp = _proj_row_with_provenance(A01, 0, src=img, fim_path=pd.NA, write_index_map=False)
+    rfp["channel_id"] = "RFP"
+    rfp["projection_method"] = "max"
+    bf = _proj_row_with_provenance(A01, 0, src=img, fim_path=_npz(tmp_path / "prov" / "bf2.npz"))
+    shard = _write(tmp_path / f"{A01}_frame_inventory.csv", [bf, rfp])
+
+    validate_frame_inventory(shard, tmp_path / "f.validated", check_sources=True)
+    assert (tmp_path / "f.validated").exists()
+
+
+def test_legacy_shard_without_write_index_map_still_validates(tmp_path):
+    """Back-compat: the 232 already-materialized inventories predate the flag.
+
+    With no write_index_map column the rule falls back to the old implicit "focus_stack carries one",
+    so existing shards keep validating instead of failing on a column they could not have carried.
+    """
+    img = _png(tmp_path / "imgs" / "legacy.png", w=16, h=16)
+    fim = _npz(tmp_path / "prov" / "legacy.npz")
+    r = _row(A01, "BF", 0, src=img)
+    r["index_map_path"] = fim  # focus_stack projection, no write_index_map column at all
+    shard = _write(tmp_path / f"{A01}_frame_inventory.csv", [r])
+
+    validate_frame_inventory(shard, tmp_path / "f.validated", check_sources=True)
+    assert (tmp_path / "f.validated").exists()
 
 
 def test_focus_index_map_provenance_passes(tmp_path):
@@ -270,7 +322,7 @@ def test_focus_stack_projection_missing_provenance_fails(tmp_path):
     shard = _write(tmp_path / f"{A01}_frame_inventory.csv", [
         _proj_row_with_provenance(A01, 0, src=img, fim_path=pd.NA),  # column present but NA
     ])
-    with pytest.raises(ValueError, match="missing focus_index_map_path"):
+    with pytest.raises(ValueError, match="missing index_map_path"):
         validate_frame_inventory(shard, tmp_path / "f.validated", check_sources=True)
 
 
@@ -323,9 +375,9 @@ def test_zstack_row_with_provenance_fails(tmp_path):
     r["z_index"] = 0
     r["image_product_type"] = "z_stack"
     r["projection_method"] = pd.NA
-    r["focus_index_map_path"] = fim  # z_stack must NOT carry provenance
+    r["index_map_path"] = fim  # z_stack must NOT carry provenance
     shard = _write(tmp_path / f"{A01}_frame_inventory.csv", [r])
-    with pytest.raises(ValueError, match="not projection/focus_stack but carries"):
+    with pytest.raises(ValueError, match="did not request an index map"):
         validate_frame_inventory(shard, tmp_path / "f.validated", check_sources=True)
 
 
@@ -365,3 +417,92 @@ def test_errors_report_falls_back_when_well_id_underivable(tmp_path):
     with pytest.raises(ValueError):
         validate_frame_inventory(shard, tmp_path / "f.validated")
     assert (tmp_path / "frame_inventory.errors.md").exists()
+
+
+# ── per_well_product: the shard grain ──────────────────────────────────────────────────────────
+#
+# The DAG creates one job per (well x image_product_key), so a single-product shard is a real
+# artifact and validating it AT THE PRODUCING JOB'S BOUNDARY catches malformed output where it was
+# made. The bug this scope fixes was applying a CROSS-CHANNEL rule ("BF must be present") to a file
+# that holds one channel by construction -- the shard was being asked to prove something about a
+# channel it cannot contain.
+
+from data_pipeline.acquisition.metadata_ingest.frame_inventory.frame_inventory_validation_rules import (  # noqa: E402
+    PER_WELL_CHECKS,
+    PER_WELL_PRODUCT_CHECKS,
+    validate_grain,
+)
+
+
+def _product_shard(channel: str, *, times=(0, 1, 2), projection_method="focus_stack"):
+    rows = []
+    for t in times:
+        row = _row(A01, channel, t, src=f"{channel}_{t}.png")
+        row["projection_method"] = projection_method
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def test_an_rfp_shard_passes_at_product_grain():
+    """The exact failure from the pbx smoke run: an RFP shard has no BF and never will."""
+    validate_grain(
+        _product_shard("RFP", projection_method="max"),
+        validation_scope="per_well_product",
+        scope_label="rfp_shard",
+    )
+
+
+def test_an_rfp_shard_still_fails_at_well_grain():
+    """The complement -- the BF rule is MOVED, not deleted. If this passed, the cross-channel
+    guarantee would have been silently dropped rather than relocated."""
+    with pytest.raises(ValueError, match="required channel 'BF' is absent"):
+        validate_grain(
+            _product_shard("RFP", projection_method="max"),
+            validation_scope="per_well",
+            scope_label="rfp_shard",
+        )
+
+
+def test_an_assembled_well_passes_at_well_grain():
+    """BF + RFP together -- the grain where the cross-channel question is answerable."""
+    assembled = pd.concat(
+        [_product_shard("BF"), _product_shard("RFP", projection_method="max")],
+        ignore_index=True,
+    )
+    validate_grain(assembled, validation_scope="per_well", scope_label="assembled")
+
+
+def test_a_time_gap_still_fails_at_product_grain():
+    """The narrower scope must not become a weaker mode. A shard owns its OWN time axis, so a gap
+    in it is a dropped frame the shard can and must detect."""
+    with pytest.raises(ValueError, match="contiguous"):
+        validate_grain(
+            _product_shard("RFP", times=(0, 2), projection_method="max"),
+            validation_scope="per_well_product",
+            scope_label="gappy_shard",
+        )
+
+
+def test_two_products_in_one_shard_fail_at_product_grain():
+    """The scope NAME is a contract, not just "skip the BF checks". A file carrying two products is
+    not a product shard, whatever it is called."""
+    mixed = pd.concat(
+        [_product_shard("RFP", projection_method="max"), _product_shard("RFP")],
+        ignore_index=True,
+    )
+    with pytest.raises(ValueError, match="exactly one product_key"):
+        validate_grain(mixed, validation_scope="per_well_product", scope_label="mixed_shard")
+
+
+def test_the_two_scopes_share_their_row_and_time_checks():
+    """Composed, not two independently maintained lists.
+
+    Written flat, the narrower scope drifts: someone adds a check to per_well, forgets
+    per_well_product, and the shard quietly stops being validated for something it could have
+    owned. This pins that every per_well_product check except its own single-product rule is also a
+    per_well check.
+    """
+    shared = set(PER_WELL_PRODUCT_CHECKS) & set(PER_WELL_CHECKS)
+    assert shared, "the two scopes share no checks -- the hierarchy has been flattened"
+    product_only = set(PER_WELL_PRODUCT_CHECKS) - set(PER_WELL_CHECKS)
+    assert {c.__name__ for c in product_only} == {"_assert_single_product"}

@@ -10,6 +10,8 @@ from typing import Dict, Iterable, Mapping, Optional, Sequence
 import numpy as np
 import pandas as pd
 
+from image_geometry import COORDINATE_CONVENTION_VERSION
+
 try:
     import scipy.sparse as sp
 except Exception:  # pragma: no cover - scipy may be optional
@@ -326,6 +328,14 @@ def save_pair_artifacts(
 
     metadata = {
         "pair_id": pair_id,
+        # STRUCTURAL cache key, not a timestamp. Every array in this pair directory is expressed
+        # in canonical-grid coordinates, so all of it inherits the affine convention those
+        # coordinates were built under. v1 artifacts are not stale -- they are silently offset by
+        # a sub-pixel amount, with correct shapes, correct dtypes and entirely plausible values,
+        # which is exactly what mtime-based staleness cannot catch. Compare for EQUALITY; a
+        # mismatch, or the key being ABSENT (which means v1), makes the directory incompatible
+        # rather than merely old.
+        "coordinate_convention_version": COORDINATE_CONVENTION_VERSION,
         "float_dtype": str(float_dtype_np),
         "work_velocity_shape": list(result_work.velocity_work_px_per_step_yx.shape),
         "work_mass_shape": list(result_work.mass_created_work.shape),

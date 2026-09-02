@@ -11,6 +11,8 @@ import scipy.ndimage
 from skimage.measure import regionprops
 from typing import Tuple
 
+from image_geometry import bounds_expanded_rotation_matrix
+
 
 def rotate_image(image: np.ndarray, angle_degrees: float) -> np.ndarray:
     """
@@ -24,24 +26,10 @@ def rotate_image(image: np.ndarray, angle_degrees: float) -> np.ndarray:
         Rotated image with expanded bounds
     """
     height, width = image.shape[:2]
-    image_center = (width / 2, height / 2)
-
-    rotation_mat = cv2.getRotationMatrix2D(image_center, angle_degrees, 1.)
-
-    # Calculate new bounds
-    abs_cos = abs(rotation_mat[0, 0])
-    abs_sin = abs(rotation_mat[0, 1])
-
-    bound_w = int(height * abs_sin + width * abs_cos)
-    bound_h = int(height * abs_cos + width * abs_sin)
-
-    # Adjust translation
-    rotation_mat[0, 2] += bound_w / 2 - image_center[0]
-    rotation_mat[1, 2] += bound_h / 2 - image_center[1]
-
-    # Apply rotation
-    rotated = cv2.warpAffine(image, rotation_mat, (bound_w, bound_h))
-    return rotated
+    rotation_mat, bounds_wh = bounds_expanded_rotation_matrix(
+        shape_hw=(height, width), angle_deg=angle_degrees
+    )
+    return cv2.warpAffine(image, rotation_mat, bounds_wh)
 
 
 def get_embryo_rotation_angle(

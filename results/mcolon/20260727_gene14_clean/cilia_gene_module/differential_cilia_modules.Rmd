@@ -1,0 +1,471 @@
+---
+title: "Differential cilia-module expression"
+output: html_document
+params:
+  contrast_name: "all"
+---
+
+This analysis asks:
+
+> Within a given cell type, do embryos in the perturbation arm have a different
+> cilia-module score from embryos in the control arm?
+
+The embryo is the biological replicate. Individual cells contribute to their
+embryo's mean score but are never treated as independent embryos.
+
+```{r setup, message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(readr)
+library(ggplot2)
+
+PROJECT_DIR <- paste0(
+  "/net/trapnell/vol1/home/mdcolon/proj/morphseq/results/",
+  "mcolon/20260727_gene14_clean"
+)
+MODULE_DIR <- file.path(PROJECT_DIR, "cilia_gene_module")
+OUTPUT_DIR <- file.path(MODULE_DIR, "output")
+FIGURE_DIR <- file.path(MODULE_DIR, "figures")
+
+EMBRYO_MODULE_FILE <- file.path(
+  OUTPUT_DIR,
+  "embryo_celltype_cilia_module_scores.tsv"
+)
+COVERAGE_AUDIT_FILE <- file.path(
+  OUTPUT_DIR,
+  "embryo_celltype_module_coverage.tsv"
+)
+CONTRAST_RESULT_DIR <- file.path(
+  OUTPUT_DIR,
+  "differential_module_results"
+)
+dir.create(CONTRAST_RESULT_DIR, recursive = TRUE, showWarnings = FALSE)
+
+source(file.path(MODULE_DIR, "cilia_gene_module_policy.R"))
+source(file.path(PROJECT_DIR, "abundance_dact", "contrast_plan.R"))
+
+MINIMUM_CELLS_PER_EMBRYO <- 10L
+FDR_THRESHOLD <- 0.05
+
+if (params$contrast_name == "all") {
+  contrasts_to_fit <- perturbation_contrast_plan
+  RESULT_FILE <- file.path(
+    OUTPUT_DIR,
+    "differential_cilia_module_expression.tsv"
+  )
+} else {
+  contrasts_to_fit <- perturbation_contrast_plan |>
+    dplyr::filter(.data$contrast_name == params$contrast_name)
+
+  if (nrow(contrasts_to_fit) != 1L) {
+    stop("Unknown perturbation contrast: ", params$contrast_name)
+  }
+
+  RESULT_FILE <- file.path(
+    CONTRAST_RESULT_DIR,
+    paste0(params$contrast_name, ".tsv")
+  )
+}
+
+contrasts_to_fit |>
+  dplyr::select(
+    contrast_name,
+    perturbation,
+    control,
+    timepoint,
+    expected_cross_rt_block
+  )
+```
+
+## Step 1: Read the embryo-level scores
+
+The input was created by `build_embryo_module_scores.Rmd`. It contains one row
+per embryo, observed cell type, and chosen module.
+
+```{r read-input}
+embryo_module_scores <- readr::read_tsv(
+  EMBRYO_MODULE_FILE,
+  show_col_types = FALSE
+)
+
+required_columns <- c(
+  "embryo_ID",
+  "perturbation",
+  "timepoint",
+  "rt_block",
+  "cell_type",
+  "module_id",
+  "n_cells",
+  "mean_module_score"
+)
+missing_columns <- setdiff(required_columns, names(embryo_module_scores))
+if (length(missing_columns) > 0L) {
+  stop(
+    "The embryo-level module table is missing: ",
+    paste(missing_columns, collapse = ", ")
+  )
+}
+
+unexpected_modules <- setdiff(
+  unique(embryo_module_scores$module_id),
+  CHOSEN_CILIA_MODULES
+)
+if (length(unexpected_modules) > 0L) {
+  stop(
+    "The embryo-level table contains unapproved modules: ",
+    paste(unexpected_modules, collapse = ", ")
+  )
+}
+
+duplicated_measurements <- embryo_module_scores |>
+  dplyr::count(
+    .data$embryo_ID,
+    .data$cell_type,
+    .data$module_id
+  ) |>
+  dplyr::filter(.data$n != 1L)
+
+if (nrow(duplicated_measurements) > 0L) {
+  stop("Expected one score per embryo, cell type, and module.")
+}
+
+cat(
+  nrow(embryo_module_scores), "embryo × cell-type × module rows\n"
+)
+```
+
+## Step 2: Apply the reliability requirements
+
+A cell type is testable only when both arms contain at least three embryos with
+at least ten cells of that type. The existing coverage audit makes this
+decision before looking at module differences or p-values.
+
+```{r select-tests}
+coverage_audit <- readr::read_tsv(
+  COVERAGE_AUDIT_FILE,
+  show_col_types = FALSE
+)
+
+eligible_cell_types <- coverage_audit |>
+  dplyr::filter(
+    .data$contrast_name %in% contrasts_to_fit$contrast_name,
+    .data$minimum_cells_per_embryo == MINIMUM_CELLS_PER_EMBRYO,
+    .data$passes_minimum_embryos
+  ) |>
+  dplyr::select(
+    contrast_name,
+    cell_type,
+    n_control,
+    n_perturbation
+  )
+
+tests_per_contrast <- eligible_cell_types |>
+  dplyr::count(
+    .data$contrast_name,
+    name = "n_eligible_cell_types"
+  ) |>
+  dplyr::mutate(
+    n_module_tests =
+      .data$n_eligible_cell_types * length(CHOSEN_CILIA_MODULES)
+  )
+
+tests_per_contrast
+```
+
+## Step 3: Fit one embryo-level model
+
+The same calculation is repeated for every eligible cell type and module.
+
+```text
+mean_module_score ~ arm
+```
+
+`arm` is explicitly ordered as control followed by perturbation. Therefore,
+the fitted coefficient is always perturbation minus control.
+
+HC3 standard errors are used because embryo-level variability can differ
+between the two arms. The standardized effect divides the raw score difference
+by the pooled embryo-level standard deviation.
+
+```{r define-model}
+fit_one_module_model <- function(model_data) {
+  model_data <- model_data |>
+    dplyr::mutate(
+      arm = factor(
+        .data$arm,
+        levels = c("control", "perturbation")
+      )
+    )
+
+  control_scores <- model_data$mean_module_score[
+    model_data$arm == "control"
+  ]
+  perturbation_scores <- model_data$mean_module_score[
+    model_data$arm == "perturbation"
+  ]
+
+  n_control <- length(control_scores)
+  n_perturbation <- length(perturbation_scores)
+  control_mean <- mean(control_scores)
+  perturbation_mean <- mean(perturbation_scores)
+  score_difference <- perturbation_mean - control_mean
+
+  pooled_variance <- (
+    (n_control - 1L) * stats::var(control_scores) +
+      (n_perturbation - 1L) * stats::var(perturbation_scores)
+  ) / (n_control + n_perturbation - 2L)
+
+  standardized_effect <- dplyr::if_else(
+    is.finite(pooled_variance) && pooled_variance > 0,
+    score_difference / sqrt(pooled_variance),
+    NA_real_
+  )
+
+  if (dplyr::n_distinct(model_data$mean_module_score) <= 1L) {
+    return(
+      tibble::tibble(
+        control_mean = control_mean,
+        perturbation_mean = perturbation_mean,
+        score_difference = score_difference,
+        standardized_effect = standardized_effect,
+        standard_error = NA_real_,
+        confidence_interval_low = NA_real_,
+        confidence_interval_high = NA_real_,
+        p_value = NA_real_,
+        model_status = "constant_score"
+      )
+    )
+  }
+
+  model <- stats::lm(
+    mean_module_score ~ arm,
+    data = model_data
+  )
+  robust_variance <- sandwich::vcovHC(model, type = "HC3")
+  coefficient_table <- lmtest::coeftest(
+    model,
+    vcov. = robust_variance
+  )
+
+  coefficient_name <- "armperturbation"
+  standard_error <- coefficient_table[coefficient_name, "Std. Error"]
+  p_value <- coefficient_table[coefficient_name, "Pr(>|t|)"]
+  critical_value <- stats::qt(
+    0.975,
+    df = stats::df.residual(model)
+  )
+
+  tibble::tibble(
+    control_mean = control_mean,
+    perturbation_mean = perturbation_mean,
+    score_difference = score_difference,
+    standardized_effect = standardized_effect,
+    standard_error = standard_error,
+    confidence_interval_low =
+      score_difference - critical_value * standard_error,
+    confidence_interval_high =
+      score_difference + critical_value * standard_error,
+    p_value = p_value,
+    model_status = "fitted"
+  )
+}
+```
+
+## Step 4: Fit every planned perturbation contrast
+
+This first analysis uses the original sequencing perturbations. MorphSeq
+phenotype-group contrasts remain separate because they require the preferred
+phenotype labels to be joined at the embryo level.
+
+```{r fit-models}
+result_rows <- list()
+result_number <- 1L
+
+for (contrast_number in seq_len(nrow(contrasts_to_fit))) {
+  contrast <- contrasts_to_fit[contrast_number, ]
+
+  contrast_cell_types <- eligible_cell_types |>
+    dplyr::filter(
+      .data$contrast_name == contrast$contrast_name
+    ) |>
+    dplyr::pull("cell_type")
+
+  contrast_scores <- embryo_module_scores |>
+    dplyr::filter(
+      .data$timepoint == contrast$timepoint,
+      .data$perturbation %in%
+        c(contrast$perturbation, contrast$control),
+      .data$cell_type %in% contrast_cell_types,
+      .data$module_id %in% CHOSEN_CILIA_MODULES,
+      .data$n_cells >= MINIMUM_CELLS_PER_EMBRYO
+    ) |>
+    dplyr::mutate(
+      arm = dplyr::if_else(
+        .data$perturbation == contrast$perturbation,
+        "perturbation",
+        "control"
+      )
+    )
+
+  perturbation_rt_blocks <- contrast_scores |>
+    dplyr::filter(.data$arm == "perturbation") |>
+    dplyr::pull("rt_block") |>
+    unique() |>
+    sort()
+  control_rt_blocks <- contrast_scores |>
+    dplyr::filter(.data$arm == "control") |>
+    dplyr::pull("rt_block") |>
+    unique() |>
+    sort()
+  observed_cross_rt_block <- !identical(
+    perturbation_rt_blocks,
+    control_rt_blocks
+  )
+
+  if (observed_cross_rt_block != contrast$expected_cross_rt_block) {
+    stop(
+      contrast$contrast_name,
+      " does not match its expected cross-RT-block status."
+    )
+  }
+
+  for (module_name in CHOSEN_CILIA_MODULES) {
+    for (cell_type_name in contrast_cell_types) {
+      model_data <- contrast_scores |>
+        dplyr::filter(
+          .data$module_id == .env$module_name,
+          .data$cell_type == .env$cell_type_name
+        )
+
+      model_result <- fit_one_module_model(model_data)
+
+      arm_summary <- model_data |>
+        dplyr::group_by(.data$arm) |>
+        dplyr::summarise(
+          n_embryos = dplyr::n_distinct(.data$embryo_ID),
+          median_cells_per_embryo = stats::median(.data$n_cells),
+          minimum_cells_observed = min(.data$n_cells),
+          .groups = "drop"
+        )
+
+      result_rows[[result_number]] <- model_result |>
+        dplyr::mutate(
+          contrast_name = contrast$contrast_name,
+          perturbation = contrast$perturbation,
+          control = contrast$control,
+          timepoint = contrast$timepoint,
+          module_id = module_name,
+          cell_type = cell_type_name,
+          expected_cross_rt_block = contrast$expected_cross_rt_block,
+          perturbation_rt_blocks = paste(
+            perturbation_rt_blocks,
+            collapse = ";"
+          ),
+          control_rt_blocks = paste(
+            control_rt_blocks,
+            collapse = ";"
+          ),
+          n_control_embryos = arm_summary$n_embryos[
+            arm_summary$arm == "control"
+          ],
+          n_perturbation_embryos = arm_summary$n_embryos[
+            arm_summary$arm == "perturbation"
+          ],
+          median_control_cells = arm_summary$median_cells_per_embryo[
+            arm_summary$arm == "control"
+          ],
+          median_perturbation_cells = arm_summary$median_cells_per_embryo[
+            arm_summary$arm == "perturbation"
+          ],
+          minimum_cells_per_embryo = MINIMUM_CELLS_PER_EMBRYO,
+          .before = 1
+        )
+
+      result_number <- result_number + 1L
+    }
+  }
+}
+
+module_results <- dplyr::bind_rows(result_rows)
+```
+
+## Step 5: Apply McClintock-style BH correction
+
+Within each contrast, all eligible cell type × module p-values form one testing
+family. This uses the same `stats::p.adjust(..., method = "BH")` convention as
+the McClintock abundance output.
+
+```{r adjust-p-values}
+module_results <- module_results |>
+  dplyr::group_by(.data$contrast_name) |>
+  dplyr::mutate(
+    q_value = stats::p.adjust(
+      .data$p_value,
+      method = "BH"
+    ),
+    is_fdr_significant =
+      !is.na(.data$q_value) & .data$q_value < FDR_THRESHOLD
+  ) |>
+  dplyr::ungroup() |>
+  dplyr::arrange(
+    .data$contrast_name,
+    .data$q_value,
+    dplyr::desc(abs(.data$standardized_effect)),
+    .data$module_id,
+    .data$cell_type
+  )
+
+readr::write_tsv(module_results, RESULT_FILE)
+
+cat(
+  "Wrote", RESULT_FILE, "with", nrow(module_results), "tests\n",
+  sum(module_results$is_fdr_significant),
+  "tests have BH q <", FDR_THRESHOLD, "\n"
+)
+```
+
+## Step 6: Inspect the strongest results
+
+The table below is descriptive. Statistical interpretation should consider the
+effect size, confidence interval, embryo counts, module biology, and RT-block
+status—not the q-value alone.
+
+```{r inspect-results}
+significant_results <- module_results |>
+  dplyr::filter(.data$is_fdr_significant)
+
+significant_results |>
+  dplyr::select(
+    contrast_name,
+    module_id,
+    cell_type,
+    control_mean,
+    perturbation_mean,
+    score_difference,
+    standardized_effect,
+    confidence_interval_low,
+    confidence_interval_high,
+    p_value,
+    q_value,
+    n_control_embryos,
+    n_perturbation_embryos,
+    expected_cross_rt_block
+  )
+```
+
+Summarize the number of significant cell types without hiding the complete
+result table.
+
+```{r summarize-results}
+module_results |>
+  dplyr::group_by(
+    .data$contrast_name,
+    .data$module_id
+  ) |>
+  dplyr::summarise(
+    n_tested_cell_types = dplyr::n(),
+    n_fdr_significant = sum(.data$is_fdr_significant),
+    .groups = "drop"
+  )
+```

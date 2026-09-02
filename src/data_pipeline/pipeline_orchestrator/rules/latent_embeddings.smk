@@ -33,10 +33,10 @@ def _latents_validated(experiment: str, *, path_mode: str, well_id: str | None =
     return rule_validated(LATENT_EMBEDDINGS_STEP, LATENTS_ARTIFACT, experiment, path_mode=path_mode, well_id=well_id)
 
 def _snip_inventory_per_well(experiment: str, *, well_id: str):
-    return rule_artifact(SNIP_INVENTORY_STEP, "snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
+    return rule_artifact(SNIP_INVENTORY_STEP, "legacy_default_snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _snip_inventory_per_well_validated(experiment: str, *, well_id: str):
-    return rule_validated(SNIP_INVENTORY_STEP, "snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
+    return rule_validated(SNIP_INVENTORY_STEP, "legacy_default_snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _snip_inventories_for_run(wc):
     return [

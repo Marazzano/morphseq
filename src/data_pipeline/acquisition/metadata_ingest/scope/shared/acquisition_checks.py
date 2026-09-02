@@ -109,7 +109,7 @@ def assert_channel_mapping_consistent(
     *,
     index_column: str = "channel_index",
     raw_column: str = "raw_channel_name",
-    normalized_column: str = "channel",
+    normalized_column: str = "channel_id",
     scope_label: str,
 ) -> None:
     """Fail loud unless the channel triple is a consistent 1:1:1 mapping within the table.

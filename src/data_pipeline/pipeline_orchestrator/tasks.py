@@ -54,6 +54,115 @@ def cmd_normalize_plate(args: argparse.Namespace) -> None:
     validate_plate_metadata_csv(input_csv=args.output_csv, output_flag=args.output_flag)
 
 
+def cmd_resolve_experiment_ids(args: argparse.Namespace) -> None:
+    """Expand a mixed list of experiment_ids + collections into a flat experiment_id list.
+
+    Thin dispatcher for the collection run-target seam (EXPERIMENT_GROUP_PLATE_MODEL.md):
+    a `_coll` entry fans out to its member `{coll}_{plate}` ids, bare ids pass through. Writes
+    the deduped list one-per-line (the flat EXP_FILE the SGE array template consumes) and prints
+    the count N (for `qsub -t 1-N`). Resolution mints nothing itself — it delegates to the
+    identifiers grammar (DRY).
+    """
+    from data_pipeline.acquisition.metadata_ingest.collection_discovery import resolve_experiment_ids
+
+    entries = [e.strip() for e in str(args.entries).split(",") if e.strip()]
+    ids = resolve_experiment_ids(entries, raw_root=args.raw_root, microscope=args.microscope)
+
+    out = Path(args.output_list)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(ids) + "\n")
+    # N goes to stdout ALONE (no log prefix) so a submit script can `N=$(... resolve ...)`.
+    print(len(ids))
+
+
+def cmd_ingest_collection_acquisition(args: argparse.Namespace) -> None:
+    """Build ONE acquisition inventory for a merged collection plate ({coll}_{plate}).
+
+    Thin dispatcher: find the plate's raw source children, read each once via the per-scope
+    acquisition-inventory builder, union them into one inventory keyed by the merged
+    experiment_id, write the CSV. All domain logic lives in the ingest module (DRY).
+
+    ALSO writes the REAL unioned scope_metadata when ``--scope-metadata-csv`` is given. That is a
+    genuinely different artifact, not a view of the inventory: scope_metadata carries the
+    per-position geometry (raw_position_label, x_um, y_um) + channel that map_positions/apply
+    ingest, while the acquisition inventory carries image-level source paths + acquisition axes.
+    Both come from the SAME per-source read; each keeps the columns its consumer needs. (Writing the
+    inventory into the scope_csv slot is what used to crash ``apply`` on the missing ``channel``.)
+    """
+    from data_pipeline.acquisition.metadata_ingest.collection_acquisition_ingest import (
+        ingest_collection_acquisition_inventory,
+        ingest_collection_scope_metadata,
+    )
+    from data_pipeline.acquisition.metadata_ingest.collection_provenance import (
+        read_collection_provenance,
+    )
+
+    # Artifact-driven: the provenance JSON is the SINGLE source of truth for which sources exist
+    # and where they are. Both unions consume it; neither re-globs the _coll dir.
+    payload = read_collection_provenance(args.provenance_json)
+
+    unioned = ingest_collection_acquisition_inventory(
+        experiment_id=args.experiment,
+        sources=payload["sources"],
+        microscope=args.microscope,
+        output_csv=args.output_csv,
+    )
+    scope_metadata_csv = getattr(args, "scope_metadata_csv", None)
+    if scope_metadata_csv is not None:
+        ingest_collection_scope_metadata(
+            experiment_id=args.experiment,
+            sources=payload["sources"],
+            microscope=args.microscope,
+            output_csv=Path(scope_metadata_csv),
+        )
+
+
+def cmd_map_collection_positions_to_wells(args: argparse.Namespace) -> None:
+    """Map EACH collection source independently, then concat into ONE plate-keyed mapping.
+
+    Thin dispatcher: the per-source loop + concat live in ``collection_position_mapping``; the
+    per-scope map functions it calls are UNCHANGED. Sources (and their time_index) are read from the
+    classify artifact — never re-globbed.
+    """
+    from data_pipeline.acquisition.metadata_ingest.collection_provenance import (
+        read_collection_provenance,
+    )
+    from data_pipeline.acquisition.metadata_ingest.collection_position_mapping import (
+        map_collection_positions_to_wells,
+    )
+
+    payload = read_collection_provenance(args.provenance_json)
+    map_collection_positions_to_wells(
+        experiment_id=args.experiment,
+        sources=payload["sources"],
+        scope_metadata_csv=Path(args.scope_csv),
+        output_mapping_csv=Path(args.output_mapping_csv),
+        output_provenance_json=Path(args.output_provenance_json),
+        microscope=args.microscope,
+        raw_root=Path(args.raw_dir),
+        ref_xy_csv=Path(args.ref_xy_csv) if getattr(args, "ref_xy_csv", None) else None,
+    )
+
+
+def cmd_build_collection_provenance(args: argparse.Namespace) -> None:
+    """Write the early-DAG collection-classify artifact for one experiment.
+
+    Thin dispatcher: derive the declared fact (is_collection + the time_index→start_age_hpf map)
+    and write the JSON. All domain logic (the classify + the union-consistent ordering) lives in
+    the classify module (DRY). See EXPERIMENT_GROUP_PLATE_MODEL.md ("CLASSIFY ONCE").
+    """
+    from data_pipeline.acquisition.metadata_ingest.collection_provenance import (
+        write_collection_provenance,
+    )
+
+    write_collection_provenance(
+        experiment_id=args.experiment,
+        raw_root=args.raw_root,
+        microscope=args.microscope,
+        output_json=args.output_json,
+    )
+
+
 def cmd_ingest_dropin_plate(args: argparse.Namespace) -> None:
     ingest_dropin_plate_metadata(
         input_csv=args.input_csv,
@@ -130,36 +239,6 @@ def cmd_apply_position_to_well_mapping(args: argparse.Namespace) -> None:
     args.output_flag.parent.mkdir(parents=True, exist_ok=True)
     args.output_flag.write_text("ok\n")
 
-
-def cmd_materialize_stitched(args: argparse.Namespace) -> None:
-    # Function-local: materialize_stitched_images.py imports torch at module level. This is a
-    # DELIBERATE GPU compute dependency, not incidental — LoG focus-stacking (log_focus.py) runs
-    # a real conv2d over the Z-stack and is intentionally torch-accelerated; that isn't going away.
-    # Deferred purely so `tasks.py` (imported once, module-wide, by every Snakemake rule) stays
-    # importable in envs that don't need this specific command — orchestration/contract code has
-    # no business requiring torch just to dispatch. This command itself still runs on the model
-    # side once the pipeline/backend split (spec Phases 2-3) gives it a proper backend env; it does
-    # not become torch-free.
-    from data_pipeline.acquisition.metadata_ingest.stitched_index.materialize_stitched_images import (
-        materialize_stitched_images,
-    )
-
-    materialize_stitched_images(
-        experiment=args.experiment,
-        microscope=args.microscope,
-        raw_images_dir=args.raw_images_dir,
-        scope_csv=args.scope_csv,
-        mapping_csv=args.mapping_csv,
-        output_root=args.output_root,
-        output_stitched_index_csv=args.output_stitched_index_csv,
-        selected_wells=_parse_selected_wells(args.selected_wells),
-        overwrite=_parse_bool(args.overwrite),
-        output_image_extension=args.output_image_extension,
-        device_preference=args.device_preference,
-        keyence_projection_method=args.keyence_projection_method,
-        keyence_ff_filter_res_um=args.keyence_ff_filter_res_um,
-        done_flag=args.done_flag,
-    )
 
 
 def cmd_validate_frame_inventory(args: argparse.Namespace) -> None:
@@ -481,7 +560,50 @@ def cmd_snip_processing(args: argparse.Namespace) -> None:
         output_width_px=args.output_width_px,
         background_noise_scale=args.background_noise_scale,
         blend_radius_um=args.blend_radius_um,
-        apply_clahe=_parse_bool(args.apply_clahe),
+        snip_transform_table_csv=getattr(args, "snip_transform_table_csv", None),
+        snip_product_key=args.snip_product_key,
+        # From main: SeaHub's runtime overlay turns CLAHE off for already-normalized sources.
+        # Only the clahe_blend recipe reads it; no_change ignores it.
+        apply_clahe=_parse_bool(getattr(args, "apply_clahe", True)),
+    )
+
+
+def cmd_snip_geometry(args: argparse.Namespace) -> None:
+    """Derive the canonical snip transform once per embryo-time. Thin dispatcher."""
+    from data_pipeline.object_extraction.snip_processing.entrypoints.run_snip_geometry import (
+        run_snip_geometry,
+    )
+
+    run_snip_geometry(
+        frame_masks_csv=args.frame_masks_csv,
+        frame_inventory_csv=args.frame_inventory_csv,
+        physical_embryo_registry_csv=args.physical_embryo_registry_csv,
+        output_path=args.output_path,
+        target_pixel_size_um=args.target_pixel_size_um,
+        output_height_px=args.output_height_px,
+        output_width_px=args.output_width_px,
+    )
+
+
+def cmd_channel_intensity(args: argparse.Namespace) -> None:
+    """Measure per-embryo fluorescence on the native raster. Thin dispatcher."""
+    from data_pipeline.object_extraction.channel_intensity.entrypoint import (
+        run_channel_intensity,
+    )
+
+    # Pass only what was explicitly given, so an unset flag falls through to the entrypoint's own
+    # default rather than being overridden with a None.
+    radii = {
+        name: getattr(args, name)
+        for name in ("inner_radius_um", "outer_radius_um", "exclude_radius_um")
+        if getattr(args, name) is not None
+    }
+    run_channel_intensity(
+        frame_masks_csv=args.frame_masks_csv,
+        frame_inventory_csv=args.frame_inventory_csv,
+        output_csv=args.output_csv,
+        source_image_product_key=args.source_image_product_key,
+        **radii,
     )
 
 
@@ -606,6 +728,8 @@ def cmd_stage_predictions(args: argparse.Namespace) -> None:
         frame_inventory_csv=args.frame_inventory_csv,
         plate_metadata_csv=args.plate_metadata_csv,
         physical_embryo_registry_csv=args.physical_embryo_registry_csv,
+        collection_provenance_json=args.collection_provenance_json,
+        acquisition_inventory_csv=getattr(args, "acquisition_inventory_csv", None),
         output_csv=args.output_csv,
     )
 
@@ -1159,10 +1283,11 @@ def cmd_ingest_precomputed_frame_masks(args: argparse.Namespace) -> None:
 
 
 def cmd_build_physical_embryo_registry(args: argparse.Namespace) -> None:
-    """Mint the per-well physical_embryo_registry shard from a per-well frame_masks shard.
+    """Mint the per-well physical_embryo_registry shard from frame_masks + collection provenance.
 
-    Thin dispatcher: read frame_masks CSV -> Stage-2 builder (which validates before returning)
-    -> write the registry CSV. No domain logic here.
+    Thin dispatcher: read the frame_masks CSV + the provenance artifact -> Stage-2 builder (which
+    resolves n_sources from provenance and validates before returning) -> write the registry CSV.
+    No domain logic here.
     """
     import pandas as pd
 
@@ -1170,7 +1295,14 @@ def cmd_build_physical_embryo_registry(args: argparse.Namespace) -> None:
         build_physical_embryo_registry,
     )
 
-    registry = build_physical_embryo_registry(pd.read_csv(args.frame_masks_csv))
+    from data_pipeline.acquisition.metadata_ingest.collection_provenance import (
+        read_collection_provenance,
+    )
+
+    registry = build_physical_embryo_registry(
+        pd.read_csv(args.frame_masks_csv),
+        read_collection_provenance(args.collection_provenance_json),
+    )
     args.output_csv.parent.mkdir(parents=True, exist_ok=True)
     registry.to_csv(args.output_csv, index=False)
 
@@ -1287,9 +1419,75 @@ def cmd_merge_latent_embeddings(args: argparse.Namespace) -> None:
     merged.to_parquet(args.output_parquet, index=False)
 
 
+def _frame_inventory_validation_scopes() -> tuple[str, ...]:
+    """The validator's scope vocabulary, imported rather than restated."""
+    from data_pipeline.acquisition.metadata_ingest.frame_inventory.frame_inventory_validation_rules import (
+        VALIDATION_SCOPES,
+    )
+
+    return VALIDATION_SCOPES
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
+
+    p_resolve = sub.add_parser("resolve-experiment-ids")
+    p_resolve.add_argument("--entries", required=True,
+                           help="comma-separated mix of experiment_ids and _coll collection names")
+    p_resolve.add_argument("--raw-root", type=Path, required=True,
+                           help="raw image root containing the collection dirs")
+    p_resolve.add_argument("--microscope", default="Keyence", choices=["Keyence", "YX1"])
+    p_resolve.add_argument("--output-list", type=Path, required=True,
+                           help="path to write the flat experiment_id list (the SGE EXP_FILE)")
+    p_resolve.set_defaults(func=cmd_resolve_experiment_ids)
+
+    p_coll_acq = sub.add_parser("ingest-collection-acquisition")
+    p_coll_acq.add_argument("--experiment", required=True,
+                            help="merged collection plate id ({collection}_{plate_token})")
+    p_coll_acq.add_argument("--raw-root", type=Path, required=True,
+                            help="raw image root containing the _coll dir (scope-anchored)")
+    p_coll_acq.add_argument("--microscope", default="Keyence", choices=["Keyence", "YX1"])
+    p_coll_acq.add_argument("--output-csv", type=Path, required=True,
+                            help="destination for the unioned acquisition inventory CSV")
+    p_coll_acq.add_argument("--scope-metadata-csv", type=Path, default=None,
+                            help="optional: also build the REAL unioned scope_metadata (per-position "
+                                 "geometry + channel, what map_positions/apply ingest). A different "
+                                 "artifact from the inventory, from the same per-source read")
+    p_coll_acq.add_argument("--provenance-json", type=Path, required=True,
+                            help="the collection provenance artifact (which sources exist, their "
+                                 "raw_path and source_ordinal). REQUIRED: it is the single source of "
+                                 "truth for both unions; this step never globs the _coll dir")
+    p_coll_acq.set_defaults(func=cmd_ingest_collection_acquisition)
+
+    # Each source is mapped INDEPENDENTLY (its own stage frame), then concatenated into ONE
+    # plate-keyed artifact tagged by time_index. Supersedes the old derive-from-union shortcut,
+    # which could not be correct for YX1 (re-seated plate → different stage frame per source).
+    p_coll_map = sub.add_parser("map-collection-positions-to-wells")
+    p_coll_map.add_argument("--experiment", required=True,
+                            help="merged collection plate id — what well_id is keyed to")
+    p_coll_map.add_argument("--microscope", default="Keyence", choices=["Keyence", "YX1"])
+    p_coll_map.add_argument("--provenance-json", type=Path, required=True,
+                            help="the collection_provenance.json artifact (sources + time_index)")
+    p_coll_map.add_argument("--scope-csv", type=Path, required=True,
+                            help="the UNIONED scope metadata; re-split per source by time_index")
+    p_coll_map.add_argument("--raw-dir", type=Path, required=True,
+                            help="the collection's raw _coll dir (holds the source children)")
+    p_coll_map.add_argument("--ref-xy-csv", type=Path, default=None,
+                            help="YX1 reference plate grid (required for YX1, unused for Keyence)")
+    p_coll_map.add_argument("--output-mapping-csv", type=Path, required=True)
+    p_coll_map.add_argument("--output-provenance-json", type=Path, required=True)
+    p_coll_map.set_defaults(func=cmd_map_collection_positions_to_wells)
+
+    p_classify = sub.add_parser("build-collection-provenance")
+    p_classify.add_argument("--experiment", required=True,
+                            help="experiment id to classify ({collection}_coll_{plate} or a single id)")
+    p_classify.add_argument("--raw-root", type=Path, required=True,
+                            help="raw image root containing the _coll dir (read only for a collection)")
+    p_classify.add_argument("--microscope", default="Keyence", choices=["Keyence", "YX1"])
+    p_classify.add_argument("--output-json", type=Path, required=True,
+                            help="destination for the collection_provenance.json artifact")
+    p_classify.set_defaults(func=cmd_build_collection_provenance)
 
     p_norm = sub.add_parser("ingest-plate-metadata", aliases=["normalize-plate"])
     p_norm.add_argument("--input-file", type=Path, required=True)
@@ -1345,22 +1543,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_apply.add_argument("--selected-wells", default="")
     p_apply.set_defaults(func=cmd_apply_position_to_well_mapping)
 
-    p_mat = sub.add_parser("materialize-stitched")
-    p_mat.add_argument("--experiment", required=True)
-    p_mat.add_argument("--microscope", choices=["YX1", "Keyence"], required=True)
-    p_mat.add_argument("--raw-images-dir", type=Path, required=True)
-    p_mat.add_argument("--scope-csv", type=Path, required=True)
-    p_mat.add_argument("--mapping-csv", type=Path, required=False)
-    p_mat.add_argument("--output-root", type=Path, required=True)
-    p_mat.add_argument("--output-stitched-index-csv", type=Path, required=True)
-    p_mat.add_argument("--selected-wells", default="")
-    p_mat.add_argument("--output-image-extension", default="jpg")
-    p_mat.add_argument("--device-preference", default="cuda")
-    p_mat.add_argument("--keyence-projection-method", default="log")
-    p_mat.add_argument("--keyence-ff-filter-res-um", type=float, default=3.0)
-    p_mat.add_argument("--overwrite", default="false")
-    p_mat.add_argument("--done-flag", type=Path, required=False)
-    p_mat.set_defaults(func=cmd_materialize_stitched)
 
     p_discover = sub.add_parser("discover-wells")
     p_discover.add_argument("--mapped-csv", type=Path, required=True)
@@ -1374,7 +1556,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_fi_validate.add_argument("--image-root", type=Path, default=None)
     p_fi_validate.add_argument("--check-sources", default="false")
     p_fi_validate.add_argument(
-        "--validation-scope", choices=["per_well", "merged"], default="per_well"
+        # DERIVED from the validator's own vocabulary, never restated. A hardcoded list here is a
+        # second source of truth that drifts silently: adding per_well_product to the rules module
+        # left this literal stale, so the DAG passed a scope the parser rejected -- caught only by
+        # a real run, since no test drives this verb's argv.
+        "--validation-scope",
+        choices=list(_frame_inventory_validation_scopes()),
+        default="per_well",
     )
     p_fi_validate.set_defaults(func=cmd_validate_frame_inventory)
 
@@ -1506,13 +1694,59 @@ def build_parser() -> argparse.ArgumentParser:
     p_sp.add_argument("--output-height-px", type=int, default=576)
     p_sp.add_argument("--output-width-px", type=int, default=256)
     p_sp.add_argument("--background-noise-scale", type=float, default=0.1)
+    # main's default: the shared constant rather than a second literal 20.0 to keep in sync.
     p_sp.add_argument("--blend-radius-um", type=float, default=DEFAULT_BLEND_RADIUS_UM)
+    # THE GATE'S INPUT. snip_geometry derived these; this job resolves them onto its own product
+    # grid and may not derive its own. Optional at the CLI only so pre-gate callers still parse --
+    # a render without it fails loud rather than silently deriving.
+    p_sp.add_argument("--snip-transform-table-csv", type=Path, default=None)
+    # From main. The snip_processing rule passes this on every invocation, so dropping it here
+    # would fail the run on an unrecognized argument. Only clahe_blend reads it.
     p_sp.add_argument(
         "--apply-clahe",
         default="true",
         help="Apply legacy CLAHE before background blending (true/false; default true).",
     )
+    # Which product this job renders. One job renders ONE product, so the fanout is
+    # {well_id} x {snip_product_key} and each job owns a disjoint output subtree.
+    from data_pipeline.object_extraction.snip_processing.snip_product_keys import (
+        DEFAULT_BF_SNIP_PRODUCT_KEY,
+    )
+
+    p_sp.add_argument(
+        "--snip-product-key", type=str, default=DEFAULT_BF_SNIP_PRODUCT_KEY
+    )
     p_sp.set_defaults(func=cmd_snip_processing)
+
+    # THE GATE. Per-well only, deliberately no product wildcard: one embryo-time has one canonical
+    # transform, and a product dimension here would derive it N times.
+    p_sg = sub.add_parser("snip-geometry")
+    p_sg.add_argument("--frame-masks-csv", type=Path, required=True)
+    p_sg.add_argument("--frame-inventory-csv", type=Path, required=True)
+    p_sg.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
+    p_sg.add_argument("--output-path", type=Path, required=True)
+    p_sg.add_argument("--target-pixel-size-um", type=float, default=7.8)
+    p_sg.add_argument("--output-height-px", type=int, default=576)
+    p_sg.add_argument("--output-width-px", type=int, default=256)
+    p_sg.set_defaults(func=cmd_snip_geometry)
+
+    p_ci = sub.add_parser("channel-intensity")
+    p_ci.add_argument("--frame-masks-csv", type=Path, required=True)
+    p_ci.add_argument("--frame-inventory-csv", type=Path, required=True)
+    p_ci.add_argument("--output-csv", type=Path, required=True)
+    # REQUIRED, not defaulted. Intensity off a CLAHE'd raster is a different quantity from intensity
+    # off a quantitative one, so a default here would let a measurement silently describe pixels the
+    # caller did not mean.
+    p_ci.add_argument("--source-image-product-key", required=True)
+    # Radii in MICROMETERS: the annulus membership test is physical, so these need no restating when
+    # a product's calibration changes. Default None, resolved by the entrypoint that OWNS the
+    # constants -- tasks.py keeps module imports inside its dispatchers, and restating the numbers
+    # here would create a second place for them to drift (the exclusion radius is deliberately
+    # LARGER than the outer radius, a relationship a duplicated literal would eventually break).
+    p_ci.add_argument("--inner-radius-um", type=float, default=None)
+    p_ci.add_argument("--outer-radius-um", type=float, default=None)
+    p_ci.add_argument("--exclude-radius-um", type=float, default=None)
+    p_ci.set_defaults(func=cmd_channel_intensity)
 
     p_mg = sub.add_parser("mask-geometry")
     p_mg.add_argument("--snip-inventory-csv", type=Path, required=True)
@@ -1576,6 +1810,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_stage.add_argument("--frame-inventory-csv", type=Path, required=True)
     p_stage.add_argument("--plate-metadata-csv", type=Path, required=True)
     p_stage.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
+    p_stage.add_argument("--acquisition-inventory-csv", type=Path, default=None,
+                         help="the experiment's acquisition inventory — OWNS the per-frame "
+                              "source_ordinal mapping a collection's age lookup needs. Optional: a "
+                              "single experiment has one source (ordinal 0) and does not consult it")
+    p_stage.add_argument("--collection-provenance-json", type=Path, required=True,
+                         help="the experiment's collection-provenance artifact (declares is_collection "
+                              "+ the source_ordinal->start_age_hpf map)")
     p_stage.add_argument("--output-csv", type=Path, required=True)
     p_stage.set_defaults(func=cmd_stage_predictions)
 
@@ -1778,6 +2019,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_per_build = sub.add_parser("build-physical-embryo-registry")
     p_per_build.add_argument("--frame-masks-csv", type=Path, required=True)
+    p_per_build.add_argument("--collection-provenance-json", type=Path, required=True,
+                             help="the experiment's collection-provenance artifact — OWNS the "
+                                  "n_sources merge count (len(sources)) that selects the "
+                                  "EmbryoMergePolicy")
     p_per_build.add_argument("--output-csv", type=Path, required=True)
     p_per_build.set_defaults(func=cmd_build_physical_embryo_registry)
 
