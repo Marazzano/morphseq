@@ -1,0 +1,34 @@
+# Generated 2026-09-02. The analysis_ready TAIL for the backend re-render.
+# FORMAT: <experiment> <scope>   (SGE array task N == Nth non-comment line)
+#
+# WHY THIS RUN EXISTS. submit_backend_rerun_20260828.sge cut the DAG with
+#   --until merge_snip_inventory merge_mask_geometry ... merge_death_event
+# which runs up to and including those nine merges and STOPS. build_analysis_ready is their
+# immediate consumer -- it fans in seven merged artifacts plus plate_metadata -- so it never ran,
+# and neither did analysis_ready_report or the rollup. Result: fresh merges built from the
+# re-rendered snips, but analysis_ready parquets still dated July/August and derived from the OLD
+# snips. Verified 2026-09-02: 20230613 analysis_ready was 2026-07-28 while its merges were current.
+# The three arrays WITHOUT --until (SeaHub, groupAB, repeat-position rerun) all have fresh files;
+# only the backend manifest is affected. Cutting the DAG there was the wrong call: new snips mean
+# new measurements mean a new analysis_ready.
+#
+# ⚠️ --rerun-triggers mtime IS LOAD-BEARING. Under Snakemake's DEFAULT triggers (code/params/input/
+# software-env) this same target wants 150 materialize_image_product_for_well, 75
+# frame_detections_per_well and 75 frame_masks_per_well PER EXPERIMENT -- GroundingDINO and SAM2,
+# re-triggered by the 2026-08-30 ingest edits (repeat_positions.py, frame_tiler.py). Dry-run
+# verified on 20230613: default => 1000+ jobs incl. GPU work; mtime => exactly 4 jobs, no GPU.
+# Do not drop that flag.
+#
+# NO GPU. Neither build_analysis_ready (a pandas fan-in join) nor analysis_ready_report (matplotlib
+# PNGs) declares gpu=1; only materialization, frame_detections and frame_masks do, and none of them
+# run here. This array requests no gpgpu at all, so it cannot crowd out GPU work.
+#
+# SCOPE: the 128 backend experiments that reached FINISHED. The 7 that did not are excluded --
+# their merges are incomplete, so the fan-in would fail on missing inputs:
+#   task 1   20240813_extras                 zero-detection well
+#   task 11  20260320_cilia_crispant_48hpf   zero-detection well
+#   task 34  20230831                        plate metadata duplicate column 4/4.1
+#   task 122 20260304                        motion_blur_qc: aligned mask contains zero pixels
+#   task 128 20260326_wt_ref                 motion_blur_qc: no valid adjacent z-plane pairs
+#   task 132 20260417_irx_pilot              PermissionError on .snakemake metadata (not data)
+#   task 133 20260418_irx_pilot              PermissionError on .snakemake metadata (not data)
