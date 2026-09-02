@@ -50,6 +50,14 @@ SNAKEMAKE="${CONDA_BASE}/envs/${CONDA_ENV}/bin/snakemake"
 PYTHON="${CONDA_BASE}/envs/${CONDA_ENV}/bin/python"
 CORES=4
 TARGET="analysis_ready"
+# WHY --forcerun (added 2026-08-28, second attempt). mtime alone is NOT sufficient here. The killed
+# first attempt left a snip_inventory for every well carrying is_valid_snip=False and
+# error_message="LegacySnipPathConflict: ...". Those files are NEWER than their inputs, so Snakemake
+# treats them as current, never re-renders, and death_detection then dies on the poisoned row with
+# "1 universe snip(s) have no computed flags" -- 691 wells across the first 8 shards. The reason to
+# re-render is a CODE fix (link_legacy_flat_path now replaces a superseded flat file instead of
+# refusing) that mtime cannot see, which is exactly what the backend array forces.
+FORCE_RULE="snip_materialization_per_well"
 
 if [[ -z "${SGE_TASK_ID:-}" || "${SGE_TASK_ID}" == "undefined" ]]; then
     echo "ERROR: submit this script as an SGE array job." >&2
@@ -120,6 +128,7 @@ fi
     --directory "${SMK_WORKDIR}" \
     --cores "${CORES}" \
     --resources gpu=1 \
+    --forcerun "${FORCE_RULE}" \
     --latency-wait 300 \
     --rerun-triggers mtime \
     --keep-going \

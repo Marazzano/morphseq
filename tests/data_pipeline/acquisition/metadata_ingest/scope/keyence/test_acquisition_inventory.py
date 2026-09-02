@@ -215,3 +215,73 @@ def test_sources_readable_raises_named_error_on_missing_path():
     df = pd.DataFrame({"source_tiff_path": ["/does/not/exist_CH1.tif"]})
     with pytest.raises(ValueError, match="does not exist"):
         assert_keyence_acquisition_sources_readable(df, scope_label="test")
+
+
+class TestRepeatStagePositions:
+    """A well whose stage position was set twice yields two XY dirs with the same marker.
+
+    Observed 2026-08-30 on four experiments: 97 XY directories for 96 wells, both XY06 and XY97
+    carrying ``_A06``. Both are complete, valid acquisitions of one physical well. Unioned into one
+    per-well inventory they duplicate every (time, tile, z) cell, and materialization then refuses
+    the well -- taking the whole experiment down with it.
+
+    The position mapping applies the same rule, but it CANNOT cover this: the inventory is built by
+    walking the raw tree and never reads the mapping, so the rule has to hold on both sides.
+    """
+
+    def _tree_with_repeat(self, tmp_path):
+        raw_dir = tmp_path / _EXPERIMENT
+        _make_well_tree(raw_dir, "XY06", tiles=(1, 2), zs=(1, 2), channels=(1,), times=(1,),
+                        marker="A06")
+        _make_well_tree(raw_dir, "XY97", tiles=(1, 2), zs=(1, 2), channels=(1,), times=(1,),
+                        marker="A06")  # the re-set position, appended last
+        _make_well_tree(raw_dir, "XY13", tiles=(1, 2), zs=(1, 2), channels=(1,), times=(1,),
+                        marker="B12")
+        return raw_dir
+
+    def test_only_the_first_acquisition_survives(self, tmp_path):
+        df = build_keyence_acquisition_inventory(
+            experiment_id=_EXPERIMENT,
+            raw_data_dir=self._tree_with_repeat(tmp_path),
+            scrape_plane_metadata=_stub_scrape,
+        )
+
+        a06 = df[df["well_index"] == "A06"]
+        assert len(a06) == 4, "2 tiles x 2 Z from ONE acquisition, not both"
+        assert set(a06["position_index"]) == {6}, "the lowest position_index is kept"
+        assert not a06["source_tiff_path"].astype(str).str.contains("/XY97/").any()
+
+    def test_no_duplicate_cells_remain(self, tmp_path):
+        # The exact condition materialize_well_keyence refuses on.
+        df = build_keyence_acquisition_inventory(
+            experiment_id=_EXPERIMENT,
+            raw_data_dir=self._tree_with_repeat(tmp_path),
+            scrape_plane_metadata=_stub_scrape,
+        )
+
+        a06 = df[df["well_index"] == "A06"]
+        assert not a06.duplicated(list(KEYENCE_ACQUISITION_CELL_KEY), keep=False).any()
+
+    def test_the_other_wells_are_untouched(self, tmp_path):
+        # De-duplication must not cost a well, nor plane rows from wells that never repeated.
+        df = build_keyence_acquisition_inventory(
+            experiment_id=_EXPERIMENT,
+            raw_data_dir=self._tree_with_repeat(tmp_path),
+            scrape_plane_metadata=_stub_scrape,
+        )
+
+        assert set(df["well_index"]) == {"A06", "B12"}
+        assert len(df[df["well_index"] == "B12"]) == 4
+
+    def test_an_ordinary_plate_is_unchanged(self, tmp_path):
+        raw_dir = tmp_path / _EXPERIMENT
+        _make_well_tree(raw_dir, "XY06", tiles=(1, 2), zs=(1, 2), channels=(1,), times=(1,),
+                        marker="A06")
+        _make_well_tree(raw_dir, "XY13", tiles=(1, 2), zs=(1, 2), channels=(1,), times=(1,),
+                        marker="B12")
+
+        df = build_keyence_acquisition_inventory(
+            experiment_id=_EXPERIMENT, raw_data_dir=raw_dir, scrape_plane_metadata=_stub_scrape
+        )
+
+        assert len(df) == 8, "nothing to de-duplicate means nothing is dropped"

@@ -1,0 +1,46 @@
+# Generated 2026-08-30. The experiments that failed groupAB_fullrun (job 24133371, tasks 8-12)
+# on two ingest-level bugs, both fixed 2026-08-30.
+# FORMAT: <experiment> <scope>   (SGE array task N == Nth non-comment line)
+#
+# BUG 1 -- REPEAT STAGE POSITIONS (4 experiments). A well's stage position was set twice during
+# scope setup, so the export carries one extra XY directory: 97 positions for 96 wells (65 for 64
+# on the b9d2 14hpf plate), with two directories sharing one well marker. Both are complete, valid
+# acquisitions of the same physical well; no well is missing. They unioned into a single per-well
+# inventory and materialization refused the well:
+#     ValueError: Duplicate Keyence time/tile/z inventory cells for well=...
+# Fixed in scope/keyence/repeat_positions.py -- keep the LOWEST position_index, record the dropped
+# acquisition in mapping_provenance.json. Applied at BOTH the position mapping and the acquisition
+# inventory, because those two tables are built independently and the inventory never reads the
+# mapping.
+#
+#   experiment                             well   kept  dropped
+#   20260324_cep290_18hpf_24hpf_plate02    G08    XY80  XY97
+#   20260324_cep290_18hpf_plate01          G08    XY80  XY97
+#   20260331_b9d2_18hpf_plate01            A06    XY06  XY97
+#   20260414_b9d2_14hpf_plate02            B03    XY09  XY15
+#
+# BUG 2 -- OPENCV ALIGNMENT ASSERTION (1 experiment here; also 20250623_chem_35C_T02_1204, see
+# below). A feature-poor tile yields fewer descriptors than FLANN's knnMatch asks for, so OpenCV
+# asserts inside C++ rather than returning no matches:
+#     cv2.error: (-215:Assertion failed) (size_t)knn <= index_->size() in 'runKnnSearch_'
+# cv2.error is not a RuntimeError, so it escaped the handler that translates stitch2d's own
+# "Could not align tiles" into IncompleteTileAlignmentError, and killed the well. Fixed in
+# image_building/utils/frame_tiler.py -- translated at the same point, so it now falls through to
+# the master-params fallback every Keyence experiment has. With NO master it still fails loud.
+#
+#   20230525                               A07
+#
+# NOT IN THIS MANIFEST: 20250623_chem_35C_T02_1204 (well G11) hits the same OpenCV assertion, but
+# was still running as task 13 of job 24133371 when this was queued. Adding it here would have put
+# two Snakemake processes on one work directory. Queue it once that task exits.
+#
+# WHY --forcerun ingest_scope_metadata map_positions_to_wells. Both fixes are at INGEST. The
+# acquisition_inventory__keyence.csv and position_well_mapping.csv on disk were written before the
+# fix and still carry the duplicate rows; mtime cannot see a code change. Forcing those two rules
+# rebuilds them and cascades through the whole pipeline -- which is what these experiments need
+# regardless, since materialization never completed for them.
+20260324_cep290_18hpf_24hpf_plate02 Keyence
+20260324_cep290_18hpf_plate01 Keyence
+20260331_b9d2_18hpf_plate01 Keyence
+20260414_b9d2_14hpf_plate02 Keyence
+20230525 Keyence

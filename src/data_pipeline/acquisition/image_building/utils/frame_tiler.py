@@ -550,6 +550,7 @@ def _stitch_with_stitch2d(
     import json
     import tempfile
 
+    import cv2
     from stitch2d import StructuredMosaic
     from stitch2d.tile import OpenCVTile, Tile
 
@@ -597,6 +598,19 @@ def _stitch_with_stitch2d(
                         f"(load_params_path={load_params_path})."
                     ) from exc
                 raise
+            except cv2.error as exc:
+                # SAME CONDITION, DIFFERENT MESSENGER. A feature-poor tile (empty well, flat
+                # background, heavy defocus) can yield fewer descriptors than the k the matcher
+                # asks for. stitch2d's own "Could not align tiles" path never runs: OpenCV's FLANN
+                # asserts first, inside C++, and surfaces as
+                #   cv2.error: (-215:Assertion failed) (size_t)knn <= index_->size()
+                # which is not a RuntimeError and so escaped the handler above and killed the well.
+                # Alignment being impossible is exactly what the master-params fallback is for, so
+                # it is translated rather than propagated.
+                raise IncompleteTileAlignmentError(
+                    f"stitch2d alignment failed inside OpenCV feature matching -- too few "
+                    f"keypoints on at least one tile (load_params_path={load_params_path}): {exc}"
+                ) from exc
 
     coords = mosaic.params.get("coords", {})
     if len(coords) != len(tile_images):
