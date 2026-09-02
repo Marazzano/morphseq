@@ -1,11 +1,9 @@
-import sys
-sys.path.append("/net/trapnell/vol1/home/nlammers/projects/data/morphseq/")
 from src.legacy.vae import BaseEncoder, BaseDecoder
 from src.legacy.vae import ModelOutput
 import torch.nn as nn
 import torch
 import numpy as np
-from src.functions.utilities import conv_output_shape
+from src.core.functions.utilities import conv_output_shape
 from scipy.stats import ortho_group
 
 # Define an encoder class with tuneable variables for the number of convolutional layers ad the depth of the conv kernels

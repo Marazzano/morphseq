@@ -1,6 +1,3 @@
-import sys
-sys.path.append("/net/trapnell/vol1/home/nlammers/projects/data/morphseq/")
-
 import ntpath
 from math import floor
 import pandas as pd

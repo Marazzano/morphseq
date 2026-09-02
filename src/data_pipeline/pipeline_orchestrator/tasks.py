@@ -495,14 +495,15 @@ def cmd_frame_detections(args: argparse.Namespace) -> None:
 
 
 def cmd_validate_snip_inventory(args: argparse.Namespace) -> None:
-    import pandas as pd
-
-    from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_identity_contract import (
-        validate_snip_inventory_contract,
+    from data_pipeline.object_extraction.snip_processing.inventory_contract import (
+        read_snip_inventory,
     )
 
-    df = pd.read_csv(args.input_csv)
-    validate_snip_inventory_contract(df, scope_label=str(args.input_csv))
+    read_snip_inventory(
+        args.input_csv,
+        sidecar_path=args.provenance_json,
+        require_sidecar=True,
+    )
     args.output_flag.parent.mkdir(parents=True, exist_ok=True)
     args.output_flag.write_text("ok\n")
 
@@ -1484,7 +1485,13 @@ def build_parser() -> argparse.ArgumentParser:
                             help="experiment id to classify ({collection}_coll_{plate} or a single id)")
     p_classify.add_argument("--raw-root", type=Path, required=True,
                             help="raw image root containing the _coll dir (read only for a collection)")
-    p_classify.add_argument("--microscope", default="Keyence", choices=["Keyence", "YX1"])
+    # SeaHub belongs here even though it is not a microscope the native producers can read.
+    # build_collection_provenance is the one early-DAG rule NOT gated by front_end.mode, so it runs
+    # in dropin mode too and is handed that mode's scope token. Omitting it killed every dropin run
+    # at classify. Safe: a dropin id carries no `_coll_` marker, so classification takes the
+    # single-source branch, which only formats raw_root into a string and never reads it.
+    p_classify.add_argument("--microscope", default="Keyence",
+                            choices=["Keyence", "YX1", "SeaHub"])
     p_classify.add_argument("--output-json", type=Path, required=True,
                             help="destination for the collection_provenance.json artifact")
     p_classify.set_defaults(func=cmd_build_collection_provenance)
@@ -1678,6 +1685,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_si_validate = sub.add_parser("validate-snip-inventory")
     p_si_validate.add_argument("--input-csv", type=Path, required=True)
+    p_si_validate.add_argument("--provenance-json", type=Path, required=True)
     p_si_validate.add_argument("--output-flag", type=Path, required=True)
     p_si_validate.set_defaults(func=cmd_validate_snip_inventory)
 

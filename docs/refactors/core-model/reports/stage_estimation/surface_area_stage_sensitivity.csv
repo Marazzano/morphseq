@@ -1,0 +1,8 @@
+scenario,stage_shift_hpf,experiment_count,applicable_row_count,flagged_count,flag_flip_vs_recomputed_baseline_count,stored_flag_comparable_count,stored_vs_recomputed_baseline_disagreement_count,flagged_fraction,flip_fraction
+additive_stage_offset,-3.0,3,20316,8922,1783,20316,0,0.43916125221500296,0.08776333924000787
+additive_stage_offset,-1.5,3,20316,9543,1118,20316,0,0.4697282929710573,0.055030517818468204
+additive_stage_offset,-0.5,3,20316,10151,446,20316,0,0.4996554439850364,0.021953140381964952
+additive_stage_offset,0.0,3,20316,10477,0,20316,0,0.5157019098247686,0.0
+additive_stage_offset,0.5,3,20316,10791,448,20316,0,0.5311577082102776,0.022051584957668832
+additive_stage_offset,1.5,3,20316,11333,1096,20316,0,0.5578361882260288,0.053947627485725534
+additive_stage_offset,3.0,3,20316,12145,1986,20316,0,0.5978046859618035,0.09775546367395156

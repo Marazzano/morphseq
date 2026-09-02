@@ -21,7 +21,6 @@ lossconfig:
   schedule_metric: True
   metric_weight: 1.0
   temperature: 0.1
-  margin: 1.0
   
 
   # PIPS
@@ -39,7 +38,7 @@ lossconfig:
   
 
 dataconfig:
-  target: "BasicDataset"
+  target_name: "NTXentDataset"
   num_workers: 8
   batch_size: 256
   wrap: True
@@ -47,7 +46,6 @@ dataconfig:
 
 trainconfig:
   benchmark: True
-  accumulate_grad_batches: 1
   max_epochs: 50
   save_epochs: [9, 19, 29]
   eval_gpu_flag: True

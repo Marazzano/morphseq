@@ -1,0 +1,9 @@
+qc_fail_reason,count
+sa_outlier_flag,241274
+focus_flag,173605
+persistence_dead_flag,115150
+viability_dead_flag,110782
+motion_blur_flag,70583
+edge_flag,51708
+overlapping_mask_flag,45759
+discontinuous_mask_flag,8129

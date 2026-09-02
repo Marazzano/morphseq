@@ -1,4 +1,7 @@
 import importlib
+import copy
+import subprocess
+from dataclasses import replace
 from pytorch_lightning.strategies import DDPStrategy
 from src.core.models import build_from_config
 from glob2 import glob
@@ -9,7 +12,7 @@ from pytorch_lightning.loggers import TensorBoardLogger
 # import hydra
 from src.core.lightning import LitModel
 import pytorch_lightning as pl
-from src.core.lightning import SaveRunMetadata, EpochListCheckpoint
+from src.core.lightning import EpochListCheckpoint, SaveRunMetadata, SaveRunProvenance
 import torch
 from hydra.core.hydra_config import HydraConfig
 from pytorch_lightning.callbacks import ModelCheckpoint
@@ -19,6 +22,9 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from pytorch_lightning.loggers import WandbLogger
+from hydra.utils import instantiate
+from src.core.data.manifest_types import ManifestPolicy
+from src.core.data.dataset_configs import PipelineMetricDataConfig
 import src.core.run.compat  # noqa: F401 — register legacy module aliases
 from src.core.models.arch_spec import save_arch_spec, load_encoder  # noqa: F401 — re-exported for convenience
 
@@ -136,7 +142,7 @@ def train_vae(cfg):
         config = cfg
     else:
         raise Exception("cfg argument dtype is not recognized")
-    full_config = config.copy()
+    full_config = copy.deepcopy(config)
     model, model_config, data_config, loss_fn, pips_fn, train_config = initialize_model(config)
 
     if hasattr(model_config, "ckpt_path"):
@@ -155,9 +161,16 @@ def train_vae(cfg):
     if HydraConfig.initialized():
         # we’re inside a Hydra job
         out_dir = HydraConfig.get().runtime.output_dir
-    else:
+    elif "run_output_dir" in full_config:
+        out_dir = str(Path(full_config["run_output_dir"]).resolve())
+    elif hasattr(data_config, "root"):
         run_name = f"{model_config.name}_z{model_config.ddconfig.latent_dim:02}_e{train_config.max_epochs}_b{int(100 * loss_fn.kld_weight)}_percep"
         out_dir = os.path.join(data_config.root, "output", run_name, "")
+    else:
+        raise ValueError(
+            "Manifest-backed training outside Hydra requires an absolute run_output_dir."
+        )
+    out_dir = str(Path(out_dir).resolve())
 
     # Save arch_spec.json so load_encoder() can reconstruct the model without Hydra
     try:
@@ -173,18 +186,23 @@ def train_vae(cfg):
         name="tensorboard"
     )
 
-    wb_conf = config["wandb"]
-    wandb_logger = WandbLogger(
-        project=wb_conf["project"],
-        entity=wb_conf.get("entity"),
-        name=wb_conf.get("run_name"),
-        config=full_config,
-        offline=wb_conf.get("offline", False),
-        save_dir=out_dir,
-        sync_tensorboard=True
-    )
+    wb_conf = full_config.get("wandb", {})
+    wandb_enabled = bool(wb_conf.get("enabled", True))
+    loggers = [tb_logger]
+    wandb_logger = None
+    if wandb_enabled:
+        wandb_logger = WandbLogger(
+            project=wb_conf["project"],
+            entity=wb_conf.get("entity"),
+            name=wb_conf.get("run_name"),
+            config=full_config,
+            offline=wb_conf.get("offline", False),
+            save_dir=out_dir,
+            sync_tensorboard=True
+        )
+        loggers.insert(0, wandb_logger)
 
-    ckpt_path = os.path.join(wandb_logger.save_dir, "checkpoints")
+    ckpt_path = os.path.join(out_dir, "checkpoints")
     checkpoint_cb = ModelCheckpoint(
         dirpath=ckpt_path,  # same top‑level folder as your logger
         filename="epoch{epoch:02d}",  # e.g. epoch=05.ckpt
@@ -212,15 +230,39 @@ def train_vae(cfg):
     #     devices = 1
     #     strategy = "ddp_cpu"  # uses Gloo on CPU
 
+    strategy = train_config.strategy
+    if strategy == "ddp_find_unused_parameters_true":
+        strategy = DDPStrategy(find_unused_parameters=True)
+
+    callbacks = []
+    if getattr(data_config, "manifest_result", None) is not None:
+        run_artifacts_dir = full_config.get("run_artifacts_dir")
+        if run_artifacts_dir is None:
+            raise ValueError(
+                "Manifest-backed training requires an absolute run_artifacts_dir."
+            )
+        callbacks.append(
+            SaveRunProvenance(
+                data_cfg=data_config,
+                resolved_config=full_config,
+                run_artifacts_dir=run_artifacts_dir,
+                adapter_git_revision=_adapter_git_revision(),
+                publish_to_wandb=wandb_enabled,
+            )
+        )
+    else:
+        callbacks.append(SaveRunMetadata(data_config))
+
     # 3) train with Lightning
-    trainer = pl.Trainer(logger=[wandb_logger, tb_logger],
+    trainer = pl.Trainer(logger=loggers,
                          max_epochs=train_config.max_epochs,
-                         precision=16,
-                         callbacks=[SaveRunMetadata(data_config), checkpoint_cb] + spec_ckpt_cb,
-                         accelerator="gpu",
+                         precision=train_config.precision,
+                         callbacks=callbacks + [checkpoint_cb] + spec_ckpt_cb,
+                         accelerator=train_config.accelerator,
                          log_every_n_steps=10,
-                         strategy=DDPStrategy(find_unused_parameters=True),
-                         devices="auto",
+                         strategy=strategy,
+                         devices=train_config.devices,
+                         benchmark=train_config.benchmark,
                          )
 
     # wandb_run = trainer.logger.experiment
@@ -247,12 +289,28 @@ def train_vae(cfg):
     # try:
     trainer.fit(lit)
     # tell logger to close
-    wandb_logger.experiment.finish()
+    if wandb_logger is not None:
+        wandb_logger.experiment.finish()
     # except:
     #     wandb.finish()
     #     print("Erorr encountered during training. Skipping.")
 
     return {}
+
+
+def _adapter_git_revision() -> str:
+    repo_root = Path(__file__).resolve().parents[3]
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_root,
+            text=True,
+            stderr=subprocess.PIPE,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise RuntimeError(
+            f"Could not resolve adapter git revision from repository {repo_root}."
+        ) from exc
 
 
 # ----------------------------------------------------------------------
@@ -323,16 +381,47 @@ def get_obj_from_str(string, reload=False):
 
 
 def initialize_model(config):
-    # initialize the model
-    config_full = config.copy()
-    model_dict = config.pop("model", OmegaConf.create())
+    # Preserve the resolved caller configuration; model config assembly mutates
+    # the mapping it receives while pruning the legacy nested data defaults.
+    config_full = copy.deepcopy(config)
+    model_dict = config_full.get("model", OmegaConf.create())
     target = model_dict["config_target"]
     model_config = get_obj_from_str(target)
-    model_config = model_config.from_cfg(cfg=config_full)
+    model_config = model_config.from_cfg(cfg=copy.deepcopy(config_full))
+
+    # The manifest data group is top-level so it can be selected independently
+    # of the legacy model YAML. Hydra recursively instantiates its typed policy
+    # objects; no core module imports or discovers pipeline files here.
+    if "data" in config_full:
+        data_config = _instantiate_pipeline_data_config(config_full["data"])
+        if tuple(data_config.input_dim) != tuple(model_config.ddconfig.input_dim):
+            raise ValueError(
+                "Manifest data/model input dimensions disagree: "
+                f"data.input_dim={tuple(data_config.input_dim)!r}, "
+                f"model.ddconfig.input_dim={tuple(model_config.ddconfig.input_dim)!r}."
+            )
+        model_config.dataconfig = data_config
 
     # parse dataset related options and merge with defaults as needed
     data_config = model_config.dataconfig
     data_config.make_metadata()
+
+    if isinstance(data_config, PipelineMetricDataConfig):
+        pairing_policy = data_config._require_pairing_policy()
+        configured_sampler_window = float(model_config.lossconfig.sampler_age_window)
+        indexed_sampler_window = float(pairing_policy.sampler_age_window)
+        if configured_sampler_window != indexed_sampler_window:
+            raise ValueError(
+                "Metric sampler age-window mismatch: "
+                f"lossconfig.sampler_age_window={configured_sampler_window:g}, "
+                f"pairing_policy.sampler_age_window={indexed_sampler_window:g}. "
+                "Sampler and loss windows are distinct settings, but the sampler-window "
+                "value must agree at their integration boundary."
+            )
+        model_config.lossconfig.relation_policy = data_config.relation_policy
+        model_config.lossconfig.metric_group_names = (
+            data_config.metric_mapping_artifact.group_names
+        )
 
     # initialize model
     model = build_from_config(model_config)
@@ -344,6 +433,43 @@ def initialize_model(config):
     train_config = model_config.trainconfig
 
     return model, model_config, data_config, loss_fn, pips_fn, train_config
+
+
+def _instantiate_pipeline_data_config(config):
+    """Instantiate Hydra's data group while preserving tuple-valued contracts."""
+
+    data_config = instantiate(config, _convert_="object")
+    policy = data_config.manifest_policy
+    if not isinstance(policy, ManifestPolicy):
+        raise TypeError(
+            "Pipeline data configuration did not instantiate ManifestPolicy; "
+            f"got {type(policy).__name__}."
+        )
+    data_config.manifest_policy = replace(
+        policy,
+        experiment_ids=tuple(policy.experiment_ids),
+        allowed_product_keys=tuple(policy.allowed_product_keys),
+        qc=replace(
+            policy.qc,
+            accepted_statuses=tuple(policy.qc.accepted_statuses),
+            required_flags_false=tuple(policy.qc.required_flags_false),
+        ),
+        stage=replace(
+            policy.stage,
+            accepted_statuses=tuple(policy.stage.accepted_statuses),
+        ),
+        covariates=replace(
+            policy.covariates,
+            required_columns=tuple(policy.covariates.required_columns),
+        ),
+        splits=replace(
+            policy.splits,
+            explicit_test_experiments=tuple(policy.splits.explicit_test_experiments),
+            required_splits=tuple(policy.splits.required_splits),
+        ),
+    )
+    data_config.input_dim = tuple(data_config.input_dim)
+    return data_config
 
 
 # ----------------------------------------------------------------------

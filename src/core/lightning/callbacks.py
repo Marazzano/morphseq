@@ -1,7 +1,9 @@
-import json, os, subprocess
+import os
 from pytorch_lightning import Callback
 import pickle
 from pathlib import Path
+
+from src.core.run.provenance import RunProvenanceBundle, write_run_provenance
 
 
 class SaveRunMetadata(Callback):
@@ -28,6 +30,59 @@ class SaveRunMetadata(Callback):
         #     metric_dir = os.path.join(run_dir, "metric_array.npy")
         #     self.metric_array = self.metric_array
 
+        self._written = True
+
+
+class SaveRunProvenance(Callback):
+    """Persist the manifest-backed run identity independently of online logging."""
+
+    def __init__(
+        self,
+        *,
+        data_cfg,
+        resolved_config,
+        run_artifacts_dir,
+        adapter_git_revision,
+        publish_to_wandb=False,
+    ):
+        manifest_result = getattr(data_cfg, "manifest_result", None)
+        if manifest_result is None:
+            raise ValueError(
+                "SaveRunProvenance requires a built manifest_result; "
+                "call PipelineDataConfig.make_metadata() first."
+            )
+        mapping_policy = getattr(data_cfg, "metric_provenance_payload", None)
+        self.bundle = RunProvenanceBundle.from_manifest_result(
+            manifest_result=manifest_result,
+            resolved_config=resolved_config,
+            adapter_git_revision=adapter_git_revision,
+            mapping_policy=mapping_policy,
+        )
+        self.run_artifacts_dir = Path(run_artifacts_dir)
+        self.publish_to_wandb = bool(publish_to_wandb)
+        self._written = False
+
+    def on_train_start(self, trainer, pl_module):
+        if self._written:
+            return
+
+        wandb_run = None
+        if self.publish_to_wandb:
+            for logger in trainer.loggers:
+                if logger.__class__.__name__ == "WandbLogger":
+                    wandb_run = logger.experiment
+                    break
+            if wandb_run is None:
+                raise RuntimeError(
+                    "Manifest provenance was configured for W&B publication, "
+                    "but the Trainer has no WandbLogger."
+                )
+
+        write_run_provenance(
+            run_artifacts_dir=self.run_artifacts_dir,
+            bundle=self.bundle,
+            wandb_run=wandb_run,
+        )
         self._written = True
 
 class EpochListCheckpoint(Callback):

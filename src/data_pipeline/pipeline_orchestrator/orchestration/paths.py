@@ -45,7 +45,7 @@ stuffing one token into another's slot. Minting/parsing identity is the IDENTITY
 Identity flows *into* orchestration, never the other way.
 
 THREE THINGS KEPT DELIBERATELY SEPARATE (see
-docs/refactors/streamline-snakemake/well_id_throughline_refactor_plan.md and
+docs/data_pipeline/specs/well_id_throughline_refactor_plan.md and
 target/front_end_naming_and_flow.md):
 
     Root      output_root            env.yaml (machine-specific)    -> passed in here as `root`

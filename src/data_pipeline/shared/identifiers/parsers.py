@@ -8,7 +8,7 @@ Identifier strings are opaque outside ``shared/identifiers``. Code outside this
 package must use constructors and parsers — never string splitting, regex matching,
 or f-string minting. Tiny fence, giant moat.
 
-See docs/refactors/streamline-snakemake/identifier_and_wildcard_contract.md.
+See docs/data_pipeline/specs/identifier_and_wildcard_contract.md.
 """
 
 from __future__ import annotations

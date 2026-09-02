@@ -21,18 +21,17 @@ def _abs_ancestor(path: str, levels: str) -> str:
 OmegaConf.register_new_resolver("ancestor", _abs_ancestor)
 
 @hydra.main(version_base="1.1",
-            config_path="/src/core/hydra_configs",
+            config_path="../hydra_configs",
             config_name="base")
 
 def main(cfg: DictConfig):
     # immediately turn it into a plain dict:
     cfg_dict = OmegaConf.to_container(cfg, resolve=True)
     train_vae(cfg_dict)
-    results_dir = os.path.join(cfg.model.dataconfig.root, "training_outputs", "")
-    collect_results_recursive(results_dir=results_dir)
+    if "data" not in cfg:
+        results_dir = os.path.join(cfg.model.dataconfig.root, "training_outputs", "")
+        collect_results_recursive(results_dir=results_dir)
 
 if __name__ == "__main__":
     main()
-
-
 

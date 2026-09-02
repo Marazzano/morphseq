@@ -53,6 +53,7 @@ from data_pipeline.object_extraction.snip_processing.augmentation import (
     generate_background_noise,
 )
 from data_pipeline.object_extraction.snip_processing.defaults import DEFAULT_BLEND_RADIUS_UM
+from data_pipeline.object_extraction.snip_processing.provenance import rendering_sidecar_path
 
 
 WELL_ID = build_well_id("20250912", "B01")
@@ -214,6 +215,30 @@ def test_seahub_background_sampling_falls_back_to_canvas_fill(tmp_path):
     assert _estimate_background(masks, inventory) == (7.0, 0.0)
 
 
+def test_background_sampling_uses_the_selected_sibling_product(tmp_path):
+    mask_image_id = "well_BF_t0000"
+    source_image_id = "well_RFP_t0000"
+    image_path = tmp_path / "rfp.png"
+    image = np.full((20, 20), 33, dtype=np.uint16)
+    skio.imsave(str(image_path), image, check_contrast=False)
+
+    mask = np.zeros_like(image, dtype=np.uint8)
+    mask[5:15, 5:15] = 1
+    masks = pd.DataFrame(
+        [{"image_id": mask_image_id, "mask_rle": json.dumps(encode_binary_mask_rle(mask))}]
+    )
+    inventory = pd.DataFrame(
+        [{"image_id": source_image_id, "image_path": str(image_path), "source_scope": "keyence"}]
+    ).set_index("image_id")
+    source_rows = {0: (source_image_id, inventory.loc[source_image_id], 2.17)}
+
+    assert _estimate_background(
+        masks,
+        inventory,
+        source_rows_by_mask=source_rows,
+    ) == (33.0, 0.0)
+
+
 def _make_frame_inventory(tmp_images: Path) -> pd.DataFrame:
     # Fixture images must be byte-stable across runs, or a pixel regression test pins the RNG
     # rather than the pipeline. Use a LOCAL Generator, never np.random.seed(): the code under test
@@ -334,7 +359,11 @@ def test_run_snip_processing_produces_inventory(tmp_path):
         frame_inventory_csv=frame_inventory_csv,
         physical_embryo_registry_csv=registry_csv,
         snip_transform_table_csv=_run_geometry(
-            tmp_path, frame_masks_csv, frame_inventory_csv, registry_csv
+            tmp_path,
+            frame_masks_csv,
+            frame_inventory_csv,
+            registry_csv,
+            target_pixel_size_um=6.5,
         ),
         output_csv=output_csv,
         snips_dir=snips_dir,
@@ -362,6 +391,20 @@ def test_run_snip_processing_produces_inventory(tmp_path):
     assert set(df["source_micrometers_per_pixel"]) == {2.17}
     assert set(df["snip_micrometers_per_pixel"]) == {6.5}
 
+    sidecar = json.loads(rendering_sidecar_path(output_csv).read_text())
+    product = sidecar["products"]["BF__projection__focus_stack__clahe_blend"]
+    rendering = product["rendering"]
+    assert rendering["target_micrometers_per_pixel"] == 6.5
+    assert rendering["blend_radius_micrometers"] == {
+        "value": 20.0,
+        "applied_to_pixels": True,
+    }
+    assert rendering["resampling"]["source_calibration_column"] == (
+        "image_micrometers_per_pixel"
+    )
+    assert rendering["file_encoding"]["processed_snip"]["dtype"] == "uint8"
+    assert product["observations"]["source_micrometers_per_pixel_values"] == [2.17]
+
     # All snips should be valid.
     failures = df[~df["is_valid_snip"].astype(bool)]
     assert failures.empty, f"some snips failed:\n{failures[['snip_id', 'error_message']]}"
@@ -373,6 +416,41 @@ def test_run_snip_processing_produces_inventory(tmp_path):
     for _, row in df.iterrows():
         png = tmp_path / str(row["processed_snip_path"])
         assert png.exists(), f"pixel file missing: {png}"
+
+
+@pytest.mark.parametrize("bad_scale", [None, np.nan, 0.0, -1.0, "not-a-number"])
+def test_run_snip_processing_rejects_invalid_source_scale_before_writing(
+    tmp_path, bad_scale
+):
+    _, frame_masks_csv, frame_inventory_csv, registry_csv = _write_inputs(tmp_path)
+    transform_table = _run_geometry(
+        tmp_path, frame_masks_csv, frame_inventory_csv, registry_csv
+    )
+    inventory = pd.read_csv(frame_inventory_csv)
+    inventory["image_micrometers_per_pixel"] = inventory[
+        "image_micrometers_per_pixel"
+    ].astype(object)
+    inventory.loc[0, "image_micrometers_per_pixel"] = bad_scale
+    inventory.to_csv(frame_inventory_csv, index=False)
+    output_csv = tmp_path / "snip_inventory.csv"
+    snips_dir = tmp_path / "snips"
+
+    with pytest.raises(ValueError, match="source-calibration preflight failed"):
+        run_snip_processing(
+            frame_masks_csv=frame_masks_csv,
+            frame_inventory_csv=frame_inventory_csv,
+            physical_embryo_registry_csv=registry_csv,
+            snip_transform_table_csv=transform_table,
+            output_csv=output_csv,
+            snips_dir=snips_dir,
+            output_root=tmp_path,
+            target_pixel_size_um=2.17,
+            output_height_px=64,
+            output_width_px=64,
+        )
+
+    assert not output_csv.exists()
+    assert not snips_dir.exists()
 
 
 def test_run_snip_processing_joins_registry_physical_embryo_id(tmp_path):

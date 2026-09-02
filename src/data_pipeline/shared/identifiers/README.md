@@ -69,10 +69,10 @@ This package was split out of the flat `shared/identifiers.py` in **Scope 1** wi
 - `build_well_id(experiment_id, well_index)` → `"{experiment_id}_{well_index}"`
 
 The **TARGET** refactor (**Scope 2**, see
-`docs/refactors/streamline-snakemake/target/well_id_throughline_refactor_plan.md`)
+`docs/data_pipeline/specs/target/well_id_throughline_refactor_plan.md`)
 makes `well_index` column renamed to `well`.
 
 `split_well_id` and `validate_well_id` describe **TARGET** (global-`well_id`)
 behavior. They are scaffolded here so the package shape is final and the contract is visible.
 
-See also `docs/refactors/streamline-snakemake/identifier_and_wildcard_contract.md`.
+See also `docs/data_pipeline/specs/identifier_and_wildcard_contract.md`.

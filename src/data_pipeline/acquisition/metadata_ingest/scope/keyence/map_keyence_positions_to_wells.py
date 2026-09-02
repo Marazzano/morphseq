@@ -17,6 +17,9 @@ from data_pipeline.acquisition.metadata_ingest.scope.keyence.raw_plane_parsing i
     _parse_keyence_xy_position_index,
     _read_keyence_well_marker,
 )
+from data_pipeline.acquisition.metadata_ingest.scope.keyence.repeat_positions import (
+    drop_repeat_well_positions,
+)
 from data_pipeline.shared.identifiers import build_well_id
 
 log = logging.getLogger(__name__)
@@ -229,6 +232,12 @@ def map_positions_to_wells_keyence(
     # Build DataFrame
     df = pd.DataFrame(rows)
 
+    # Before validation: one row per well. See repeat_positions for why the contract cannot do
+    # this itself, and why the acquisition inventory must apply the SAME rule.
+    df, dropped_repeat_positions = drop_repeat_well_positions(
+        df, well_column="well_id", warnings=warnings, label_column="source_position_name"
+    )
+
     validate_position_well_mapping(df, scope_label="Keyence position_well_mapping")
 
     # Write output CSV
@@ -246,10 +255,19 @@ def map_positions_to_wells_keyence(
         'mapping_summary': {
             'total_positions': int(len(df)),
             'total_wells': int(df['well_index'].nunique()),
-            'wells_with_multiple_positions': int((df['n_positions_in_well'] > 1).sum()),
+            # Counts wells that had MORE THAN ONE stage position, i.e. how many repeat positions
+            # were dropped above. It previously read `(df['n_positions_in_well'] > 1).sum()`, which
+            # is a different quantity entirely: _count_positions_per_well counts P* SUB-directories
+            # inside a single position directory, so it is 1 for every row of an ordinary export and
+            # this summary was structurally always 0 -- the one field meant to surface duplicate
+            # positions could never report one.
+            'wells_with_multiple_positions': len(dropped_repeat_positions),
             'min_position_index': int(df['position_index'].min()),
             'max_position_index': int(df['position_index'].max()),
         },
+        # The acquisitions that were set aside, so a dropped capture stays findable rather than
+        # vanishing silently.
+        'dropped_repeat_positions': dropped_repeat_positions or None,
         'warnings': warnings if warnings else None,
         'source_files': {
             'scope_metadata': str(scope_metadata_csv),

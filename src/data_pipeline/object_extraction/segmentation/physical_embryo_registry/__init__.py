@@ -10,6 +10,6 @@ parent ``physical_embryo_id`` must travel with every derived snip/embryo-grain r
 and be validated against every derived ID. This world owns the meaning of physical
 embryo identity; every downstream product merely calls the shared validator.
 
-See docs/refactors/streamline-snakemake/target/specs/detect-seg-track/targets/
+See docs/data_pipeline/specs/target/specs/detect-seg-track/targets/
 physical_embryo_registry_world.md.
 """

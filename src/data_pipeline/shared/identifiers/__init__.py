@@ -7,7 +7,7 @@ This ``__init__`` re-exports every public name so existing
 ``from data_pipeline.shared.identifiers import ...`` call sites keep working
 unchanged across the Scope-1 package split.
 
-See docs/refactors/streamline-snakemake/identifier_and_wildcard_contract.md
+See docs/data_pipeline/specs/identifier_and_wildcard_contract.md
 and target/well_id_throughline_refactor_plan.md (Scope 1 = this split; Scope 2 =
 the well_id-first / global-well_id signature flip).
 """

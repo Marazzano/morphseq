@@ -59,9 +59,32 @@ def _legacy_default_snip_inventory(experiment: str, *, well_id: str):
         path_mode=PATH_MODE_PER_WELL, well_id=well_id,
     )
 
+def _legacy_default_snip_inventory_validated(experiment: str, *, well_id: str):
+    """The .validated sentinel BESIDE the product-free alias. A symlink, never a real file.
+
+    Ten consumer rules require this path (curvature, pose, mask_geometry, focus_qc, death_detection,
+    mask_quality_qc, fraction_alive, stage_predictions, latent_embeddings, snip_auxiliary_masks) and
+    until 2026-08-28 NOTHING produced it: the alias rule aliased the CSV and stopped there. The gap
+    stayed invisible because pre-migration runs left a real file at every well, so Snakemake was
+    never asked to make one -- an input that already exists needs no producing rule. The moment a
+    well lacked it (a NEW experiment, or an old one where a single well never rendered) the DAG
+    failed to BUILD with MissingInputException, taking the whole experiment down rather than that
+    one well, and --keep-going could not help because there was no graph to run.
+    """
+    return rule_validated(
+        SNIP_INVENTORY_STEP, "legacy_default_snip_inventory", experiment,
+        path_mode=PATH_MODE_PER_WELL, well_id=well_id,
+    )
+
 def _snip_inventory_validated(experiment: str, *, path_mode: str, well_id: str | None = None, snip_product_key: str | None = None):
     fmt = {"snip_product_key": snip_product_key} if snip_product_key is not None else None
     return rule_validated(SNIP_INVENTORY_STEP, "snip_inventory", experiment, path_mode=path_mode, well_id=well_id, format_vars=fmt)
+
+def _snip_inventory_provenance(experiment: str, *, path_mode: str, well_id: str | None = None, snip_product_key: str | None = None):
+    return str(_snip_inventory_artifact(
+        experiment, "snip_inventory", path_mode=path_mode, well_id=well_id,
+        snip_product_key=snip_product_key,
+    )) + ".provenance.json"
 
 def _snip_inventory_artifacts_for_run(wc):
     # WELLS x PRODUCTS, over the AUTHORITATIVE shards -- never the compatibility alias, which would
@@ -80,6 +103,15 @@ def _snip_inventory_validated_for_run(wc):
         str(_snip_inventory_validated(
             wc.experiment, path_mode=PATH_MODE_PER_WELL, well_id=w, snip_product_key=k,
         ))
+        for w in wells_for_experiment(wc)
+        for k in SNIP_PRODUCT_KEYS
+    ]
+
+def _snip_inventory_provenance_for_run(wc):
+    return [
+        _snip_inventory_provenance(
+            wc.experiment, path_mode=PATH_MODE_PER_WELL, well_id=w, snip_product_key=k,
+        )
         for w in wells_for_experiment(wc)
         for k in SNIP_PRODUCT_KEYS
     ]
@@ -124,7 +156,7 @@ rule snip_geometry_per_well:
         )),
     params:
         target_pixel_size_um=lambda wc: float(
-            config.get("snip_processing", {}).get("target_pixel_size_um", 7.8)
+            config.get("snip_processing", {}).get("target_pixel_size_um", DEFAULT_TARGET_PIXEL_SIZE_UM)
         ),
         output_height_px=lambda wc: int(_resolve_snip_frame_shape(config)[0]),
         output_width_px=lambda wc: int(_resolve_snip_frame_shape(config)[1]),
@@ -184,6 +216,10 @@ rule snip_materialization_per_well:
             well_id="{well_id}",
             snip_product_key="{snip_product_key}",
         )),
+        provenance=_snip_inventory_provenance(
+            "{experiment}", path_mode=PATH_MODE_PER_WELL,
+            well_id="{well_id}", snip_product_key="{snip_product_key}",
+        ),
     params:
         snip_product_key=lambda wc: wc.snip_product_key,
         snips_dir=lambda wc: _snip_inventory_snips_dir(wc.experiment, wc.well_id),
@@ -238,6 +274,11 @@ rule legacy_default_snip_inventory_alias:
     RFP job never sees the legacy path at all, which is what makes "exactly one product owns the
     alias" structural instead of a convention.
 
+    ALIASES BOTH ARTIFACTS, the inventory AND its .validated sentinel. Consumers gate on the pair --
+    the shard for data, the sentinel for "this shard passed validation" -- so aliasing only the CSV
+    left the sentinel with no producer at all. That went unnoticed for as long as every well already
+    had one on disk from a pre-migration run; see _legacy_default_snip_inventory_validated.
+
     TODO(deprecate-legacy-snip-inventory-alias): remove with the last product-unaware consumer.
     """
     input:
@@ -246,8 +287,17 @@ rule legacy_default_snip_inventory_alias:
             path_mode=PATH_MODE_PER_WELL, well_id=wc.well_id,
             snip_product_key=DEFAULT_BF_SNIP_PRODUCT_KEY,
         )),
+        # Depending on the canonical SENTINEL (not just the shard) is what makes the alias
+        # unmakeable until the default product has actually validated -- the same gate the legacy
+        # consumers think they are getting.
+        default_validated=lambda wc: str(_snip_inventory_validated(
+            wc.experiment,
+            path_mode=PATH_MODE_PER_WELL, well_id=wc.well_id,
+            snip_product_key=DEFAULT_BF_SNIP_PRODUCT_KEY,
+        )),
     output:
         legacy_inventory=str(_legacy_default_snip_inventory("{experiment}", well_id="{well_id}")),
+        legacy_validated=str(_legacy_default_snip_inventory_validated("{experiment}", well_id="{well_id}")),
     run:
         from data_pipeline.object_extraction.snip_processing.legacy_snip_paths import (
             link_legacy_flat_path,
@@ -256,6 +306,11 @@ rule legacy_default_snip_inventory_alias:
         link_legacy_flat_path(
             canonical_path=Path(input.default_inventory),
             legacy_path=Path(output.legacy_inventory),
+            snip_product_key=DEFAULT_BF_SNIP_PRODUCT_KEY,
+        )
+        link_legacy_flat_path(
+            canonical_path=Path(input.default_validated),
+            legacy_path=Path(output.legacy_validated),
             snip_product_key=DEFAULT_BF_SNIP_PRODUCT_KEY,
         )
 
@@ -269,6 +324,10 @@ rule validate_snip_inventory_for_well:
             well_id="{well_id}",
             snip_product_key="{snip_product_key}",
         )),
+        provenance=_snip_inventory_provenance(
+            "{experiment}", path_mode=PATH_MODE_PER_WELL,
+            well_id="{well_id}", snip_product_key="{snip_product_key}",
+        ),
     output:
         validated=str(_snip_inventory_validated(
             "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}",
@@ -278,6 +337,7 @@ rule validate_snip_inventory_for_well:
         """
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks validate-snip-inventory \
           --input-csv "{input.snip_inventory}" \
+          --provenance-json "{input.provenance}" \
           --output-flag "{output.validated}"
         """
 
@@ -291,16 +351,21 @@ rule merge_snip_inventory:
         # sentinel, and collect_well_shard_paths (which requires both) sees zero validated shards
         # and raises "no shards to concatenate". Matches the SAFE merge rules (e.g. merge_frame_masks).
         per_well_validated=_snip_inventory_validated_for_run,
+        per_well_provenance=_snip_inventory_provenance_for_run,
     output:
         merged=str(_snip_inventory_artifact(
             "{experiment}", "snip_inventory",
             path_mode=PATH_MODE_MERGED,
         )),
+        merged_provenance=_snip_inventory_provenance(
+            "{experiment}", path_mode=PATH_MODE_MERGED,
+        ),
     shell:
         """
         {RUN} -c "
 from data_pipeline.pipeline_orchestrator.orchestration.well_runner import concat_well_shards_to_file
 from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_identity_contract import SNIP_INVENTORY_COLUMNS
+from data_pipeline.object_extraction.snip_processing.provenance import merge_rendering_sidecars
 from pathlib import Path
 # THE SHARDS SNAKEMAKE ALREADY RESOLVED, not a re-derivation. collect_well_shard_paths builds
 # per-well paths from the registry and knows nothing about the product dimension, so it cannot fill
@@ -308,5 +373,9 @@ from pathlib import Path
 # of truth regardless. input.per_well is wells x products by construction.
 shards = [Path(p) for p in '{input.per_well}'.split()]
 concat_well_shards_to_file(shards, '{output.merged}', required_columns=SNIP_INVENTORY_COLUMNS, sort_columns=['experiment_id', 'well_id', 'snip_id'])
+merge_rendering_sidecars(
+    [Path(p) for p in '{input.per_well_provenance}'.split()],
+    Path('{output.merged_provenance}'),
+)
 "
         """

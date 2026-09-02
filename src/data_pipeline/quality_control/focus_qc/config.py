@@ -1,7 +1,7 @@
 """focus_qc config — defaults + run-override resolution.
 
 Thresholds from the 2026-06-30 fine-tuning review (see
-docs/refactors/streamline-snakemake/target/specs/quality_control/z_stack_focus_motion_blur_qc_and_slice_selection.md):
+docs/data_pipeline/specs/target/specs/quality_control/z_stack_focus_motion_blur_qc_and_slice_selection.md):
 ``local_context`` normalization, Sobel ``grad > 0.02``, ``interior_strong_edge_fraction < 0.50``.
 This is a deliberate compromise — a low-information exclusion as much as a strict focus exclusion —
 not a claim that every excluded embryo is technically out-of-focus.

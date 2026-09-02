@@ -44,6 +44,9 @@ from data_pipeline.acquisition.metadata_ingest.scope.keyence.raw_plane_parsing i
     _parse_keyence_xy_position_index,
     _parse_keyence_time_z_channel,
 )
+from data_pipeline.acquisition.metadata_ingest.scope.keyence.repeat_positions import (
+    kept_position_index_by_well,
+)
 from data_pipeline.acquisition.metadata_ingest.scope.shared.acquisition_checks import (
     assert_channel_mapping_consistent,
     assert_columns_present,
@@ -285,6 +288,45 @@ def build_keyence_acquisition_inventory_rows(
             f"{_SCOPE_LABEL}: no parseable Keyence '*CH*.tif' planes under {raw_data_dir}. "
             "Expected files named like '...XY##_NNNNN_Z###_CH#.tif'."
         )
+
+    # REPEAT STAGE POSITIONS. A well set twice during scope setup appears here as two XY position
+    # directories carrying the same marker -- two complete acquisitions of one physical well. They
+    # would union into a single per-well inventory and materialization would refuse the well
+    # ("Duplicate Keyence time/tile/z inventory cells"), failing the whole experiment. This applies
+    # the SAME rule as the position mapping (keep the lowest position_index), because the two tables
+    # are built independently and the inventory never reads the mapping: de-duplicating in only one
+    # of them would leave the other still carrying both captures.
+    kept_position = kept_position_index_by_well(
+        (plane["well_index"], plane["position_index"]) for plane in parsed_planes
+    )
+    surviving = [
+        plane
+        for plane in parsed_planes
+        if kept_position.get(plane["well_index"]) is None
+        or plane["position_index"] is None
+        or int(plane["position_index"]) == kept_position[plane["well_index"]]
+    ]
+    if len(surviving) != len(parsed_planes):
+        dropped_by_well: dict[str, set[int]] = {}
+        for plane in parsed_planes:
+            keep = kept_position.get(plane["well_index"])
+            if keep is not None and plane["position_index"] is not None:
+                if int(plane["position_index"]) != keep:
+                    dropped_by_well.setdefault(plane["well_index"], set()).add(
+                        int(plane["position_index"])
+                    )
+        for well_index, positions in sorted(dropped_by_well.items()):
+            log.warning(
+                "%s: well %s has repeat stage positions; keeping position_index=%s, dropping %s "
+                "(%d of %d planes discarded overall).",
+                _SCOPE_LABEL,
+                well_index,
+                kept_position[well_index],
+                sorted(positions),
+                len(parsed_planes) - len(surviving),
+                len(parsed_planes),
+            )
+        parsed_planes = surviving
 
     well_tile_pairs = sorted({(p["well_index"], p["tile_id"]) for p in parsed_planes})
     n_tiles_in_well = (

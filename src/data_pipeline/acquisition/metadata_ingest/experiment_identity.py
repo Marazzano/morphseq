@@ -1,6 +1,6 @@
 """Experiment identity resolution helpers.
 
-See docs/refactors/streamline-snakemake/identifier_and_wildcard_contract.md.
+See docs/data_pipeline/specs/identifier_and_wildcard_contract.md.
 """
 
 from __future__ import annotations

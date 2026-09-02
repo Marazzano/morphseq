@@ -1,0 +1,2 @@
+experiment_id,snip_id,stored_flag_source,stored_sa_outlier_flag,recomputed_sa_outlier_flag,recomputed_too_small,recomputed_too_large,area_um2,predicted_stage_hpf,ref_p5,ref_p95,lower_bound_um2,upper_bound_um2
+20260304,20260304_A01_e01_BF_t0058,snip_qc_carried_flag,True,False,False,False,656256.3215108035,37.79642537270508,721125.3533508742,1125421.5039719658,649012.8180157867,1575590.1055607519

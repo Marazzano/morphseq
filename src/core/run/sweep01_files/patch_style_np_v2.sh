@@ -3,7 +3,7 @@ set -euo pipefail
 
 # === First run ===
 echo ">>> Starting first run: run_name=${1:-runA}"
-python -m src.run.training_cluster --multirun \
+python -m src.core.run.training --config-name base_cluster_metric --multirun \
     hydra.job.name=sweep01_patch_np \
     model=vae_timm_no_pips \
     model.ddconfig.name="Swin-Large","MaxViT-Small","Vit-Large" \
@@ -12,7 +12,7 @@ python -m src.run.training_cluster --multirun \
 
 
 echo ">>> Starting first run: run_name=${1:-runB}"
-python -m src.run.training_cluster --multirun \
+python -m src.core.run.training --config-name base_cluster_metric --multirun \
     hydra.job.name=sweep01_style_np \
     model=vae_timm_no_pips \
     model.ddconfig.name="Swin-Large","MaxViT-Small","Vit-Large" \

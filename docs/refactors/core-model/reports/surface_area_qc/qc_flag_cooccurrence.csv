@@ -1,0 +1,8 @@
+qc_flag,available_rows,sa_fail_rows,cooccurring_rows,cooccurrence_among_sa_fail,availability_status
+persistence_dead_flag,531902,241273,91923,0.3809916567539675,available
+viability_dead_flag,531902,241273,92164,0.3819905252556233,available
+focus_flag,511683,230798,127993,0.5545671972894046,available
+discontinuous_mask_flag,531902,241273,5505,0.022816477600062997,available
+edge_flag,531902,241273,31258,0.12955448806953118,available
+overlapping_mask_flag,531902,241273,27618,0.11446784348020707,available
+motion_blur_flag,526934,240848,35393,0.1469516043313625,available

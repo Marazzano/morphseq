@@ -1,0 +1,68 @@
+_target_: src.core.data.dataset_configs.PipelineDataConfig
+
+# Required authorities. The ordered experiment list is never discovered from the output tree.
+pipeline_output_root: ???
+source_paths: null
+artifact_path_authority: src/data_pipeline/pipeline_orchestrator/orchestration/paths.py:artifact_path
+asset_path_authority: src/data_pipeline/object_extraction/snip_processing/io.py:resolve_from_root
+artifact_path_fn: null
+asset_path_resolver: null
+
+manifest_policy:
+  _target_: src.core.data.manifest_types.ManifestPolicy
+  name: temporary_pipeline_manifest_smoke
+  version: "1"
+  experiment_ids: ???
+  allowed_product_keys:
+    - BF__projection__focus_stack__clahe_blend
+  selected_product_key: BF__projection__focus_stack__clahe_blend
+  z_selection_mode: projection
+  require_valid_snip: true
+  qc:
+    _target_: src.core.data.manifest_types.QCPolicy
+    name: temporary_evaluated_use_snip
+    version: "1"
+    enabled: true
+    accepted_statuses:
+      - evaluated
+    require_use_snip: true
+    required_flags_false: []
+  stage:
+    _target_: src.core.data.manifest_types.StagePolicy
+    enabled: false
+    required: false
+    accepted_statuses: []
+  covariates:
+    _target_: src.core.data.manifest_types.CovariatePolicy
+    enabled: true
+    required_columns:
+      - incubation_temperature_c
+      - elapsed_time_s
+  splits:
+    _target_: src.core.data.manifest_types.SplitPolicy
+    enabled: true
+    train_fraction: 0.8
+    eval_fraction: 0.1
+    test_fraction: 0.1
+    tolerance: 0.1
+    salt: morphseq-core-split-v1
+    explicit_test_experiments: []
+    required_splits:
+      - train
+      - eval
+      - test
+  metric_mapping:
+    _target_: src.core.data.manifest_types.MetricMappingPolicy
+    enabled: false
+    name: null
+    scientific_policy: false
+
+input_dim: [1, 288, 128]
+transform: null
+batch_size: 64
+num_workers: 4
+loader_seed: 0
+drop_last_train: false
+pin_memory: false
+persistent_workers: false
+max_decode_failures: 10

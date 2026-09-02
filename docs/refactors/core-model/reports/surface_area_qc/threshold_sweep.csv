@@ -1,0 +1,6 @@
+k_lower,k_upper_fixed,too_small_rows,too_large_rows,surface_failed_rows,surface_failed_physical_embryos,eligible_rows,eligible_physical_embryos,row_recovery_vs_k0.90,row_loss_vs_k0.90,physical_embryo_recovery_vs_k0.90,physical_embryo_loss_vs_k0.90
+0.7,1.4,167483,28495,195978,3639,196629,8364,11510,0,381,0
+0.75,1.4,175934,28495,204429,3825,194850,8319,9731,0,336,0
+0.8,1.4,186127,28495,214622,4084,192504,8252,7385,0,269,0
+0.85,1.4,198564,28495,227059,4346,189338,8142,4219,0,159,0
+0.9,1.4,212778,28495,241273,4648,185119,7983,0,0,0,0

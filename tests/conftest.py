@@ -11,3 +11,10 @@ if str(REPO_ROOT) not in sys.path:
 SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "decision(id): identify an existing test that verifies a DECISIONS.md entry",
+    )

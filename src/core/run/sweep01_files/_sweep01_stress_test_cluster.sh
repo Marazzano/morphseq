@@ -4,7 +4,7 @@ set -euo pipefail
 # === First run ===
 #"MaxViT-Tiny"
 echo ">>> Starting first run: run_name=${1:-runA}"
-python -m src.run.training_cluster --multirun \
+python -m src.core.run.training --config-name base_cluster_metric --multirun \
     hydra.job.name=sweep01_gan00_pips \
     model=vae_timm \
     model.ddconfig.name="ConvNeXt-Tiny","Swin-Tiny","Swin-Large","MaxViT-Small","Vit-Large" \

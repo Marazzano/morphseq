@@ -125,7 +125,7 @@ else:
         replaces any config unet_snip.models_root — model weights may live anywhere on a machine, not
         under the data tree. The per-family `checkpoint` key (config) carries the family sub-route. This
         seam first ran continuously raw->snip_qc in the Tier-1 through-line proof; see
-        docs/refactors/streamline-snakemake/target/specs/data_flow_test_plan.md (Tier 1).
+        docs/data_pipeline/specs/target/specs/data_flow_test_plan.md (Tier 1).
         """
         input:
             snip_inventory=str(_sam_snip_inventory("{experiment}", well_id="{well_id}")),

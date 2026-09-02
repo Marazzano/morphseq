@@ -64,18 +64,30 @@ def link_legacy_flat_path(
     on this cluster. An absolute link survives none of that; a relative one stays internally
     consistent as long as the tree moves as a unit.
 
-    NEVER CLOBBERS. Three cases, and the third is why this function exists rather than a bare
-    ``symlink_to``:
+    NEVER CLOBBERS DATA. Four cases:
 
       absent                        -> create the link
       symlink to the same target    -> accept, no-op (idempotent rerun)
-      real file, or a link pointing
-      somewhere else                -> RAISE
+      real file, canonical PRESENT  -> replace it with the link (2026-08-28; see below)
+      real file, canonical ABSENT   -> RAISE
+      link pointing somewhere else  -> RAISE
 
-    A real file at the legacy path means a PRE-MIGRATION run wrote actual pixels there. Overwriting
-    it would destroy the only copy of that data. A link pointing elsewhere means two products are
-    fighting over one alias, which is a configuration error rather than something to silently
-    resolve by last-write-wins.
+    A link pointing elsewhere means two products are fighting over one alias — a configuration
+    error, not something to resolve by last-write-wins.
+
+    THE REAL-FILE CASE IS CONDITIONAL, not an unconditional refusal (changed 2026-08-28). It used to
+    raise outright, reasoning that "a pre-migration run wrote pixels there and replacing it would
+    destroy the only copy." At this call site that premise is false: the caller renders the canonical
+    PNG moments earlier, one directory down, and only then asks for the alias — so the flat file is
+    provably NOT the only copy. Meanwhile every snip in the corpus has a pre-migration file at that
+    path, so the refusal fired on all of them. Worse, the caller wraps the whole per-snip block in a
+    bare `except Exception` that records is_valid_snip=False, so an un-creatable SYMLINK was being
+    reported as a bad SNIP — emptying fraction_alive and taking down death_detection for the entire
+    experiment.
+
+    So the guard now checks the thing that actually makes replacement safe — does the canonical file
+    exist? — instead of assuming it does not. With no canonical bytes on disk it still refuses, which
+    is the case it was written for.
     """
     canonical_path = Path(canonical_path)
     legacy_path = Path(legacy_path)
@@ -95,12 +107,16 @@ def link_legacy_flat_path(
         )
 
     if legacy_path.exists():
-        raise LegacySnipPathConflict(
-            f"legacy snip path {legacy_path} is a REAL FILE, not a compatibility alias. A "
-            "pre-migration run wrote pixels there and replacing it would destroy the only copy. "
-            f"Move or delete that tree deliberately, then rerun; the canonical bytes are at "
-            f"{canonical_path}."
-        )
+        # Refuse ONLY when the canonical render is missing — there the flat file really could be the
+        # last copy, and destroying it is unrecoverable. When the canonical exists the flat file is a
+        # superseded duplicate of bytes already on disk, and keeping it would block the alias forever.
+        if not canonical_path.exists():
+            raise LegacySnipPathConflict(
+                f"legacy snip path {legacy_path} is a REAL FILE and no canonical render exists at "
+                f"{canonical_path}. Those pixels may be the only copy, so this refuses to replace "
+                "them. Render the canonical product first, or move the tree deliberately."
+            )
+        legacy_path.unlink()
 
     legacy_path.parent.mkdir(parents=True, exist_ok=True)
     legacy_path.symlink_to(relative_target)

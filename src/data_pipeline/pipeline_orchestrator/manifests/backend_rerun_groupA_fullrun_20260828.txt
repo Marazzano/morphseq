@@ -1,0 +1,14 @@
+# Generated 2026-08-28. GROUP A of the 13 experiments excluded from backend_rerun_ready.
+# FORMAT: <experiment> <scope>   (SGE array task N == Nth non-comment line)
+#
+# Every well is snipped (nothing missing scientifically); what is absent is the intermediate
+# per-(well, product) frame inventory. Snakemake must rebuild those, which pulls image
+# materialization and SAM2 segmentation with it -- so these run the FULL pipeline, front half
+# included. Backdating collection_provenance cannot help: these files are ABSENT, not stale.
+20240813_24hpf Keyence
+20240813_30hpf Keyence
+20240813_36hpf Keyence
+20260702_hotchem_24hpf_plate01 Keyence
+20260702_hotchem_24hpf_plate02 Keyence
+20260702_hotchem_30hpf_plate01 Keyence
+20260702_hotchem_30hpf_plate02 Keyence

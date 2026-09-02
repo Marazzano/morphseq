@@ -7,7 +7,7 @@ import math
 @dataclass
 class LegacyArchitecture:
 
-    name: Literal["convAE"] = "convVAE"
+    name: Literal["convVAE"] = "convVAE"
     latent_dim: int = 64
     is_timm_arch: bool = False
     n_out_channels: int = 16

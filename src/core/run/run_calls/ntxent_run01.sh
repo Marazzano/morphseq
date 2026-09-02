@@ -3,7 +3,7 @@ set -euo pipefail
 
 # === First run ===
 echo ">>> Starting first run: run_name=${1:-runA}"
-python -m src.run.training_cluster --run \
+python -m src.core.run.training --config-name base_cluster_metric --run \
     hydra.job.name=ntxent_00_n20_T10_bio \
     model=morph_vae_big_cluster \
     model.lossconfig.metric_weight=50.0 \
@@ -18,7 +18,7 @@ python -m src.run.training_cluster --run \
 
 # === Second run ===
 echo ">>> Starting second run: run_name=${2:-runB}"
-python -m src.run.training_cluster --run \
+python -m src.core.run.training --config-name base_cluster_metric --run \
     hydra.job.name=ntxent_00_n20_T10_m2_bio \
     model=morph_vae_big_cluster \
     model.lossconfig.metric_weight=50.0 \
@@ -27,7 +27,6 @@ python -m src.run.training_cluster --run \
     model.dataconfig.batch_size=256 \
     model.lossconfig.kld_weight=5.0 \
     model.lossconfig.temperature=1.0 \
-    model.lossconfig.margin=2.0 \
     model.lossconfig.bio_only_kld=True \
     model.trainconfig.max_epochs=125
 

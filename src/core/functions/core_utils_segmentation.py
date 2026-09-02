@@ -4,7 +4,7 @@ import skimage
 import skimage.io as io
 from torchvision import datasets, transforms
 from torch.utils.data.sampler import SubsetRandomSampler
-from src.functions.dataset_utils import set_inputs_to_device
+from src.core.functions.dataset_utils import set_inputs_to_device
 import torch
 import os
 import torch

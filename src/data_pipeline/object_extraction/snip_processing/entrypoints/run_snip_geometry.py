@@ -44,6 +44,9 @@ from data_pipeline.object_extraction.snip_processing.snip_transform_table import
 )
 from data_pipeline.shared.identifiers.constructors import build_snip_transform_id
 from data_pipeline.shared.identifiers.parsers import parse_image_id
+from data_pipeline.object_extraction.snip_processing.defaults import (
+    DEFAULT_TARGET_PIXEL_SIZE_UM,
+)
 
 # The orientation DECISION recorded on every row, so a later yolk-aware pass knows what it replaces.
 ORIENTATION_POLICY = "pca_major_axis_yolk_down"
@@ -64,7 +67,7 @@ def run_snip_geometry(
     frame_inventory_csv: Path,
     physical_embryo_registry_csv: Path,
     output_path: Path,
-    target_pixel_size_um: float = 7.8,
+    target_pixel_size_um: float = DEFAULT_TARGET_PIXEL_SIZE_UM,
     output_height_px: int = 576,
     output_width_px: int = 256,
 ) -> None:

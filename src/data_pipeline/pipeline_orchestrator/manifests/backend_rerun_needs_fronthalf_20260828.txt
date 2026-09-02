@@ -1,0 +1,30 @@
+# Generated 2026-08-28 by split_manifest.py from back_half_archive.txt.
+# FORMAT: <experiment> <scope>   (SGE array task N == Nth non-comment line)
+# DEFERRED: product inventories missing (count/expected below). These require a genuine
+# front-half rebuild -- GPU focus-stacking plus SAM2 -- which is a separate decision.
+# 20240813_24hpf: 0/96
+# 20240813_30hpf: 0/96
+# 20240813_36hpf: 0/96
+# 20260702_hotchem_24hpf_plate01: 0/192
+# 20260702_hotchem_24hpf_plate02: 119/192
+# 20260702_hotchem_30hpf_plate01: 127/192
+# 20260702_hotchem_30hpf_plate02: 126/192
+# 20260324_cep290_18hpf_24hpf_plate02: 191/192
+# 20260324_cep290_18hpf_plate01: 191/192
+# 20260331_b9d2_18hpf_plate01: 191/192
+# 20260414_b9d2_14hpf_plate02: 127/128
+# 20230525: 166/168
+# 20250623_chem_35C_T02_1204: 190/192
+20240813_24hpf Keyence
+20240813_30hpf Keyence
+20240813_36hpf Keyence
+20260702_hotchem_24hpf_plate01 Keyence
+20260702_hotchem_24hpf_plate02 Keyence
+20260702_hotchem_30hpf_plate01 Keyence
+20260702_hotchem_30hpf_plate02 Keyence
+20260324_cep290_18hpf_24hpf_plate02 Keyence
+20260324_cep290_18hpf_plate01 Keyence
+20260331_b9d2_18hpf_plate01 Keyence
+20260414_b9d2_14hpf_plate02 Keyence
+20230525 Keyence
+20250623_chem_35C_T02_1204 Keyence

@@ -17,18 +17,62 @@ from data_pipeline.object_extraction.snip_processing.defaults import (
 )
 
 
-def apply_clahe(image: np.ndarray) -> np.ndarray:
+# Background-noise constants, named so provenance can record them rather than re-deriving
+# them from a literal. From the snip-provenance branch.
+BACKGROUND_NOISE_SEED = 42
+BACKGROUND_NOISE_TRUNCATION_UPPER_STANDARD_DEVIATIONS = 4.0
+
+
+# CLAHE parameters are pinned rather than left to skimage's defaults.
+#
+# WHY: this call previously passed no parameters at all, so kernel_size, clip_limit, and nbins
+# resolved to whatever the installed skimage shipped. That makes the model's image distribution a
+# function of the environment, which is precisely the class of silent drift that produced the
+# 7.8 um/px regression. Verified 2026-08-27 that skimage 0.19.3, 0.20.0, and 0.25.2 compute this
+# identically (`equalize_adapthist` and `_clahe` differ only in formatting), so pinning changes no
+# pixel today -- it stops a future upgrade from changing them.
+#
+# The values below ARE the resolved library defaults, made explicit:
+#   kernel_size -> max(dim // 8, 1) per axis, computed per image (skimage's own rule)
+#   clip_limit  -> 0.01
+#   nbins       -> 256
+CLAHE_CLIP_LIMIT = 0.01
+CLAHE_NBINS = 256
+
+
+def clahe_kernel_size(shape: Tuple[int, int]) -> Tuple[int, ...]:
+    """skimage's default contextual-region size, computed explicitly.
+
+    Kept image-dependent on purpose: a fixed pixel kernel would mean a different physical tile size
+    for any snip whose shape changes, which is a different image distribution rather than a pinned
+    one.
+    """
+    return tuple(max(int(s) // 8, 1) for s in shape)
+
+
+def apply_clahe(
+    image: np.ndarray,
+    clip_limit: float = CLAHE_CLIP_LIMIT,
+    nbins: int = CLAHE_NBINS,
+) -> np.ndarray:
     """
     Apply Contrast Limited Adaptive Histogram Equalization.
 
     Args:
         image: Input image (uint8)
+        clip_limit: Contrast clipping limit, pinned to the historical default.
+        nbins: Histogram bins, pinned to the historical default.
 
     Returns:
         CLAHE-equalized image (uint8)
     """
-    # Apply CLAHE and scale to uint8
-    equalized = skimage.exposure.equalize_adapthist(image) * 255
+    # Every parameter passed explicitly -- no reliance on library defaults.
+    equalized = skimage.exposure.equalize_adapthist(
+        image,
+        kernel_size=clahe_kernel_size(image.shape),
+        clip_limit=clip_limit,
+        nbins=nbins,
+    ) * 255
     return equalized.astype(np.uint8)
 
 
@@ -36,7 +80,7 @@ def generate_background_noise(
     shape: Tuple[int, int],
     background_mean: float,
     background_std: float,
-    seed: int = 42,
+    seed: int = BACKGROUND_NOISE_SEED,
 ) -> np.ndarray:
     """
     Generate truncated normal noise matching background statistics.
@@ -60,7 +104,7 @@ def generate_background_noise(
 
     # Generate truncated normal distribution (no negative values)
     a = -background_mean / background_std  # Lower bound in standard deviations
-    b = 4  # Upper bound (4 std above mean)
+    b = BACKGROUND_NOISE_TRUNCATION_UPPER_STANDARD_DEVIATIONS
 
     noise_normalized = truncnorm.rvs(
         a, b,

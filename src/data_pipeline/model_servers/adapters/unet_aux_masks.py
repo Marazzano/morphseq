@@ -3,7 +3,7 @@
 This is the HIGHEST-VALUE adapter in the set: the per-well `snip-auxiliary-masks`
 task loads FOUR separate UNet checkpoints (via / yolk / focus / bubble) every time
 it runs, measured at 73-81s of pure model loading before any inference happens
-(see `src/data_pipeline/docs/MODEL_LOAD_BENCHMARKS.md`). This adapter loads all
+(see `docs/data_pipeline/MODEL_LOAD_BENCHMARKS.md`). This adapter loads all
 four once in `load()` and reuses them across every well the resident server serves.
 
 WHAT THIS DUPLICATES VS. IMPORTS:

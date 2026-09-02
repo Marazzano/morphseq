@@ -1,0 +1,10 @@
+experiment_id,path,declared_experiment_id_matches,is_collection,source_count,canonical_start_age_entry_count,legacy_start_age_entry_count,source_ordinal_missing_count,declared_hpf_missing_count
+20240813_24hpf,/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline/output/acquisition/20240813_24hpf/ingest_metadata/collection_provenance.json,True,False,1,0,0,0,1
+20240813_30hpf,/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline/output/acquisition/20240813_30hpf/ingest_metadata/collection_provenance.json,True,False,1,0,0,0,1
+20240813_36hpf,/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline/output/acquisition/20240813_36hpf/ingest_metadata/collection_provenance.json,True,False,1,0,0,0,1
+20260702_hotchem_24hpf_plate01,/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline/output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/collection_provenance.json,True,False,1,0,0,0,1
+20260702_hotchem_24hpf_plate02,/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline/output/acquisition/20260702_hotchem_24hpf_plate02/ingest_metadata/collection_provenance.json,True,False,1,0,0,0,1
+20260702_hotchem_30hpf_plate01,/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline/output/acquisition/20260702_hotchem_30hpf_plate01/ingest_metadata/collection_provenance.json,True,False,1,0,0,0,1
+20260702_hotchem_30hpf_plate02,/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline/output/acquisition/20260702_hotchem_30hpf_plate02/ingest_metadata/collection_provenance.json,True,False,1,0,0,0,1
+20260702_hotchem_36hpf_plate01,/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline/output/acquisition/20260702_hotchem_36hpf_plate01/ingest_metadata/collection_provenance.json,True,False,1,0,0,0,1
+20260304,/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline/output/acquisition/20260304/ingest_metadata/collection_provenance.json,True,False,1,0,0,0,1

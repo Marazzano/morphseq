@@ -1,0 +1,125 @@
+#!/bin/bash
+# FULL RE-RUN of the standard pipeline through analysis_ready for one already-materialized
+# SeaHub shard. Copy of submit_seahub_back_half.sge with exactly two deliberate differences,
+# both required because this re-runs an operational date that ALREADY produced outputs:
+#
+#   1. --forceall. Every artifact for these 92 shards already exists and its bundle inputs have
+#      not changed, so an mtime-triggered run would rebuild nothing. The reason to re-run is a
+#      CODE change mtime cannot see (pegged synthetic background, explicit CLAHE parameters,
+#      the merge from main). --forceall is what "FULL re-run" means here.
+#
+#   2. The stale-namespace guard is dropped. The original refuses to start when a pipeline
+#      namespace already exists for the experiment id -- a fail-closed check against a REPEATED
+#      operational date silently satisfying a new DAG with old artifacts. Re-running this same
+#      date on purpose is precisely the case that guard is built to stop, so it must not apply.
+#      The bundle is the source of truth and is untouched; every output below is re-derived.
+#
+# SUBMIT (92 shards, at most 3 GPUs held at once):
+#     qsub -t 1-92 -tc 3 -v SEAHUB_RUN_ID=20260804_prod01 submit_seahub_back_half_rerun.sge
+
+#$ -N seahub_rerun
+#$ -cwd
+#$ -q trapnell-long.q
+#$ -l gpgpu=TRUE,cuda=1
+#$ -l mfree=32G
+#$ -pe serial 4
+#$ -o /net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/logs/seahub_rerun.$JOB_ID.$TASK_ID.out
+#$ -e /net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/logs/seahub_rerun.$JOB_ID.$TASK_ID.err
+
+set -euo pipefail
+umask 002
+
+REPO_ROOT="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq"
+SRC_ROOT="${REPO_ROOT}/src"
+WORKFLOW_DIR="${SRC_ROOT}/data_pipeline/pipeline_orchestrator"
+WORK_DIR="${REPO_ROOT}/results/nlammers/20260723_seahub"
+source "${WORK_DIR}/seahub_run_env.sh"
+seahub_configure_run \
+    "${WORK_DIR}" \
+    "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/seahub/derived"
+BUNDLE_ROOT="${SEAHUB_BUNDLE_ROOT}"
+EXPERIMENTS="${BUNDLE_ROOT}/integration/experiments.txt"
+CONDA_BASE="/net/trapnell/vol1/home/mdcolon/software/miniconda3"
+CONDA_ENV="segmentation_grounded_sam"
+SNAKEMAKE="${CONDA_BASE}/envs/${CONDA_ENV}/bin/snakemake"
+PYTHON="${CONDA_BASE}/envs/${CONDA_ENV}/bin/python"
+CORES=4
+TARGET="analysis_ready"
+
+if [[ -z "${SGE_TASK_ID:-}" || "${SGE_TASK_ID}" == "undefined" ]]; then
+    echo "ERROR: submit this script as an SGE array job." >&2
+    exit 2
+fi
+EXPERIMENT_ID="$(sed -n "${SGE_TASK_ID}p" "${EXPERIMENTS}")"
+if [[ -z "${EXPERIMENT_ID}" ]]; then
+    echo "ERROR: no experiment at task index ${SGE_TASK_ID}." >&2
+    exit 2
+fi
+
+EXPERIMENT_ROOT="${BUNDLE_ROOT}/experiments/${EXPERIMENT_ID}"
+RUNTIME_CONFIG="${EXPERIMENT_ROOT}/runtime_config.yaml"
+FRAME_VALIDATED="${EXPERIMENT_ROOT}/dropin_frame_inventory.csv.validated"
+PLATE_VALIDATED="${EXPERIMENT_ROOT}/plate_metadata.csv.validated"
+for REQUIRED in "${RUNTIME_CONFIG}" "${FRAME_VALIDATED}" "${PLATE_VALIDATED}"; do
+    if [[ ! -f "${REQUIRED}" ]]; then
+        echo "ERROR: materialized shard input is missing: ${REQUIRED}" >&2
+        exit 2
+    fi
+done
+
+# Reopen and verify every recorded image before handing the shard to GPU work.
+"/net/trapnell/vol1/home/nlammers/micromamba/bin/conda" \
+    run -n morphseq-env --no-capture-output \
+    env PYTHONPATH="${SRC_ROOT}" \
+    python -m data_pipeline.acquisition.seahub preflight-shard \
+    --bundle-root "${BUNDLE_ROOT}" \
+    --experiment-id "${EXPERIMENT_ID}"
+
+OUTPUT_ROOT="$("${PYTHON}" -c \
+    "import yaml; print(yaml.safe_load(open('${WORKFLOW_DIR}/env.yaml'))['paths']['output_root'])")"
+SMK_WORKDIR="${OUTPUT_ROOT}/work_directories/${EXPERIMENT_ID}"
+
+# Namespace guard intentionally omitted -- see the header. Report what is being overwritten so the
+# log still records that this shard had prior outputs.
+find "${OUTPUT_ROOT}" -mindepth 2 -maxdepth 2 -name "${EXPERIMENT_ID}" 2>/dev/null \
+    | sed 's/^/  overwriting: /' || true
+
+mkdir -p "${SMK_WORKDIR}" "${REPO_ROOT}/logs"
+cd "${WORKFLOW_DIR}"
+
+if [[ -n "${SGE_HGR_cuda:-}" ]]; then
+    GPU_COUNT="$(echo "${SGE_HGR_cuda}" | wc -w)"
+    export CUDA_VISIBLE_DEVICES="$(seq -s, 0 $((GPU_COUNT - 1)))"
+fi
+
+echo "=== SeaHub FULL re-run START $(date) ==="
+echo "host=$(hostname) job=${JOB_ID:-unknown} task=${SGE_TASK_ID}"
+echo "experiment=${EXPERIMENT_ID}"
+echo "runtime_config=${RUNTIME_CONFIG}"
+echo "workdir=${SMK_WORKDIR}"
+echo "target=${TARGET} (--forceall)"
+echo "SGE_HGR_cuda=${SGE_HGR_cuda:-<unset>}"
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
+nvidia-smi -L
+
+export PYTHONPATH="${SRC_ROOT}:${PYTHONPATH:-}"
+LOCK_DIR="${SMK_WORKDIR}/.snakemake/locks"
+LOCK_FILE="$(find "${LOCK_DIR}" -mindepth 1 -maxdepth 1 -type f -print -quit 2>/dev/null || true)"
+if [[ -n "${LOCK_FILE}" ]]; then
+    echo "ERROR: Snakemake lock present for ${EXPERIMENT_ID}: ${LOCK_FILE}" >&2
+    exit 2
+fi
+
+"${SNAKEMAKE}" \
+    --configfile "${WORKFLOW_DIR}/config.yaml" "${RUNTIME_CONFIG}" \
+    --directory "${SMK_WORKDIR}" \
+    --cores "${CORES}" \
+    --resources gpu=1 \
+    --latency-wait 300 \
+    --rerun-triggers mtime \
+    --forceall \
+    --keep-going \
+    --printshellcmds \
+    "${TARGET}"
+
+echo "=== SeaHub FULL re-run FINISHED ${EXPERIMENT_ID} $(date) ==="
