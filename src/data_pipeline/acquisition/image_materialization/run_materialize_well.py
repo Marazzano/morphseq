@@ -72,7 +72,8 @@ def run_materialize_well(
       2. Resolve it for ``scope_name`` (request → commitment; scope quirks applied here).
       3. Route to the scope backend, handing it the RESOLVED plan and nothing to interpret.
 
-    Step 6 is YX1-only live: any ``scope_name`` other than ``"yx1"`` raises ``UnsupportedScopeError``.
+    Live backends: ``"yx1"`` and ``"keyence"``; any other ``scope_name`` raises
+    ``UnsupportedScopeError``.
 
     The ``device`` preference (``"auto"`` / ``"cuda"`` / ``"cpu"``) is auto-resolved HERE via the shared
     ``resolve_device`` (the same resolver the rest of the pipeline uses); the backend receives a concrete
@@ -80,7 +81,7 @@ def run_materialize_well(
     stdout as ``AUTO_MODE_CHOSEN: requested=... -> CUDA|CPU`` so a run's device decision is observable.
 
     Args:
-        scope_name: microscope key. Step 6 supports ``"yx1"`` only.
+        scope_name: microscope key. Supported: ``"yx1"``, ``"keyence"``.
         config: pipeline config dict (``image_materialization.products``); ``None`` → default plan.
         device: device preference — ``"auto"`` (default), ``"cuda"``, or ``"cpu"``. Resolved to a
             concrete device by ``resolve_device`` before the backend runs.
@@ -230,4 +231,87 @@ def run_materialize_image_product_for_well(
     raise UnsupportedScopeError(
         f"No live materialization backend for scope {scope_name!r}. "
         "Supported scopes: 'yx1', 'keyence'."
+    )
+
+
+def run_materialize_image_products_for_well(
+    *,
+    experiment_id: str,
+    well_id: str,
+    well_index: str,
+    scope_name: str,
+    well_acquisition_inventory_df: pd.DataFrame,
+    built_image_data_dir: Path,
+    resolved_product_plan_jsons: dict[str, Path],
+    config: dict | None = None,
+    device: str = "auto",
+    candidate: bool = False,
+    smoke_max_time_indices: int | None = None,
+    master_params_path: Path | None = None,
+    input_root: Path | None = None,
+) -> dict[str, pd.DataFrame]:
+    """Materialize EVERY requested image product for one well in ONE process.
+
+    The multi-product twin of :func:`run_materialize_image_product_for_well`. Same sequencer role —
+    load the commitments, resolve the device, hand a backend nothing to interpret — but it passes the
+    well's WHOLE product plan so the backend can share the acquisition-derived work (one raw read,
+    one focus reduction, one tile transform per frame) and branch only at the write boundary.
+
+    Keyence-only: it exists to remove the multi-TIFF duplication that a per-product process shape
+    forces. YX1 reads one ND2 per well and has no such duplication, so it keeps the per-product
+    entry point.
+
+    Args:
+        resolved_product_plan_jsons: ``{product_key: path to that product's resolved plan JSON}``.
+
+    Returns:
+        ``{product_key: frame-inventory DataFrame}``, one entry per requested product.
+    """
+    scope_name = str(scope_name).strip().lower()
+    if not resolved_product_plan_jsons:
+        raise ValueError(
+            f"run_materialize_image_products_for_well: no resolved product plans given for well "
+            f"{well_id!r}."
+        )
+
+    plans = {}
+    for product_key, plan_path in resolved_product_plan_jsons.items():
+        plan = load_resolved_product_plan_for_well(
+            plan_path,
+            expected_experiment_id=experiment_id,
+            expected_well_id=well_id,
+            expected_product_key=product_key,
+        )
+        if plan.scope_name != scope_name:
+            raise ValueError(
+                f"resolved_product_plan scope_name={plan.scope_name!r} disagrees with requested "
+                f"scope_name={scope_name!r} (product {product_key!r})."
+            )
+        plans[product_key] = plan
+
+    resolved_device = resolve_device(device)
+    log.info("AUTO_MODE_CHOSEN: requested=%s -> %s", device, resolved_device.upper())
+    print(f"AUTO_MODE_CHOSEN: requested={device!r} -> {resolved_device.upper()}", flush=True)
+
+    if scope_name == "keyence":
+        from data_pipeline.acquisition.image_materialization.scope.keyence.materialize_well_keyence import (
+            materialize_keyence_products_for_well,
+        )
+        return materialize_keyence_products_for_well(
+            experiment_id=experiment_id,
+            well_id=well_id,
+            well_index=well_index,
+            well_acquisition_inventory_df=well_acquisition_inventory_df,
+            built_image_data_dir=built_image_data_dir,
+            resolved_products=tuple(plans[key].product for key in resolved_product_plan_jsons),
+            device=resolved_device,
+            candidate=candidate,
+            smoke_max_time_indices=smoke_max_time_indices,
+            master_params_path=master_params_path,
+            config=config,
+            input_root=input_root,
+        )
+    raise UnsupportedScopeError(
+        f"Multi-product materialization is wired for scope 'keyence' only; got {scope_name!r}. "
+        "Other scopes use run_materialize_image_product_for_well (one product per process)."
     )

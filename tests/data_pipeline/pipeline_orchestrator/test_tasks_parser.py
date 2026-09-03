@@ -280,6 +280,164 @@ def test_materialize_image_product_for_well_joins_position_mapping(tmp_path):
     assert product_csv.exists()
 
 
+def _keyence_multi_product_fixture(tmp_path):
+    """Two resolved Keyence product plans + a matching acquisition/mapping pair."""
+    acquisition_csv = tmp_path / "acquisition.csv"
+    mapping_csv = tmp_path / "position_well_mapping.csv"
+    pd.DataFrame([
+        {
+            "experiment_id": "20250912",
+            "position_index": 2,
+            "time_index": 0,
+            "source_nd2_path": "experiment.nd2",
+            "micrometers_per_pixel": 0.65,
+            "image_width_px": 8,
+            "image_height_px": 8,
+        }
+    ]).to_csv(acquisition_csv, index=False)
+    pd.DataFrame([
+        {
+            "experiment_id": "20250912",
+            "position_index": 2,
+            "well_index": "B01",
+            "well_id": "20250912_B01",
+            "mapping_method": "test",
+        }
+    ]).to_csv(mapping_csv, index=False)
+
+    # Both products must be ACTIVE in the config for their plans to resolve; the default plan
+    # declares the projection alone. Mirrors config.yaml's image_materialization.products.
+    plan_config = {
+        "image_materialization": {
+            "products": [
+                {
+                    "channel_id": "BF",
+                    "image_product_type": "projection",
+                    "projection_method": "focus_stack",
+                    "write_index_map": True,
+                },
+                {"channel_id": "BF", "image_product_type": "z_stack"},
+            ]
+        }
+    }
+    product_keys = ["BF__projection__focus_stack", "BF__z_stack"]
+    plan_jsons = []
+    out_csvs = []
+    for key in product_keys:
+        plan_json = tmp_path / f"{key}_resolved_product_plan.json"
+        write_resolved_product_plan_for_well(
+            experiment_id="20250912",
+            well_id="20250912_B01",
+            scope_name="keyence",
+            config=plan_config,
+            product_key=key,
+            output_json=plan_json,
+        )
+        plan_jsons.append(plan_json)
+        out_csvs.append(tmp_path / "out" / f"20250912_B01_{key}_frame_inventory.csv")
+    return acquisition_csv, mapping_csv, product_keys, plan_jsons, out_csvs
+
+
+def _multi_product_args(tmp_path, *, product_keys, plan_jsons, out_csvs,
+                        acquisition_csv, mapping_csv):
+    return Namespace(
+        experiment="20250912",
+        well_id="20250912_B01",
+        well_index="B01",
+        scope="keyence",
+        product_key=list(product_keys),
+        resolved_product_plan_json=list(plan_jsons),
+        frame_inventory_product_csv=list(out_csvs),
+        acquisition_inventory_csv=acquisition_csv,
+        position_well_mapping_csv=mapping_csv,
+        built_image_data_dir=tmp_path / "built_image_data",
+        candidate="false",
+        smoke_max_time_indices=None,
+        device="cpu",
+        master_params_path=None,
+        input_root=None,
+        config_yaml=None,
+    )
+
+
+def test_materialize_image_products_for_well_writes_one_shard_per_product(tmp_path):
+    acquisition_csv, mapping_csv, product_keys, plan_jsons, out_csvs = (
+        _keyence_multi_product_fixture(tmp_path)
+    )
+
+    def _fake_products(**kwargs):
+        # The backend receives the WHOLE plan, which is the point of the multi-product path.
+        assert [
+            p.image_product_type for p in kwargs["resolved_products"]
+        ] == ["projection", "z_stack"]
+        return {
+            key: pd.DataFrame([{"experiment_id": "20250912", "well_index": "B01"}])
+            for key in product_keys
+        }
+
+    with patch(
+        "data_pipeline.acquisition.image_materialization.scope.keyence"
+        ".materialize_well_keyence.materialize_keyence_products_for_well",
+        side_effect=_fake_products,
+    ):
+        tasks.cmd_materialize_image_products_for_well(
+            _multi_product_args(
+                tmp_path, product_keys=product_keys, plan_jsons=plan_jsons,
+                out_csvs=out_csvs, acquisition_csv=acquisition_csv, mapping_csv=mapping_csv,
+            )
+        )
+
+    for out_csv in out_csvs:
+        assert out_csv.exists(), out_csv
+
+
+def test_materialize_image_products_for_well_rejects_ragged_argument_counts(tmp_path):
+    """The three repeatable args are positionally zipped, so unequal counts must fail loud."""
+    acquisition_csv, mapping_csv, product_keys, plan_jsons, out_csvs = (
+        _keyence_multi_product_fixture(tmp_path)
+    )
+    args = _multi_product_args(
+        tmp_path, product_keys=product_keys, plan_jsons=plan_jsons[:1],
+        out_csvs=out_csvs, acquisition_csv=acquisition_csv, mapping_csv=mapping_csv,
+    )
+    with pytest.raises(ValueError, match="same number of --product-key"):
+        tasks.cmd_materialize_image_products_for_well(args)
+
+
+def test_materialize_image_products_for_well_rejects_duplicate_product_keys(tmp_path):
+    acquisition_csv, mapping_csv, product_keys, plan_jsons, out_csvs = (
+        _keyence_multi_product_fixture(tmp_path)
+    )
+    args = _multi_product_args(
+        tmp_path, product_keys=[product_keys[0], product_keys[0]], plan_jsons=plan_jsons,
+        out_csvs=out_csvs, acquisition_csv=acquisition_csv, mapping_csv=mapping_csv,
+    )
+    with pytest.raises(ValueError, match="Duplicate --product-key"):
+        tasks.cmd_materialize_image_products_for_well(args)
+
+
+def test_materialize_image_products_for_well_parses_repeated_triples():
+    parser = tasks.build_parser()
+    args = parser.parse_args([
+        "materialize-image-products-for-well",
+        "--experiment", "20250912",
+        "--well-id", "20250912_B01",
+        "--scope", "keyence",
+        "--product-key", "BF__projection__focus_stack",
+        "--resolved-product-plan-json", "/tmp/a.json",
+        "--frame-inventory-product-csv", "/tmp/a.csv",
+        "--product-key", "BF__z_stack",
+        "--resolved-product-plan-json", "/tmp/b.json",
+        "--frame-inventory-product-csv", "/tmp/b.csv",
+        "--acquisition-inventory-csv", "/tmp/acq.csv",
+        "--position-well-mapping-csv", "/tmp/map.csv",
+        "--built-image-data-dir", "/tmp/built",
+    ])
+    assert args.product_key == ["BF__projection__focus_stack", "BF__z_stack"]
+    assert [p.name for p in args.resolved_product_plan_json] == ["a.json", "b.json"]
+    assert [p.name for p in args.frame_inventory_product_csv] == ["a.csv", "b.csv"]
+
+
 def test_product_shard_discovery_command_parses():
     parser = tasks.build_parser()
 

@@ -65,10 +65,18 @@ def select_well_acquisition_rows(
     acquisition_inventory_df["experiment_id"] = acquisition_inventory_df["experiment_id"].astype(str)
 
     # An inventory that already carries well identity is authoritative and must NOT be re-derived.
-    # Multi-tile scopes (Keyence) number position_index per TILE, whereas position_well_mapping
-    # numbers it per WELL; joining across those two spaces silently assembles wells out of tiles
-    # that belong to other wells. Such inventories mint well_index/well_id at ingest, where the
-    # tile→well relationship is still known, so trust them and skip the join entirely.
+    #
+    # The reason is MULTIPLICITY, not a different meaning of position_index. Keyence's
+    # position_index IS the XY## acquisition position -- the same well-level space
+    # position_well_mapping uses (acquisition_inventory.py:24,92-93); the per-tile number is
+    # tile_id, aliased locally as position_index_within_well. But a multi-tile scope explodes ONE
+    # ROW PER RAW PLANE, so (experiment_id, position_index) repeats across tile x z x channel x
+    # time and cannot satisfy the validate="many_to_one" merge below. It is also unnecessary: such
+    # inventories mint well_index/well_id at INGEST, where the tile→well relationship is still
+    # known. So trust them and skip the join entirely.
+    #
+    # (An earlier version of this comment claimed position_index was numbered per tile. It is not;
+    # correcting it here because that wording teaches a wrong model of the identifier.)
     if {"well_index", "well_id"}.issubset(acquisition_inventory_df.columns):
         joined = acquisition_inventory_df
     else:

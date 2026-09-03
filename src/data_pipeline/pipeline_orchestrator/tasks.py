@@ -446,6 +446,70 @@ def cmd_materialize_image_product_for_well(args: argparse.Namespace) -> None:
     inv_df.to_csv(out_csv, index=False)
 
 
+def cmd_materialize_image_products_for_well(args: argparse.Namespace) -> None:
+    """Materialize ALL of one well's image products in one process; write each product's shard.
+
+    The multi-product twin of ``cmd_materialize_image_product_for_well``. The three repeatable
+    arguments are positionally ZIPPED: ``--product-key``, ``--resolved-product-plan-json`` and
+    ``--frame-inventory-product-csv`` must appear the same number of times, and the Nth of each
+    belongs to the same product. Mismatched counts fail loud rather than pairing a product with
+    another product's plan or output path.
+    """
+    from data_pipeline.acquisition.image_materialization.run_materialize_well import (
+        run_materialize_image_products_for_well,
+    )
+
+    product_keys = list(args.product_key)
+    plan_jsons = list(args.resolved_product_plan_json)
+    out_csvs = list(args.frame_inventory_product_csv)
+    if not (len(product_keys) == len(plan_jsons) == len(out_csvs)):
+        raise ValueError(
+            "materialize-image-products-for-well requires the same number of --product-key, "
+            f"--resolved-product-plan-json and --frame-inventory-product-csv arguments; got "
+            f"{len(product_keys)}, {len(plan_jsons)} and {len(out_csvs)}."
+        )
+    if len(set(product_keys)) != len(product_keys):
+        raise ValueError(f"Duplicate --product-key values: {product_keys}.")
+
+    well_rows, well_index = _selected_well_acquisition_rows_for_materialization(args)
+
+    config = None
+    if getattr(args, "config_yaml", None):
+        config = yaml.safe_load(Path(args.config_yaml).read_text()) or {}
+
+    smoke_cap = getattr(args, "smoke_max_time_indices", None)
+    if smoke_cap is not None and smoke_cap <= 0:
+        smoke_cap = None
+
+    master_params_raw = getattr(args, "master_params_path", None)
+    master_params_path = Path(master_params_raw) if master_params_raw else None
+
+    inv_by_product = run_materialize_image_products_for_well(
+        experiment_id=str(args.experiment),
+        well_id=str(args.well_id),
+        well_index=well_index,
+        scope_name=str(args.scope),
+        well_acquisition_inventory_df=well_rows,
+        built_image_data_dir=Path(args.built_image_data_dir),
+        resolved_product_plan_jsons={
+            key: Path(plan) for key, plan in zip(product_keys, plan_jsons)
+        },
+        config=config,
+        device=getattr(args, "device", "cuda"),
+        candidate=_parse_bool(getattr(args, "candidate", "false")),
+        smoke_max_time_indices=smoke_cap,
+        master_params_path=master_params_path,
+        input_root=(
+            Path(args.input_root) if getattr(args, "input_root", None) else None
+        ),
+    )
+
+    for product_key, out_csv in zip(product_keys, out_csvs):
+        out_path = Path(out_csv)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        inv_by_product[product_key].to_csv(out_path, index=False)
+
+
 def cmd_discover_product_shards_for_well(args: argparse.Namespace) -> None:
     """Discover validated product frame-inventory shards for one well."""
     from data_pipeline.acquisition.image_materialization.product_shard_assembly import (
@@ -1647,6 +1711,27 @@ def build_parser() -> argparse.ArgumentParser:
     # absolute-path inventories resolve without it.
     p_mip.add_argument("--input-root", type=Path, default=None)
     p_mip.set_defaults(func=cmd_materialize_image_product_for_well)
+
+    # Multi-product: ONE process materializes every product of a well, sharing the frame work.
+    # The three repeatable args are positionally zipped (see cmd docstring).
+    p_mips = sub.add_parser("materialize-image-products-for-well")
+    p_mips.add_argument("--experiment", required=True)
+    p_mips.add_argument("--well-id", required=True)
+    p_mips.add_argument("--well-index", default=None)
+    p_mips.add_argument("--scope", default="keyence")
+    p_mips.add_argument("--product-key", action="append", required=True)
+    p_mips.add_argument("--resolved-product-plan-json", action="append", type=Path, required=True)
+    p_mips.add_argument("--frame-inventory-product-csv", action="append", type=Path, required=True)
+    p_mips.add_argument("--acquisition-inventory-csv", type=Path, required=True)
+    p_mips.add_argument("--position-well-mapping-csv", type=Path, required=True)
+    p_mips.add_argument("--built-image-data-dir", type=Path, required=True)
+    p_mips.add_argument("--config-yaml", type=Path, default=None)
+    p_mips.add_argument("--candidate", default="false")
+    p_mips.add_argument("--smoke-max-time-indices", type=int, default=None)
+    p_mips.add_argument("--device", default="cuda")
+    p_mips.add_argument("--master-params-path", type=Path, default=None)
+    p_mips.add_argument("--input-root", type=Path, default=None)
+    p_mips.set_defaults(func=cmd_materialize_image_products_for_well)
 
     p_bksm = sub.add_parser("build-keyence-stitch-map")
     p_bksm.add_argument("--acquisition-inventory-csv", type=Path, required=True)

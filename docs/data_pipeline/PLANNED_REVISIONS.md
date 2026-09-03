@@ -93,17 +93,26 @@ Helps, but does NOT remove the per-well model reloads — batching is the real f
 
 ---
 
-## 2. Keyence `z_stack` materialization — 🟡 workaround in place
+## 2. Keyence `z_stack` materialization — 🟢 IMPLEMENTED (this entry was stale)
 
-**Problem.** `motion_blur_qc` and `focus_qc` require the `BF__z_stack` product, but Keyence
-`z_stack` materialization is unimplemented — `materialize_well_keyence.py` raises
-`NotImplementedError` ("Keyence z_stack fanout deferred — requires per-tile plane handling").
-So the full QC path (and anything needing z-planes) cannot complete for Keyence projection-only
-data.
+**Status corrected 2026-08-31.** Keyence `z_stack` materialization EXISTS and does not raise.
+`materialize_well_keyence.py` emits one row per `(time_index, z_index)` via
+`_emit_z_stack_product`, stitching each declared plane against the frame's shared tile transforms.
+There is no `NotImplementedError` anywhere in that module. The problem statement below described
+the state before that landed; keeping the text for history only.
 
-**What it needs.** Implement Keyence z_stack materialization: per-tile plane fanout + stitching so
-each `(well, channel, z, time)` plane is materialized like the YX1 path, satisfying the
-`BF__z_stack` product the z-dependent QC reads.
+As of the per-well multi-product fanout (also 2026-08-31), the z_stack planes are stitched from the
+same `FrameMaterials` the projection uses, so requesting both products no longer re-reads the raw
+planes or re-solves the geometry.
+
+**If the QC path is still blocked**, the cause is no longer materialization — re-check
+`snip_qc.exclusion_flags` (the interim workaround below) before assuming the product is missing.
+
+**Original problem statement (superseded).** `motion_blur_qc` and `focus_qc` require the
+`BF__z_stack` product, but Keyence `z_stack` materialization is unimplemented —
+`materialize_well_keyence.py` raises `NotImplementedError` ("Keyence z_stack fanout deferred —
+requires per-tile plane handling"). So the full QC path (and anything needing z-planes) cannot
+complete for Keyence projection-only data.
 
 **Interim workaround (2026-07).** `snip_qc.exclusion_flags` config override drops `focus_flag` and
 `motion_blur_flag`, so `snip_qc` aggregates only the z_stack-free QC steps (death_detection,

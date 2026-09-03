@@ -91,6 +91,12 @@ _GRANDFATHERED: frozenset[str] = frozenset({
     # ordinary hand-written-wildcard case like every other entry here.
     "frame_masks_per_well",
     "materialize_image_product_for_well",
+    # materialize_image_products_for_well joined on 2026-08-31 with the Keyence per-well fanout.
+    # Grandfathered for the same reason as every other entry -- step_outputs() does not exist yet.
+    # It declares MULTIPLE outputs (one shard per configured product key), which is the shape that
+    # lets one process serve every product of a well; the per-product rule above remains the
+    # producer for all other scopes.
+    "materialize_image_products_for_well",
     # snip_geometry_per_well joined on 2026-08-03 with the geometry gate. Grandfathered for the same
     # reason as everything else here -- step_outputs() does not exist yet -- and NOT because its
     # fanout is a special case. It is per-well by registry declaration (PER_WELL_THEN_MERGE), and

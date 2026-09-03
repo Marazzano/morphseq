@@ -157,9 +157,12 @@ def test_emits_final_image_metadata_and_oriented_focus_map(tmp_path):
         dtype=np.uint8,
     )
     module = "data_pipeline.acquisition.image_materialization.scope.keyence.materialize_well_keyence"
+    materials_module = (
+        "data_pipeline.acquisition.image_materialization.scope.keyence.frame_materials"
+    )
     with (
         patch(
-            f"{module}.focus_stack_group",
+            f"{materials_module}.focus_stack_group",
             return_value=_mock_focus_group([
                 (
                     np.array([[10, 20], [30, 40]], dtype=np.uint8),
@@ -173,6 +176,11 @@ def test_emits_final_image_metadata_and_oriented_focus_map(tmp_path):
         ),
         patch(
             f"{module}.stitch_frame_tiles",
+            return_value=_mock_stitch_result(mosaic, tile_width_px=2),
+        ),
+        # frame_materials resolves the frame's geometry; the emitter then applies it to pixels.
+        patch(
+            f"{materials_module}.stitch_frame_tiles",
             return_value=_mock_stitch_result(mosaic, tile_width_px=2),
         ),
     ):
@@ -228,9 +236,12 @@ def test_emits_raw_tile_manifest_and_written_downsampled_dimensions(tmp_path):
     inventory_df = _make_inventory(tmp_path, orientation="horizontal")
     mosaic = np.arange(16, dtype=np.uint16).reshape(4, 4)
     module = "data_pipeline.acquisition.image_materialization.scope.keyence.materialize_well_keyence"
+    materials_module = (
+        "data_pipeline.acquisition.image_materialization.scope.keyence.frame_materials"
+    )
     with (
         patch(
-            f"{module}.focus_stack_group",
+            f"{materials_module}.focus_stack_group",
             return_value=_mock_focus_group([
                 (
                     np.array([[0, 1], [2, 3]], dtype=np.uint16),
@@ -244,6 +255,11 @@ def test_emits_raw_tile_manifest_and_written_downsampled_dimensions(tmp_path):
         ),
         patch(
             f"{module}.stitch_frame_tiles",
+            return_value=_mock_stitch_result(mosaic, tile_width_px=2),
+        ),
+        # frame_materials resolves the frame's geometry; the emitter then applies it to pixels.
+        patch(
+            f"{materials_module}.stitch_frame_tiles",
             return_value=_mock_stitch_result(mosaic, tile_width_px=2),
         ),
     ):
@@ -303,10 +319,23 @@ def test_z_stack_stitches_and_emits_one_inventory_row_per_plane(tmp_path):
         np.array([[1, 1, 11, 11], [1, 1, 11, 11]], dtype=np.uint16),
     ]
     module = "data_pipeline.acquisition.image_materialization.scope.keyence.materialize_well_keyence"
+    materials_module = (
+        "data_pipeline.acquisition.image_materialization.scope.keyence.frame_materials"
+    )
     with patch(
         f"{module}.stitch_frame_tiles",
         side_effect=[_mock_stitch_result(mosaic) for mosaic in mosaics],
-    ) as stitch:
+    ) as stitch, patch(
+        # The frame's transforms are resolved once in frame_materials, not per plane here.
+        f"{materials_module}.stitch_frame_tiles",
+        return_value=_mock_stitch_result(mosaics[0]),
+    ), patch(
+        f"{materials_module}.focus_stack_group",
+        return_value=_mock_focus_group([
+            (np.zeros((2, 2), dtype=np.uint8), np.zeros((2, 2), dtype=np.int32)),
+            (np.zeros((2, 2), dtype=np.uint8), np.zeros((2, 2), dtype=np.int32)),
+        ]),
+    ):
         df = materialize_keyence_product_for_well(
             experiment_id=EXPERIMENT_ID,
             well_id=WELL_ID,
@@ -382,9 +411,21 @@ def test_z_stack_uses_configured_default_jpeg_downsampling(tmp_path):
     inventory_df = _make_inventory(tmp_path, n_tiles=2, n_z=1, tile_shape=(8, 8))
     mosaic = np.arange(128, dtype=np.uint16).reshape(8, 16)
     module = "data_pipeline.acquisition.image_materialization.scope.keyence.materialize_well_keyence"
+    materials_module = (
+        "data_pipeline.acquisition.image_materialization.scope.keyence.frame_materials"
+    )
     with patch(
         f"{module}.stitch_frame_tiles",
         return_value=_mock_stitch_result(mosaic, tile_width_px=8),
+    ), patch(
+        f"{materials_module}.stitch_frame_tiles",
+        return_value=_mock_stitch_result(mosaic, tile_width_px=8),
+    ), patch(
+        f"{materials_module}.focus_stack_group",
+        return_value=_mock_focus_group([
+            (np.zeros((8, 8), dtype=np.uint8), np.zeros((8, 8), dtype=np.int32)),
+            (np.zeros((8, 8), dtype=np.uint8), np.zeros((8, 8), dtype=np.int32)),
+        ]),
     ):
         df = materialize_keyence_product_for_well(
             experiment_id=EXPERIMENT_ID,

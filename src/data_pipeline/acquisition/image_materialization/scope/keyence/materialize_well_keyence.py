@@ -4,18 +4,26 @@ This is the Keyence twin of ``scope/yx1/materialize_well_yx1.py``.  It consumes 
 acquisition inventory rows (one row per raw TIFF plane: well × tile × z × channel × time) and
 produces materialized mosaic frames + frame-inventory rows.
 
+Shape of the job: ONE well, EVERY requested product. ``materialize_keyence_products_for_well``
+prepares each ``(channel_id, time_index)`` frame ONCE via
+``frame_materials.prepare_keyence_frame`` — one raw read, at most one focus reduction, one tile
+transform — and then fans out to ``_emit_projection_product`` / ``_emit_z_stack_product``, each of
+which applies its OWN write policy and returns its OWN frame-inventory rows. The product branch
+happens at the write boundary, not at the front of the job.
+
+Each product still yields a SEPARATE inventory shard; only the process and the acquisition-derived
+facts are shared. ``materialize_keyence_product_for_well`` is a thin single-product wrapper.
+
 Key differences from YX1:
-  - **Many source TIFFs per frame** (not one ND2).  Per ``(channel_id, time_index)`` frame:
-      1. Group rows by tile (``tile_id`` / ``position_index_within_well``).
-      2. Read every tile's raw z-plane TIFFs → focus-stack the WHOLE frame in ONE
-         ``focus_stack_group`` call (shared 0.1–99.9% bounds across all tiles/Z planes; the
-         shared primitive owns all focus math — the adapter does NOT normalize).
-      3. Assemble ``TileSpec(tile_id, image)`` in raster order.
-      4. ``stitch_frame_tiles(tile_specs, FrameTilingConfig(...), PreComputeStitchParams(master_params_path))``
-         → one mosaic.
+  - **Many source TIFFs per frame** (not one ND2), grouped by tile and read once per frame by
+    ``prepare_keyence_frame``; the shared focus primitive owns all focus math (shared 0.1-99.9%
+    bounds across all tiles/Z planes) — this adapter does NOT normalize.
   - **xy_composition must be ``"mosaic"``** — this backend asserts it (mirror of YX1's identity guard).
-  - **``master_params_path`` is optional for now** (Stage C wires the experiment-grain stitch map;
-    until then tiles are aligned from scratch via ``stitch2d`` on every frame).
+  - **``master_params_path``** is the experiment-grain stitch map from ``build_keyence_stitch_map``
+    (Stage C, LANDED — the DAG passes it on every invocation). How it is USED depends on
+    ``image_materialization.keyence_tiling_mode``: under the default ``"auto"`` the map is the QC
+    reference and fallback while each frame is still aligned from scratch; under ``"prior_only"``
+    the map supplies the coords directly and per-frame alignment is skipped.
 
 Projection provenance (``focus_index_map``):
   The per-tile focus_index_map from ``focus_stack_group`` is painted onto a canvas-sized
@@ -34,21 +42,18 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import skimage.io as skio
 from PIL import Image
 
-from data_pipeline.acquisition.image_materialization.scope.keyence.keyence_plane_io import (
-    read_keyence_plane,
+from data_pipeline.acquisition.image_materialization.scope.keyence.frame_materials import (
+    FrameMaterials,
+    prepare_keyence_frame,
 )
 from data_pipeline.acquisition.image_building.shared.display_polarity import apply_display_polarity
-from data_pipeline.acquisition.image_building.shared.focus_stack_group import (
-    FocusStackConfig,
-    focus_stack_group,
-)
 from data_pipeline.acquisition.image_building.utils.frame_tiler import (
     FrameTilingConfig,
     PreComputeStitchParams,
@@ -141,6 +146,184 @@ _REQUIRED_IMAGE_CORE_COLUMNS: tuple[str, ...] = (
 )
 
 
+@dataclass(frozen=True)
+class _WellContext:
+    """The product-independent setup for ONE well, derived once and shared by every product.
+
+    Everything here is a fact about the ACQUISITION, not about any product: which timepoints exist,
+    how the frames are calibrated, how the tiles are laid out. Deriving it per product is what the
+    old one-job-per-product shape forced; deriving it once is the point of the fanout below.
+    """
+
+    channel_id: str
+    inv: pd.DataFrame
+    um_per_px: float
+    img_w: int
+    img_h: int
+    time_indices: list
+    time_lookup: dict
+    tiling_config: FrameTilingConfig
+    fallback: PreComputeStitchParams
+
+
+def materialize_keyence_products_for_well(
+    *,
+    experiment_id: str,
+    well_id: str,
+    well_index: str,
+    well_acquisition_inventory_df: pd.DataFrame,
+    built_image_data_dir: Path,
+    resolved_products: tuple[ResolvedImageProduct, ...],
+    device: str = "cpu",
+    candidate: bool = False,
+    smoke_max_time_indices: int | None = None,
+    master_params_path: Path | None = None,
+    config: dict | None = None,
+    input_root: Path | None = None,
+) -> dict[str, pd.DataFrame]:
+    """Materialize EVERY requested Keyence image product for ONE well, sharing the frame work.
+
+    The product fanout happens at the WRITE boundary, not at the front of the job: each
+    ``(channel_id, time_index)`` frame is prepared once (one raw read, at most one focus reduction,
+    one tile transform) and every product emits from those same materials with its own write policy,
+    its own files, and its own frame-inventory shard.
+
+    Each product still yields a SEPARATE shard, exactly as the per-product jobs did — a shard must
+    stay single-product, because ``PER_WELL_PRODUCT_CHECKS`` deliberately cannot answer
+    cross-channel questions. Only the process is shared.
+
+    Returns:
+        ``{product_key: frame-inventory DataFrame}``, one entry per requested product.
+    """
+    if not resolved_products:
+        raise ValueError(f"No resolved products requested for well {well_id!r}.")
+
+    for product in resolved_products:
+        _assert_supported_product(product)
+
+    product_keys = [image_product_key_for_resolved_product(p) for p in resolved_products]
+    if len(set(product_keys)) != len(product_keys):
+        raise ValueError(
+            f"Duplicate image product keys for well {well_id!r}: {product_keys}. Each requested "
+            "product must resolve to a distinct key."
+        )
+
+    # --- Entry guard: well/inventory consistency ---
+    expected_well_id = derive_well_id(experiment_id, well_index)
+    if expected_well_id != well_id:
+        raise ValueError(
+            f"well_id mismatch: derive_well_id({experiment_id!r}, {well_index!r}) "
+            f"= {expected_well_id!r} but caller passed well_id={well_id!r}."
+        )
+    if well_acquisition_inventory_df.empty:
+        raise ValueError(f"well_acquisition_inventory_df is empty for well {well_id!r}.")
+
+    # Consume-boundary: validate inventory + source readability before any TIFF reads. Hoisted to
+    # the WELL level: this stats and opens every source_tiff_path, and it is a fact about the
+    # acquisition, not about a product — running it once per product re-walked the whole tree.
+    validate_keyence_acquisition_inventory(
+        well_acquisition_inventory_df, check_sources=True, input_root=input_root
+    )
+
+    # Group products by channel. Materials are never shared across channels: pixel reductions and
+    # write policies are per-channel concerns, so each channel gets its own prepared frames.
+    products_by_channel: dict[str, list[ResolvedImageProduct]] = {}
+    for product in resolved_products:
+        products_by_channel.setdefault(product.channel_id, []).append(product)
+
+    rows_by_product: dict[str, list[dict]] = {key: [] for key in product_keys}
+
+    for channel_id, channel_products in products_by_channel.items():
+        context = _build_well_context(
+            well_acquisition_inventory_df,
+            channel_id=channel_id,
+            well_id=well_id,
+            smoke_max_time_indices=smoke_max_time_indices,
+            master_params_path=master_params_path,
+            config=config,
+        )
+
+        # z_stack products need a complete tile x z grid; check once per channel, before reading.
+        if any(p.image_product_type == "z_stack" for p in channel_products):
+            _assert_complete_z_stack_inventory(context, well_id=well_id)
+
+        write_policies = {
+            image_product_key_for_resolved_product(p): resolve_image_write_policy(
+                config,
+                image_product_key_for_resolved_product(p),
+                native_micrometers_per_pixel=context.um_per_px,
+            )
+            for p in channel_products
+        }
+
+        # Focus is required by any projection product, and by content-aligning geometry (auto /
+        # align_only), which must match features on sharp composites rather than raw planes.
+        compute_focus = any(
+            p.image_product_type == "projection" for p in channel_products
+        ) or context.tiling_config.mode != "prior_only"
+
+        log.info(
+            "materialize_keyence_products_for_well: experiment=%s well=%s channel=%s "
+            "products=%s n_time=%d mode=%s compute_focus=%s candidate=%s",
+            experiment_id, well_id, channel_id,
+            [image_product_key_for_resolved_product(p) for p in channel_products],
+            len(context.time_indices), context.tiling_config.mode, compute_focus, candidate,
+        )
+
+        for t in context.time_indices:
+            frame_rows = context.inv[context.inv["time_index"] == t]
+            materials = prepare_keyence_frame(
+                frame_rows=frame_rows,
+                channel_id=channel_id,
+                time_index=int(t),
+                well_id=well_id,
+                tiling_config=context.tiling_config,
+                fallback=context.fallback,
+                compute_focus=compute_focus,
+                device=device,
+                resolve_tiff=lambda p: _resolve_tiff(p, input_root=input_root),
+            )
+
+            for product in channel_products:
+                product_key = image_product_key_for_resolved_product(product)
+                emit = (
+                    _emit_projection_product
+                    if product.image_product_type == "projection"
+                    else _emit_z_stack_product
+                )
+                rows_by_product[product_key].extend(
+                    emit(
+                        materials=materials,
+                        context=context,
+                        experiment_id=experiment_id,
+                        well_id=well_id,
+                        well_index=well_index,
+                        built_image_data_dir=built_image_data_dir,
+                        write_policy=write_policies[product_key],
+                        resolved_product=product,
+                        candidate=candidate,
+                        input_root=input_root,
+                    )
+                )
+
+    result: dict[str, pd.DataFrame] = {}
+    for product_key in product_keys:
+        inv_df = pd.DataFrame(rows_by_product[product_key], columns=list(_EMITTED_COLUMNS))
+        missing = [c for c in _REQUIRED_IMAGE_CORE_COLUMNS if c not in inv_df.columns]
+        if missing:
+            raise RuntimeError(
+                f"materialize_keyence_products_for_well produced a frame-inventory DataFrame "
+                f"missing required columns for {product_key!r}: {missing}. "
+                f"Present: {list(inv_df.columns)}."
+            )
+        log.info(
+            "materialize_keyence_products_for_well complete: well=%s product=%s frames=%d",
+            well_id, product_key, len(inv_df),
+        )
+        result[product_key] = inv_df
+    return result
+
+
 def materialize_keyence_product_for_well(
     *,
     experiment_id: str,
@@ -158,16 +341,29 @@ def materialize_keyence_product_for_well(
 ) -> pd.DataFrame:
     """Materialize ONE Keyence image product for ONE well; return frame-inventory rows.
 
-    Asserts ``xy_composition == 'mosaic'`` — this is the Keyence executor guard (mirror of
-    YX1's identity guard). Projection products focus-stack each tile before stitching; z-stack
-    products stitch the acquisition-inventory TIFFs independently for each declared z plane.
-
-    Args:
-        master_params_path: optional path to the experiment-grain ``master_params.json`` produced
-            by Stage C (``build_keyence_stitch_map``).  ``None`` = align each frame from scratch
-            via ``stitch2d`` (slower; no fallback coords).  Becomes required once Stage C lands.
+    Single-product wrapper over :func:`materialize_keyence_products_for_well`. Kept because the
+    per-product Snakemake rule (still the live path for non-Keyence scopes, and the fallback for
+    Keyence) hands in exactly one product.
     """
-    # --- Executor guard: mosaic-only ---
+    products = materialize_keyence_products_for_well(
+        experiment_id=experiment_id,
+        well_id=well_id,
+        well_index=well_index,
+        well_acquisition_inventory_df=well_acquisition_inventory_df,
+        built_image_data_dir=built_image_data_dir,
+        resolved_products=(resolved_product,),
+        device=device,
+        candidate=candidate,
+        smoke_max_time_indices=smoke_max_time_indices,
+        master_params_path=master_params_path,
+        config=config,
+        input_root=input_root,
+    )
+    return products[image_product_key_for_resolved_product(resolved_product)]
+
+
+def _assert_supported_product(resolved_product: ResolvedImageProduct) -> None:
+    """Executor guards: mosaic-only, and only the product shapes this backend has wired."""
     if resolved_product.xy_composition != "mosaic":
         raise ValueError(
             f"materialize_keyence_product_for_well only executes xy_composition='mosaic'; got "
@@ -190,24 +386,18 @@ def materialize_keyence_product_for_well(
         raise ValueError(
             f"Unsupported Keyence image_product_type {resolved_product.image_product_type!r}."
         )
-    product_key = image_product_key_for_resolved_product(resolved_product)
 
-    # --- Entry guard: well/inventory consistency ---
-    expected_well_id = derive_well_id(experiment_id, well_index)
-    if expected_well_id != well_id:
-        raise ValueError(
-            f"well_id mismatch: derive_well_id({experiment_id!r}, {well_index!r}) "
-            f"= {expected_well_id!r} but caller passed well_id={well_id!r}."
-        )
-    if well_acquisition_inventory_df.empty:
-        raise ValueError(f"well_acquisition_inventory_df is empty for well {well_id!r}.")
 
-    # Consume-boundary: validate inventory + source readability before any TIFF reads.
-    validate_keyence_acquisition_inventory(
-        well_acquisition_inventory_df, check_sources=True, input_root=input_root
-    )
-
-    channel_id = resolved_product.channel_id
+def _build_well_context(
+    well_acquisition_inventory_df: pd.DataFrame,
+    *,
+    channel_id: str,
+    well_id: str,
+    smoke_max_time_indices: int | None,
+    master_params_path: Path | None,
+    config: dict | None,
+) -> _WellContext:
+    """Derive the per-channel acquisition facts every product of that channel shares."""
     inv = well_acquisition_inventory_df[
         well_acquisition_inventory_df["channel_id"] == channel_id
     ].copy()
@@ -220,13 +410,6 @@ def materialize_keyence_product_for_well(
     um_per_px = float(inv["micrometers_per_pixel"].iloc[0])
     img_w = int(inv["image_width_px"].iloc[0])
     img_h = int(inv["image_height_px"].iloc[0])
-
-    # Resolved here (not at function entry) because a product declaring a fixed µm/px target needs
-    # this well's native calibration to compute its downsample factor.
-    write_policy = resolve_image_write_policy(
-        config, product_key, native_micrometers_per_pixel=um_per_px
-    )
-    ext = suffix_for_policy(write_policy)
 
     # Determine orientation for the stitcher. Modern Keyence exports often leave this unknown;
     # legacy behavior treats those as horizontal strips.
@@ -253,410 +436,356 @@ def materialize_keyence_product_for_well(
         .to_dict("index")
     )
 
-    tiling_config = FrameTilingConfig(orientation=orientation)
-    fallback = PreComputeStitchParams(master_params_path=master_params_path)
-
-    if resolved_product.image_product_type == "z_stack":
-        expected_tiles = set(inv["tile_id"].tolist())
-        declared_tile_counts = set(int(n) for n in inv["n_tiles_in_well"].unique())
-        if len(declared_tile_counts) != 1 or declared_tile_counts != {len(expected_tiles)}:
-            raise ValueError(
-                f"Inconsistent Keyence tile inventory for well={well_id}: "
-                f"observed tile_ids={sorted(expected_tiles)}, "
-                f"declared n_tiles_in_well={sorted(declared_tile_counts)}."
-            )
-        selected = inv[inv["time_index"].isin(time_indices)]
-        duplicate_cells = selected.duplicated(["time_index", "tile_id", "z_index"], keep=False)
-        if duplicate_cells.any():
-            cells = selected.loc[
-                duplicate_cells, ["time_index", "tile_id", "z_index"]
-            ].to_dict("records")
-            raise ValueError(
-                f"Duplicate Keyence time/tile/z inventory cells for well={well_id}: {cells}."
-            )
-        expected_z_indices = sorted(int(z) for z in selected["z_index"].unique())
-        for t in time_indices:
-            t_rows = selected[selected["time_index"] == t]
-            actual_z_indices = sorted(int(z) for z in t_rows["z_index"].unique())
-            if actual_z_indices != expected_z_indices:
-                raise ValueError(
-                    f"Incomplete Keyence z-stack for well={well_id} time_index={t}: "
-                    f"expected z_indices={expected_z_indices}, got {actual_z_indices}."
-                )
-            for z_index in expected_z_indices:
-                actual_tiles = set(
-                    t_rows.loc[t_rows["z_index"] == z_index, "tile_id"].tolist()
-                )
-                if actual_tiles != expected_tiles:
-                    raise ValueError(
-                        f"Incomplete Keyence z plane for well={well_id} time_index={t} "
-                        f"z_index={z_index}: expected tile_ids={sorted(expected_tiles)}, "
-                        f"got {sorted(actual_tiles)}."
-                    )
-
-    log.info(
-        "materialize_keyence_product_for_well: experiment=%s well=%s channel=%s "
-        "product=%s n_time=%d orientation=%s master_params=%s candidate=%s",
-        experiment_id, well_id, channel_id,
-        resolved_product.image_product_type, len(time_indices),
-        orientation, master_params_path, candidate,
+    # Tile alignment strategy. The tiles of a frame do not move as the stage steps through focus, so
+    # geometry is a property of the FRAME: prepare_keyence_frame resolves it once and every plane and
+    # every product reuses it. "prior_only" reads the experiment-grain map instead of solving.
+    # Default stays "auto": the per-frame align is also the per-frame QC signal, so trading it away
+    # is an opt-in decision, not a silent one.
+    tiling_mode = str(
+        (config or {}).get("image_materialization", {}).get("keyence_tiling_mode", "auto")
+    )
+    return _WellContext(
+        channel_id=str(channel_id),
+        inv=inv,
+        um_per_px=um_per_px,
+        img_w=img_w,
+        img_h=img_h,
+        time_indices=time_indices,
+        time_lookup=time_lookup,
+        tiling_config=FrameTilingConfig(orientation=orientation, mode=tiling_mode),
+        fallback=PreComputeStitchParams(master_params_path=master_params_path),
     )
 
+
+def _assert_complete_z_stack_inventory(context: _WellContext, *, well_id: str) -> None:
+    """A z_stack writes planes verbatim, so a missing tile/plane would silently change geometry."""
+    inv = context.inv
+    expected_tiles = set(inv["tile_id"].tolist())
+    declared_tile_counts = set(int(n) for n in inv["n_tiles_in_well"].unique())
+    if len(declared_tile_counts) != 1 or declared_tile_counts != {len(expected_tiles)}:
+        raise ValueError(
+            f"Inconsistent Keyence tile inventory for well={well_id}: "
+            f"observed tile_ids={sorted(expected_tiles)}, "
+            f"declared n_tiles_in_well={sorted(declared_tile_counts)}."
+        )
+    selected = inv[inv["time_index"].isin(context.time_indices)]
+    duplicate_cells = selected.duplicated(["time_index", "tile_id", "z_index"], keep=False)
+    if duplicate_cells.any():
+        cells = selected.loc[
+            duplicate_cells, ["time_index", "tile_id", "z_index"]
+        ].to_dict("records")
+        raise ValueError(
+            f"Duplicate Keyence time/tile/z inventory cells for well={well_id}: {cells}."
+        )
+    expected_z_indices = sorted(int(z) for z in selected["z_index"].unique())
+    for t in context.time_indices:
+        t_rows = selected[selected["time_index"] == t]
+        actual_z_indices = sorted(int(z) for z in t_rows["z_index"].unique())
+        if actual_z_indices != expected_z_indices:
+            raise ValueError(
+                f"Incomplete Keyence z-stack for well={well_id} time_index={t}: "
+                f"expected z_indices={expected_z_indices}, got {actual_z_indices}."
+            )
+        for z_index in expected_z_indices:
+            actual_tiles = set(
+                t_rows.loc[t_rows["z_index"] == z_index, "tile_id"].tolist()
+            )
+            if actual_tiles != expected_tiles:
+                raise ValueError(
+                    f"Incomplete Keyence z plane for well={well_id} time_index={t} "
+                    f"z_index={z_index}: expected tile_ids={sorted(expected_tiles)}, "
+                    f"got {sorted(actual_tiles)}."
+                )
+
+
+def _emit_z_stack_product(
+    *,
+    materials: FrameMaterials,
+    context: _WellContext,
+    experiment_id: str,
+    well_id: str,
+    well_index: str,
+    built_image_data_dir: Path,
+    write_policy,
+    resolved_product: ResolvedImageProduct,
+    candidate: bool,
+    input_root: Path | None,
+) -> list[dict]:
+    """Stitch and write every declared z plane of ONE frame; return its inventory rows.
+
+    Reuses ``materials.tile_transforms`` verbatim for every plane. No plane is feature-matched:
+    out-of-focus planes carry too few descriptors to align reliably (planes of one stack could land
+    in different coordinate frames from each other and from their own projection), and a plane
+    yielding <2 descriptors aborts the whole well inside OpenCV's FLANN matcher.
+    """
+    t = materials.time_index
+    t_rows = context.inv[context.inv["time_index"] == t]
+    t_times = context.time_lookup[t]
+    channel_id = materials.channel_id
+    ext = suffix_for_policy(write_policy)
+    use_transforms = materials.tile_transforms if len(materials.tile_ids) > 1 else None
+
     rows: list[dict] = []
-
-    for t in time_indices:
-        t_rows = inv[inv["time_index"] == t]
-        t_times = time_lookup[t]
-
-        if resolved_product.image_product_type == "z_stack":
-            z_indices = sorted(int(z) for z in t_rows["z_index"].unique())
-
-            # ── FRAME GEOMETRY: aligned ONCE per (well, time_index), reused by every z plane ──
-            # The tiles of a frame do not move as the stage steps through focus, so tile alignment
-            # is a property of the FRAME, not of the individual plane. Derive it from the frame's
-            # focus-stacked composites (sharp, feature-rich — the same images the projection
-            # product stitches), then apply those transforms verbatim to each plane below.
-            #
-            # This replaces per-plane alignment, which was wrong on both counts: out-of-focus
-            # planes have too few features to align reliably (so planes of one stack could end up
-            # in different coordinate frames from each other and from their own projection), and a
-            # plane yielding <2 descriptors aborts the whole well inside OpenCV's FLANN matcher
-            # ("(size_t)knn <= index_->size()"). No plane is feature-matched any more.
-            frame_stacks: list[np.ndarray] = []
-            frame_tile_ids: list[str] = []
-            for tile_id, tile_rows in t_rows.groupby("tile_id", sort=True):
-                planes = [
-                    read_keyence_plane(
-                        _resolve_tiff(r.source_tiff_path, input_root=input_root)
-                    )
-                    for r in tile_rows.sort_values("z_index").itertuples(index=False)
-                ]
-                frame_stacks.append(np.stack(planes, axis=0))
-                frame_tile_ids.append(str(tile_id))
-
-            if len(frame_tile_ids) == 1:
-                frame_transforms = None  # single tile: nothing to align, stitcher short-circuits
-            else:
-                frame_group = focus_stack_group(
-                    frame_stacks, config=FocusStackConfig(), device=device
-                )
-                frame_specs = [
-                    TileSpec(tile_id=tid, image=frame_group.tiles[i].projection_u8)
-                    for i, tid in enumerate(frame_tile_ids)
-                ]
-                frame_result = stitch_frame_tiles(frame_specs, tiling_config, fallback)
-                if not frame_result.qc.passed:
-                    raise UnstitchableFrameError(
-                        f"Frame-geometry stitch failed for well={well_id} time_index={t}: "
-                        f"reasons={frame_result.qc.reasons} "
-                        f"fallback_used={frame_result.fallback_used}. Refusing to materialize "
-                        f"z planes against untrustworthy geometry."
-                    )
-                frame_transforms = frame_result.tile_transforms
-
-            for z_index in z_indices:
-                z_rows = t_rows[t_rows["z_index"] == z_index]
-                # z_stack writes planes verbatim; a dropped tile would silently change the stitch
-                # geometry, so this path does NOT tolerate unreadable planes (missing_ok=False).
-                tile_specs = [
-                    TileSpec(
-                        tile_id=str(row.tile_id),
-                        image=read_keyence_plane(
-                            _resolve_tiff(row.source_tiff_path, input_root=input_root)
-                        ),
-                    )
-                    for row in z_rows.sort_values("tile_id").itertuples(index=False)
-                ]
-                result = stitch_frame_tiles(
-                    tile_specs, tiling_config, fallback, use_transforms=frame_transforms
-                )
-                if not result.qc.passed:
-                    raise UnstitchableFrameError(
-                        f"stitch_frame_tiles returned qc.passed=False for well={well_id} "
-                        f"time_index={t} z_index={z_index}: reasons={result.qc.reasons} "
-                        f"fallback_used={result.fallback_used}."
-                    )
-                # One shared, explicit polarity flip post-stitch (NOT hidden in the stitcher):
-                # canonical bright-embryo/dark-background, governed by the per-product write policy.
-                mosaic = apply_display_polarity(result.stitched, invert=write_policy.flip_polarity)
-                out_path = materialized_image_paths.z_stack_frame_path(
-                    built_image_data_dir,
-                    experiment_id=experiment_id,
-                    well_id=well_id,
-                    channel_id=channel_id,
-                    time_index=int(t),
-                    z_index=z_index,
-                    ext=ext,
-                    candidate=candidate,
-                )
-                prepared_mosaic = prepare_image_for_write(mosaic, write_policy)
-                oriented_mosaic = orient_image_for_write(mosaic, write_policy)
-                write_image(mosaic, out_path, write_policy)
-                written_meta = _read_written_image_metadata(out_path)
-                image_height_px = int(written_meta["image_height_px"])
-                image_width_px = int(written_meta["image_width_px"])
-                if prepared_mosaic.shape != (image_height_px, image_width_px):
-                    raise RuntimeError(
-                        f"Keyence materializer write dimensions disagree for {out_path}: "
-                        f"prepared={prepared_mosaic.shape}, header={(image_height_px, image_width_px)}."
-                    )
-                if str(prepared_mosaic.dtype) != str(written_meta["pixel_dtype"]):
-                    raise RuntimeError(
-                        f"Keyence materializer write dtype disagrees for {out_path}: "
-                        f"prepared={prepared_mosaic.dtype}, header={written_meta['pixel_dtype']}."
-                    )
-                raw_tile_path, raw_tile_manifest_path = _raw_tile_provenance_paths(
-                    out_path=out_path,
-                    experiment_id=experiment_id,
-                    well_id=well_id,
-                    channel_id=channel_id,
-                    time_index=int(t),
-                    t_rows=z_rows,
-                    input_root=input_root,
-                )
-                rows.append({
-                    "experiment_id": experiment_id,
-                    "well_index": well_index,
-                    "well_id": well_id,
-                    "channel_id": channel_id,
-                    "time_index": int(t),
-                    "image_id": derive_image_id(well_id, channel_id, int(t), z_index=z_index),
-                    "elapsed_time_s": t_times["elapsed_time_s"],
-                    "acquisition_time_s": t_times["acquisition_time_s"],
-                    "z_index": z_index,
-                    "image_product_type": "z_stack",
-                    "projection_method": pd.NA,
-                    "image_path": str(out_path),
-                    "image_micrometers_per_pixel": _materialized_micrometers_per_pixel(
-                        raw_micrometers_per_pixel=um_per_px,
-                        oriented_native_shape=oriented_mosaic.shape,
-                        written_shape=(image_height_px, image_width_px),
-                    ),
-                    "image_width_px": image_width_px,
-                    "image_height_px": image_height_px,
-                    "index_map_path": pd.NA,
-                    "write_index_map": False,
-                    "raw_tile_path": raw_tile_path,
-                    "raw_tile_manifest_path": raw_tile_manifest_path,
-                    "raw_tile_width_px": img_w,
-                    "raw_tile_height_px": img_h,
-                    "raw_tile_count": int(z_rows["tile_id"].nunique()),
-                    "raw_micrometers_per_pixel": um_per_px,
-                    "orientation": write_policy.orientation,
-                    "image_file_format": str(written_meta["image_file_format"]),
-                    "pixel_dtype": str(written_meta["pixel_dtype"]),
-                    "downsample_factor": write_policy.downsample_factor,
-                    "downsample_method": write_policy.downsample_method,
-                    "jpeg_quality": (
-                        write_policy.jpeg_quality if write_policy.file_format == "jpg" else pd.NA
-                    ),
-                    "flip_polarity": bool(write_policy.flip_polarity),
-                })
-            continue
-
-        # Read all raw uint16 tile stacks for this frame, then focus-stack the WHOLE frame in
-        # ONE shared-bounds group op (image_building/shared/README.md): a single 0.1–99.9%
-        # intensity range across every tile/Z plane, so no tile renders on its own tone curve
-        # and the per-tile normalization+double-normalization regression is impossible. The
-        # adapter owns tile grouping/ordering only — the shared primitive owns all focus math.
-        ordered_tile_ids: list[str] = []
-        raw_stacks: list[np.ndarray] = []
-        tile_z_indices: np.ndarray | None = None
-        for tile_id, tile_rows in t_rows.groupby("tile_id"):
-            sorted_rows = tile_rows.sort_values("z_index")
-            z_paths = sorted_rows["source_tiff_path"].map(
-                lambda p: _resolve_tiff(p, input_root=input_root)
-            ).tolist()
-            if not z_paths:
-                raise ValueError(
-                    f"No z-plane TIFFs for well={well_id} time_index={t} tile_id={tile_id}."
-                )
-            # Read raw Z planes → (Z, Y, X) uint16 stack (NOT normalized — that is the shared
-            # primitive's job). read_keyence_plane owns the raw-data edge cases: it promotes 8-bit
-            # (2023-era) acquisitions to uint16 for focus_stack_group, and drops zero-byte planes so
-            # one corrupt file cannot abort the whole experiment.
-            #
-            # Planes and their z_index are filtered TOGETHER: focus_index_map indexes positions in
-            # this stack, and tile_z_indices maps those positions back to real z_index values. If a
-            # plane were dropped without dropping its z_index the two would desync and every focus
-            # index after the gap would be attributed to the wrong Z.
-            kept_planes: list[np.ndarray] = []
-            kept_z: list[int] = []
-            for p, z in zip(z_paths, sorted_rows["z_index"].tolist()):
-                img = read_keyence_plane(p, missing_ok=True)
-                if img is None:
-                    continue
-                kept_planes.append(img)
-                kept_z.append(int(z))
-            if not kept_planes:
-                raise ValueError(
-                    f"All z-plane TIFFs unreadable for well={well_id} time_index={t} "
-                    f"tile_id={tile_id}."
-                )
-            stack_zyx = np.stack(kept_planes, axis=0)
-            z_indices_tile = np.asarray(kept_z, dtype=np.int32)
-            if tile_z_indices is None:
-                tile_z_indices = z_indices_tile
-            ordered_tile_ids.append(str(tile_id))
-            raw_stacks.append(stack_zyx)
-
-        group = focus_stack_group(raw_stacks, config=FocusStackConfig(), device=device)
-        tile_specs: list[TileSpec] = [
-            TileSpec(tile_id=tid, image=group.tiles[i].projection_u8)
-            for i, tid in enumerate(ordered_tile_ids)
+    for z_index in [int(z) for z in materials.z_indices]:
+        z_rows = t_rows[t_rows["z_index"] == z_index]
+        # Planes come from the shared materials — already read once for this frame.
+        tile_specs = [
+            TileSpec(tile_id=tile_id, image=materials.plane_for(tile_id, z_index))
+            for tile_id in materials.tile_ids
         ]
-        tile_fims: dict[str, np.ndarray] = {
-            tid: group.tiles[i].focus_index_map.astype(np.int32)
-            for i, tid in enumerate(ordered_tile_ids)
-        }
-
-        # Stitch the per-tile 2D images into one mosaic. ``stitch_frame_tiles`` itself raises
-        # ``UnstitchableFrameError`` when it cannot produce a trustworthy mosaic (incomplete/
-        # implausible alignment + no usable master fallback) — this guard is defense-in-depth
-        # for any path that returns a result with qc.passed=False instead of raising. Either
-        # way: refuse to materialize a wrong-but-passing image.
-        result = stitch_frame_tiles(tile_specs, tiling_config, fallback)
+        result = stitch_frame_tiles(
+            tile_specs, context.tiling_config, context.fallback, use_transforms=use_transforms
+        )
         if not result.qc.passed:
             raise UnstitchableFrameError(
                 f"stitch_frame_tiles returned qc.passed=False for well={well_id} "
-                f"time_index={t}: reasons={result.qc.reasons} fallback_used={result.fallback_used}. "
-                f"Refusing to materialize a wrong-but-passing image."
+                f"time_index={t} z_index={z_index}: reasons={result.qc.reasons} "
+                f"fallback_used={result.fallback_used}."
             )
         # One shared, explicit polarity flip post-stitch (NOT hidden in the stitcher):
         # canonical bright-embryo/dark-background, governed by the per-product write policy.
         mosaic = apply_display_polarity(result.stitched, invert=write_policy.flip_polarity)
-
-        # Build canvas focus_index_map by painting each tile's fim at its stitched origin.
-        # Then trim to the mosaic's actual shape (which may be smaller after legacy-canvas trim).
-        canvas_h, canvas_w = result.canvas_shape
-        canvas_fim = np.zeros((canvas_h, canvas_w), dtype=np.int32)
-        for tile_spec in tile_specs:
-            tr = result.tile_transforms[tile_spec.tile_id]
-            dy = int(round(tr.dy_px))
-            dx = int(round(tr.dx_px))
-            fim = tile_fims[tile_spec.tile_id]
-            th, tw = fim.shape
-            ey = min(dy + th, canvas_h)
-            ex = min(dx + tw, canvas_w)
-            if ey > dy and ex > dx:
-                canvas_fim[dy:ey, dx:ex] = fim[: ey - dy, : ex - dx]
-        # Trim to match the final mosaic dimensions (post-finalize crop).
-        canvas_fim = canvas_fim[: mosaic.shape[0], : mosaic.shape[1]]
-
-        out_path = materialized_image_paths.projection_frame_path(
+        out_path = materialized_image_paths.z_stack_frame_path(
             built_image_data_dir,
             experiment_id=experiment_id,
             well_id=well_id,
             channel_id=channel_id,
             time_index=int(t),
-            projection_method="focus_stack",
+            z_index=z_index,
             ext=ext,
             candidate=candidate,
         )
         prepared_mosaic = prepare_image_for_write(mosaic, write_policy)
-        oriented_fim = orient_image_for_write(canvas_fim, write_policy)
+        oriented_mosaic = orient_image_for_write(mosaic, write_policy)
         write_image(mosaic, out_path, write_policy)
         written_meta = _read_written_image_metadata(out_path)
         image_height_px = int(written_meta["image_height_px"])
         image_width_px = int(written_meta["image_width_px"])
         if prepared_mosaic.shape != (image_height_px, image_width_px):
             raise RuntimeError(
-                "Keyence materializer wrote an image whose header dimensions disagree with the "
-                f"shared writer output for {out_path}: prepared={prepared_mosaic.shape}, "
-                f"header={(image_height_px, image_width_px)}."
+                f"Keyence materializer write dimensions disagree for {out_path}: "
+                f"prepared={prepared_mosaic.shape}, header={(image_height_px, image_width_px)}."
             )
         if str(prepared_mosaic.dtype) != str(written_meta["pixel_dtype"]):
             raise RuntimeError(
-                "Keyence materializer wrote an image whose read-back dtype disagrees with the "
-                f"shared writer output for {out_path}: prepared={prepared_mosaic.dtype}, "
-                f"header={written_meta['pixel_dtype']}."
+                f"Keyence materializer write dtype disagrees for {out_path}: "
+                f"prepared={prepared_mosaic.dtype}, header={written_meta['pixel_dtype']}."
             )
-        image_micrometers_per_pixel = _materialized_micrometers_per_pixel(
-            raw_micrometers_per_pixel=um_per_px,
-            oriented_native_shape=oriented_fim.shape,
-            written_shape=(image_height_px, image_width_px),
-        )
-        aligned_fim = _resize_index_map(
-            oriented_fim,
-            target_shape=(image_height_px, image_width_px),
-        )
-
-        fim_path = materialized_image_paths.focus_index_map_path(
-            built_image_data_dir,
-            experiment_id=experiment_id,
-            well_id=well_id,
-            channel_id=channel_id,
-            time_index=int(t),
-            candidate=candidate,
-        )
-        fim_path.parent.mkdir(parents=True, exist_ok=True)
-        z_indices_out = tile_z_indices if tile_z_indices is not None else np.array([], dtype=np.int32)
-        np.savez(fim_path, focus_index_map=aligned_fim, z_indices=z_indices_out)
-
         raw_tile_path, raw_tile_manifest_path = _raw_tile_provenance_paths(
             out_path=out_path,
             experiment_id=experiment_id,
             well_id=well_id,
             channel_id=channel_id,
             time_index=int(t),
-            t_rows=t_rows,
+            t_rows=z_rows,
             input_root=input_root,
         )
-
-        image_id = derive_image_id(well_id, channel_id, int(t))
         rows.append({
             "experiment_id": experiment_id,
             "well_index": well_index,
             "well_id": well_id,
             "channel_id": channel_id,
             "time_index": int(t),
-            "image_id": image_id,
+            "image_id": derive_image_id(well_id, channel_id, int(t), z_index=z_index),
             "elapsed_time_s": t_times["elapsed_time_s"],
             "acquisition_time_s": t_times["acquisition_time_s"],
-            "z_index": pd.NA,
-            "image_product_type": "projection",
-            "projection_method": "focus_stack",
+            "z_index": z_index,
+            "image_product_type": "z_stack",
+            "projection_method": pd.NA,
             "image_path": str(out_path),
-            "image_micrometers_per_pixel": image_micrometers_per_pixel,
+            "image_micrometers_per_pixel": _materialized_micrometers_per_pixel(
+                raw_micrometers_per_pixel=context.um_per_px,
+                oriented_native_shape=oriented_mosaic.shape,
+                written_shape=(image_height_px, image_width_px),
+            ),
             "image_width_px": image_width_px,
             "image_height_px": image_height_px,
-            "index_map_path": str(fim_path),
-            # Keyence focus_stack always writes its canvas index map; when the plan gains real
-            # control here, thread resolved_product.write_index_map through instead.
-            "write_index_map": True,
+            "index_map_path": pd.NA,
+            "write_index_map": False,
             "raw_tile_path": raw_tile_path,
             "raw_tile_manifest_path": raw_tile_manifest_path,
-            "raw_tile_width_px": img_w,
-            "raw_tile_height_px": img_h,
-            "raw_tile_count": int(t_rows["tile_id"].nunique()),
-            "raw_micrometers_per_pixel": um_per_px,
+            "raw_tile_width_px": context.img_w,
+            "raw_tile_height_px": context.img_h,
+            "raw_tile_count": int(z_rows["tile_id"].nunique()),
+            "raw_micrometers_per_pixel": context.um_per_px,
             "orientation": write_policy.orientation,
             "image_file_format": str(written_meta["image_file_format"]),
             "pixel_dtype": str(written_meta["pixel_dtype"]),
             "downsample_factor": write_policy.downsample_factor,
             "downsample_method": write_policy.downsample_method,
-            "jpeg_quality": write_policy.jpeg_quality if write_policy.file_format == "jpg" else pd.NA,
+            "jpeg_quality": (
+                write_policy.jpeg_quality if write_policy.file_format == "jpg" else pd.NA
+            ),
             "flip_polarity": bool(write_policy.flip_polarity),
         })
-
-        if (len(rows) % 10) == 0:
-            log.info("  %d/%d frames written", len(rows), len(time_indices))
-
-    inv_df = pd.DataFrame(rows, columns=list(_EMITTED_COLUMNS))
+    return rows
 
 
-    missing = [c for c in _REQUIRED_IMAGE_CORE_COLUMNS if c not in inv_df.columns]
-    if missing:
+def _emit_projection_product(
+    *,
+    materials: FrameMaterials,
+    context: _WellContext,
+    experiment_id: str,
+    well_id: str,
+    well_index: str,
+    built_image_data_dir: Path,
+    write_policy,
+    resolved_product: ResolvedImageProduct,
+    candidate: bool,
+    input_root: Path | None,
+) -> list[dict]:
+    """Stitch and write ONE frame's focus projection + its canvas index map; return its row."""
+    t = materials.time_index
+    t_rows = context.inv[context.inv["time_index"] == t]
+    t_times = context.time_lookup[t]
+    channel_id = materials.channel_id
+    ext = suffix_for_policy(write_policy)
+
+    if materials.focus is None:
         raise RuntimeError(
-            f"materialize_keyence_product_for_well produced a frame-inventory DataFrame missing "
-            f"required columns: {missing}. Present: {list(inv_df.columns)}."
+            f"Projection product requested for well={well_id} time_index={t} but the frame was "
+            "prepared without a focus reduction. This is a fanout bug: compute_focus must be True "
+            "whenever any product is a projection."
         )
 
-    log.info(
-        "materialize_keyence_product_for_well complete: well=%s product=%s frames=%d",
-        well_id, resolved_product.image_product_type, len(inv_df),
+    tile_specs = [
+        TileSpec(tile_id=tid, image=materials.focus.tiles[i].projection_u8)
+        for i, tid in enumerate(materials.tile_ids)
+    ]
+    tile_fims = {
+        tid: materials.focus.tiles[i].focus_index_map.astype(np.int32)
+        for i, tid in enumerate(materials.tile_ids)
+    }
+
+    # Reuse the frame's already-resolved geometry rather than aligning again. ``stitch_frame_tiles``
+    # itself raises ``UnstitchableFrameError`` when it cannot produce a trustworthy mosaic — this
+    # guard is defense-in-depth for any path that returns qc.passed=False instead of raising.
+    # Either way: refuse to materialize a wrong-but-passing image.
+    use_transforms = materials.tile_transforms if len(materials.tile_ids) > 1 else None
+    result = stitch_frame_tiles(
+        tile_specs, context.tiling_config, context.fallback, use_transforms=use_transforms
     )
-    return inv_df
+    if not result.qc.passed:
+        raise UnstitchableFrameError(
+            f"stitch_frame_tiles returned qc.passed=False for well={well_id} "
+            f"time_index={t}: reasons={result.qc.reasons} fallback_used={result.fallback_used}. "
+            f"Refusing to materialize a wrong-but-passing image."
+        )
+    # One shared, explicit polarity flip post-stitch (NOT hidden in the stitcher):
+    # canonical bright-embryo/dark-background, governed by the per-product write policy.
+    mosaic = apply_display_polarity(result.stitched, invert=write_policy.flip_polarity)
+
+    # Build canvas focus_index_map by painting each tile's fim at its stitched origin.
+    # Then trim to the mosaic's actual shape (which may be smaller after legacy-canvas trim).
+    canvas_h, canvas_w = result.canvas_shape
+    canvas_fim = np.zeros((canvas_h, canvas_w), dtype=np.int32)
+    for tile_spec in tile_specs:
+        tr = result.tile_transforms[tile_spec.tile_id]
+        dy = int(round(tr.dy_px))
+        dx = int(round(tr.dx_px))
+        fim = tile_fims[tile_spec.tile_id]
+        th, tw = fim.shape
+        ey = min(dy + th, canvas_h)
+        ex = min(dx + tw, canvas_w)
+        if ey > dy and ex > dx:
+            canvas_fim[dy:ey, dx:ex] = fim[: ey - dy, : ex - dx]
+    # Trim to match the final mosaic dimensions (post-finalize crop).
+    canvas_fim = canvas_fim[: mosaic.shape[0], : mosaic.shape[1]]
+
+    out_path = materialized_image_paths.projection_frame_path(
+        built_image_data_dir,
+        experiment_id=experiment_id,
+        well_id=well_id,
+        channel_id=channel_id,
+        time_index=int(t),
+        projection_method="focus_stack",
+        ext=ext,
+        candidate=candidate,
+    )
+    prepared_mosaic = prepare_image_for_write(mosaic, write_policy)
+    oriented_fim = orient_image_for_write(canvas_fim, write_policy)
+    write_image(mosaic, out_path, write_policy)
+    written_meta = _read_written_image_metadata(out_path)
+    image_height_px = int(written_meta["image_height_px"])
+    image_width_px = int(written_meta["image_width_px"])
+    if prepared_mosaic.shape != (image_height_px, image_width_px):
+        raise RuntimeError(
+            "Keyence materializer wrote an image whose header dimensions disagree with the "
+            f"shared writer output for {out_path}: prepared={prepared_mosaic.shape}, "
+            f"header={(image_height_px, image_width_px)}."
+        )
+    if str(prepared_mosaic.dtype) != str(written_meta["pixel_dtype"]):
+        raise RuntimeError(
+            "Keyence materializer wrote an image whose read-back dtype disagrees with the "
+            f"shared writer output for {out_path}: prepared={prepared_mosaic.dtype}, "
+            f"header={written_meta['pixel_dtype']}."
+        )
+    image_micrometers_per_pixel = _materialized_micrometers_per_pixel(
+        raw_micrometers_per_pixel=context.um_per_px,
+        oriented_native_shape=oriented_fim.shape,
+        written_shape=(image_height_px, image_width_px),
+    )
+    aligned_fim = _resize_index_map(
+        oriented_fim,
+        target_shape=(image_height_px, image_width_px),
+    )
+
+    fim_path = materialized_image_paths.focus_index_map_path(
+        built_image_data_dir,
+        experiment_id=experiment_id,
+        well_id=well_id,
+        channel_id=channel_id,
+        time_index=int(t),
+        candidate=candidate,
+    )
+    fim_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(fim_path, focus_index_map=aligned_fim, z_indices=materials.z_indices)
+
+    raw_tile_path, raw_tile_manifest_path = _raw_tile_provenance_paths(
+        out_path=out_path,
+        experiment_id=experiment_id,
+        well_id=well_id,
+        channel_id=channel_id,
+        time_index=int(t),
+        t_rows=t_rows,
+        input_root=input_root,
+    )
+
+    return [{
+        "experiment_id": experiment_id,
+        "well_index": well_index,
+        "well_id": well_id,
+        "channel_id": channel_id,
+        "time_index": int(t),
+        "image_id": derive_image_id(well_id, channel_id, int(t)),
+        "elapsed_time_s": t_times["elapsed_time_s"],
+        "acquisition_time_s": t_times["acquisition_time_s"],
+        "z_index": pd.NA,
+        "image_product_type": "projection",
+        "projection_method": "focus_stack",
+        "image_path": str(out_path),
+        "image_micrometers_per_pixel": image_micrometers_per_pixel,
+        "image_width_px": image_width_px,
+        "image_height_px": image_height_px,
+        "index_map_path": str(fim_path),
+        # Keyence focus_stack always writes its canvas index map; when the plan gains real
+        # control here, thread resolved_product.write_index_map through instead.
+        "write_index_map": True,
+        "raw_tile_path": raw_tile_path,
+        "raw_tile_manifest_path": raw_tile_manifest_path,
+        "raw_tile_width_px": context.img_w,
+        "raw_tile_height_px": context.img_h,
+        "raw_tile_count": int(t_rows["tile_id"].nunique()),
+        "raw_micrometers_per_pixel": context.um_per_px,
+        "orientation": write_policy.orientation,
+        "image_file_format": str(written_meta["image_file_format"]),
+        "pixel_dtype": str(written_meta["pixel_dtype"]),
+        "downsample_factor": write_policy.downsample_factor,
+        "downsample_method": write_policy.downsample_method,
+        "jpeg_quality": write_policy.jpeg_quality if write_policy.file_format == "jpg" else pd.NA,
+        "flip_polarity": bool(write_policy.flip_polarity),
+    }]
+
 
 
 def _read_written_image_metadata(path: Path) -> dict[str, object]:
@@ -758,4 +887,3 @@ def _raw_tile_provenance_paths(
         encoding="utf-8",
     )
     return pd.NA, str(manifest_path)
-
