@@ -28,6 +28,7 @@ from data_pipeline.pipeline_orchestrator.orchestration import (
     PIPELINE_STEPS,
     step_dir,
 )
+from data_pipeline.pipeline_orchestrator.orchestration.run_policy import check_run_policy
 from data_pipeline.acquisition.image_materialization.resolved_product_plans import (
     image_product_key_for_resolved_product,
 )
@@ -43,6 +44,17 @@ from data_pipeline.acquisition.image_materialization.scope.scope_resolver_for_ma
 # that gitignoring machine paths stays clean. See:
 #   docs/refactors/streamline-snakemake/well_id_throughline_refactor_plan.md (Scope 3)
 configfile: str(Path(workflow.basedir) / "config.yaml")
+
+# Assert this run got the pipeline's run policy (profiles/default/config.yaml) rather than
+# Snakemake's defaults. Checked HERE, at parse time, and not in `onstart:` -- onstart fires after
+# the DAG is built, by which point a default `rerun_triggers` has ALREADY marked every SAM2 job for
+# re-execution. Failing before rule definition is what makes the check cost nothing.
+#
+# Snakemake 7.32.4 auto-discovers profiles/default beside this Snakefile, so a normal run gets the
+# policy without any flag. This asserts it arrived anyway: losing it (--workflow-profile none, a
+# renamed/typo'd profile, changed discovery semantics on upgrade) is otherwise SILENT, and the
+# first symptom is SAM2 re-running across every well. See run_policy.py.
+check_run_policy(workflow)
 
 WORKFLOW_DIR = Path(workflow.basedir)
 # project_root is still DERIVED from the Snakefile location (zero per-machine setup needed);

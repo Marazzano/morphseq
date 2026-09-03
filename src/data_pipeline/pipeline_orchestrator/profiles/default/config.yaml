@@ -5,9 +5,16 @@
 # QUICK_RUN_READ_ME already used --keep-going in one of its five examples and omitted it from the
 # other four; the qsub templates omitted it entirely.
 #
-# Pass with:  --profile src/data_pipeline/pipeline_orchestrator/profiles/default
-# (Snakemake 7 does NOT auto-discover a workflow profile -- v8 added that -- so the flag is
-# required. Anything given explicitly on the command line still overrides what is here.)
+# HOW THIS IS LOADED. Snakemake 7.32.4 auto-discovers `profiles/default`, searching relative to the
+# current directory and then relative to the Snakefile (see `snakemake --help`, --workflow-profile).
+# This file sits beside the Snakefile, so it applies to any normal invocation without a flag --
+# including runs launched from outside this directory. Passing
+#   --profile src/data_pipeline/pipeline_orchestrator/profiles/default
+# explicitly is harmless and still supported. Anything given on the command line overrides what is
+# here, and `--workflow-profile none` skips this file entirely.
+#
+# The Snakefile ASSERTS these values at parse time (orchestration/run_policy.py) so that a run
+# which somehow did not receive them fails immediately instead of silently behaving differently.
 
 # THE ONE THAT COST A 96-WELL RUN. The DAG is per-well parallel, but Snakemake's default is to stop
 # SCHEDULING new jobs the moment any job fails: it drains what is in flight and exits with

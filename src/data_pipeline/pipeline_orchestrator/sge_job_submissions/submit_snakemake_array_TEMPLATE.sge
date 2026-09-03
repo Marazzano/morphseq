@@ -119,8 +119,10 @@ fi
 # ── Run snakemake for this one experiment; capture rc; notify ─────────────────────────────────
 set +e
 # --resources gpu=1 is REQUIRED, not optional: the rules' `resources: gpu=1` declarations are
-# INERT without a CLI budget (no Snakemake profile exists in this repo), so without it Snakemake
-# schedules unlimited concurrent GPU jobs onto one card. Keep another --flag after it -- its greedy
+# INERT without a CLI budget, so without it Snakemake schedules unlimited concurrent GPU jobs onto
+# one card. profiles/default/config.yaml (auto-discovered beside the Snakefile) also supplies it;
+# repeating it here is redundant but harmless, and the Snakefile asserts the resolved value at
+# parse time via orchestration/run_policy.py. Keep another --flag after it -- its greedy
 # nargs="*" swallows a directly-following bare positional target and 7.32.4 then dies with
 # "ValueError: not enough values to unpack". Note an ARRAY job runs several of these at once, so
 # each task claims the cap independently on whichever node it lands.

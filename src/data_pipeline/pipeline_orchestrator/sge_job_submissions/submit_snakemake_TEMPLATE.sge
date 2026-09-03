@@ -130,8 +130,11 @@ fi
 
 # --resources gpu=1 is REQUIRED for any run touching a GPU rule, not optional. The rules'
 # `resources: gpu=1` declarations are INERT without a CLI budget -- Snakemake treats the resource
-# as unlimited and will happily schedule several model jobs onto one card. This repo has no
-# Snakemake profile, so the flag has to be here.
+# as unlimited and will happily schedule several model jobs onto one card. It is ALSO supplied by
+# profiles/default/config.yaml, which Snakemake auto-discovers beside the Snakefile; passing it
+# here as well is redundant but harmless, and makes the requirement visible at the call site.
+# The Snakefile asserts the resolved value at parse time (orchestration/run_policy.py), so a run
+# that lost the profile fails immediately rather than quietly oversubscribing the card.
 #
 # Placement matters: it must NOT sit immediately before the bare positional target. Its greedy
 # nargs="*" swallows the target token and Snakemake 7.32.4 dies with

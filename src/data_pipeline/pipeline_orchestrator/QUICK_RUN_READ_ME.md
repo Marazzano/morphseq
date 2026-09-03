@@ -10,18 +10,35 @@ configs/runtime_configs/*.yaml            ← experiment / smoke overlays
 sge_job_submissions/*.sge                 ← local SGE launchers
 ```
 
-`config.yaml` is the only file here meant to stay tracked. The overlay and SGE directories are local-only and ignored by git.
+Two tracked defaults have distinct jobs:
+
+- `config.yaml` controls what the workflow does (products, models, and model-server ownership).
+- `profiles/default/config.yaml` controls how Snakemake schedules it (`gpu=1`, `keep-going`,
+  rerun policy, and service readiness timeouts). These are Snakemake CLI settings and cannot be
+  supplied by the workflow's ordinary `config.yaml`.
+
+Runtime overlays select experiments/wells or deliberately override a base behavior. SGE launchers
+pass the default profile explicitly; that is belt-and-braces rather than a requirement, since
+Snakemake also auto-discovers it (below).
 
 Later `--configfile` arguments override earlier ones.
 
 So a normal run looks like:
 
-> **Always pass `--profile pipeline_orchestrator/profiles/default`.** It supplies `--keep-going`,
-> `--resources gpu=1`, `--rerun-triggers mtime`, and `--rerun-incomplete`, which are POLICY for this
-> pipeline rather than per-run choices. Without `--keep-going` a single failing well stops Snakemake
-> from scheduling any further jobs -- that ended a 96-well run at 812/1197 with ~70 wells never
-> attempted. Snakemake 7 does not auto-discover the profile, so the flag is required; anything on
-> the command line still overrides it.
+> **The run policy in `profiles/default/config.yaml` applies to every run.** It supplies
+> `--keep-going`, `--resources gpu=1`, `--rerun-triggers mtime`, and `--rerun-incomplete`,
+> which are POLICY for this pipeline rather than per-run choices. Without
+> `--keep-going` a single failing well stops Snakemake from scheduling any further jobs -- that
+> ended a 96-well run at 812/1197 with ~70 wells never attempted.
+>
+> You do **not** have to pass a flag for this: Snakemake 7.32.4 auto-discovers `profiles/default`
+> beside the Snakefile (it searches relative to the current directory, then to the Snakefile). The
+> explicit `--profile ...` shown below is equivalent and harmless. Anything on the command line
+> still overrides the profile, and `--workflow-profile none` skips it entirely.
+>
+> The Snakefile asserts the resolved values at parse time (`orchestration/run_policy.py`), so a run
+> that somehow did not receive the policy fails immediately with an explanation instead of quietly
+> re-running SAM2 across every well or putting several models on one card.
 
 ```bash
 snakemake --profile src/data_pipeline/pipeline_orchestrator/profiles/default \
