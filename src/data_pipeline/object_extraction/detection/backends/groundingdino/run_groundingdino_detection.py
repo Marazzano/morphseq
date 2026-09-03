@@ -66,10 +66,10 @@ def detect_frame(
 ) -> list[dict]:
     """Detect candidates in one frame, returning shared-table row dicts (detection block only).
 
-    ``identity_row`` supplies ``image_id``, ``image_width_px``, ``image_height_px`` (carried from the
-    frame_inventory row; the router merges the full identity header). Returns one row per raw
-    candidate (``is_kept`` flags filtering outcome) or a single ``_det_none`` placeholder when the
-    detector produced no candidates.
+    ``identity_row`` supplies ``image_id``, ``image_width_px``, ``image_height_px`` and
+    ``image_micrometers_per_pixel`` (carried from the frame_inventory row; the router merges the
+    full identity header). Returns one row per raw candidate (``is_kept`` flags filtering outcome)
+    or a single ``_det_none`` placeholder when the detector produced no candidates.
     """
     config = config or GroundingDinoDetectionConfig()
     image_id = str(identity_row["image_id"])
@@ -85,9 +85,23 @@ def detect_frame(
         box_threshold=config.box_threshold,
         text_threshold=config.text_threshold,
     )
+    # The physical frame area is what turns a normalized box into um^2. filter_detections RAISES if
+    # a um^2 bound is set and this is missing, rather than silently skipping the check — a missing
+    # scale must never look like a passing filter.
+    um_per_px = identity_row.get("image_micrometers_per_pixel")
+    frame_area_um2 = (
+        width * height * float(um_per_px) ** 2
+        if um_per_px is not None and float(um_per_px) > 0
+        else None
+    )
     kept = filter_detections(
         raw,
         iou_threshold=config.iou_threshold,
+        containment_threshold=config.containment_threshold,
+        min_detection_area_um2=config.min_detection_area_um2,
+        max_detection_area_um2=config.max_detection_area_um2,
+        max_frame_coverage=config.max_frame_coverage,
+        frame_area_um2=frame_area_um2,
     )
 
     # No candidates at all → single placeholder row, flag-not-drop.

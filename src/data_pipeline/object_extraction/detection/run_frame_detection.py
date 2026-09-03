@@ -12,6 +12,8 @@ The model is INJECTED (a router argument), so this slice carries no GPU / weight
 
 from __future__ import annotations
 
+import math
+from dataclasses import replace
 from pathlib import Path
 
 import pandas as pd
@@ -78,7 +80,42 @@ def _identity_row_for(inv_row: pd.Series, image_id: str) -> dict:
         "image_path": str(inv_row["image_path"]),
         "image_width_px": int(inv_row["image_width_px"]),
         "image_height_px": int(inv_row["image_height_px"]),
+        # Carried so a backend can express a box bound in PHYSICAL units. Boxes are normalized, so
+        # width x height x um_per_px^2 gives the frame area a normalized box scales against. Passed
+        # through as-is (None when the inventory lacks it); the BACKEND decides whether a missing
+        # scale is fatal, which it is exactly when a um^2 bound was actually requested.
+        "image_micrometers_per_pixel": inv_row.get("image_micrometers_per_pixel"),
     }
+
+
+def _is_seahub_frame(inv_row: pd.Series) -> bool:
+    return str(inv_row.get("source_scope", "")).strip().casefold() == "seahub"
+
+
+def _config_for_frame(config, inv_row: pd.Series):
+    """Disable the size/coverage bounds on SeaHub frames, which own a narrower rule.
+
+    SeaHub crops are already one reviewed embryo per canonical well, and
+    ``_enforce_seahub_single_embryo`` below reduces to exactly one detection there. Those crops are
+    also framed tightly on the animal, so an embryo legitimately fills most of the frame — the very
+    signature ``max_frame_coverage`` treats as a background grab. Running both rules would let the
+    general one reject the reviewed embryo before the SeaHub rule ever sees it.
+
+    Only the SIZE bounds are disabled; IoU/containment grouping still applies, since a nested
+    fragment is a fragment on any scope.
+
+    TODO(benchmark): the two rules encode the same intent ("one embryo per well, keep the largest").
+    Once the general rule has run on more scopes, compare them on SeaHub data and collapse to one
+    if they agree — see PIPELINE_PHILOSOPHY P4a on options that quietly diverge.
+    """
+    if config is None or not _is_seahub_frame(inv_row):
+        return config
+    return replace(
+        config,
+        min_detection_area_um2=math.nan,
+        max_detection_area_um2=math.nan,
+        max_frame_coverage=math.nan,
+    )
 
 
 def _enforce_seahub_single_embryo(rows: list[dict], inv_row: pd.Series) -> None:
@@ -140,7 +177,7 @@ def run_frame_detection_df(
             image_path,
             identity_row=identity,
             detector_model_id=detector_model_id,
-            config=config,
+            config=_config_for_frame(config, inv_row),
         )
         _enforce_seahub_single_embryo(det_rows, inv_row)
         for det in det_rows:

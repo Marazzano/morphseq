@@ -7,8 +7,10 @@ Provides seed detections for SAM2 mask propagation.
 Key Functions:
     - load_groundingdino_model: Initialize model from config
     - detect_embryos: Run detection on a single image
-    - filter_detections: Remove duplicate detections via NMS (IoU thresholding only;
-      confidence gating happens at detect_embryos via box_threshold)
+    - calculate_containment: fraction of the smaller box inside the other (what IoU cannot see)
+    - filter_detections: resolve raw boxes to one per object -- size/coverage bounds, then group
+      same-object boxes by IoU OR containment, keeping the largest in each group. Confidence
+      gating happens once, at detect_embryos via box_threshold.
     - select_seed_frame: Choose best frame for SAM2 initialization
 
 Example Usage:
@@ -32,10 +34,16 @@ Example Usage:
         text_threshold=0.25
     )
 
-    # Remove duplicates (confidence already gated by box_threshold above)
+    # Resolve to one box per object. EVERY knob is required (PIPELINE_PHILOSOPHY P4a);
+    # pass None/NaN to declare a bound deliberately absent.
     filtered = filter_detections(
         detections,
-        iou_threshold=0.5
+        iou_threshold=0.5,
+        containment_threshold=0.85,
+        min_detection_area_um2=600_000.0,
+        max_detection_area_um2=6_500_000.0,
+        max_frame_coverage=0.90,
+        frame_area_um2=frame_width_px * frame_height_px * um_per_px ** 2,
     )
     ```
 
@@ -46,6 +54,7 @@ Detection Format:
     - phrase: str matched text phrase
 """
 
+import math
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -238,57 +247,190 @@ def calculate_iou(box1: List[float], box2: List[float]) -> float:
     return intersection / union if union > 0 else 0.0
 
 
-def filter_detections(
-    detections: List[Dict],
-    iou_threshold: float = 0.5
-) -> List[Dict]:
-    """
-    Remove duplicate detections via NMS.
+def calculate_containment(box1: List[float], box2: List[float]) -> float:
+    """Fraction of the SMALLER box that lies inside the other: ``intersection / min(area)``.
 
-    Confidence gating already happened at detection time (``box_threshold`` in
-    ``detect_embryos``); re-applying a second, stricter confidence cutoff here would
-    silently drop real detections that already cleared the detector's own bar (this
-    used to happen with a 0.45 filter on top of a 0.35 ``box_threshold`` gate — see
-    the SAM3 exemplar review's F05 recovery investigation). ``is_kept`` should reflect
-    NMS dedup only; confidence policy lives in one place, ``config.box_threshold``.
+    This is the metric IoU cannot express. A small box nested in a large one has low IoU *by
+    construction* — the intersection is divided by the large union — so NMS never fires on it.
+    Measured on the pbx pilot: nested yolk/head fragments scored IoU 0.11-0.38 while their
+    containment was 0.994-1.000.
+
+    Symmetric by construction (``max`` over both choices of denominator), so there is no "which box
+    came first" ordering effect.
+
+    Note ``containment >= IoU`` always, since ``min(area) <= union``; the two differ only in what
+    they are lenient about. IoU is lenient when boxes are similar-sized and offset; containment is
+    lenient when one box is much smaller and inside the other.
 
     Args:
-        detections: List of detection dicts (already confidence-gated by box_threshold)
-        iou_threshold: IoU threshold for duplicate removal
+        box1: [x_min, y_min, x_max, y_max]
+        box2: [x_min, y_min, x_max, y_max]
 
     Returns:
-        Filtered list of detections
+        Containment in 0..1; 0.0 when the boxes do not overlap or either has zero area.
 
     Example:
-        >>> detections = [
-        ...     {"box_xyxy": [0.2, 0.2, 0.4, 0.4], "confidence": 0.9, "phrase": "embryo"},
-        ...     {"box_xyxy": [0.21, 0.21, 0.41, 0.41], "confidence": 0.8, "phrase": "embryo"},
-        ...     {"box_xyxy": [0.6, 0.6, 0.8, 0.8], "confidence": 0.85, "phrase": "embryo"},
+        >>> outer = [0.0, 0.0, 1.0, 1.0]
+        >>> inner = [0.1, 0.1, 0.2, 0.2]        # wholly inside, but only 1% of the area
+        >>> round(calculate_containment(outer, inner), 3)
+        1.0
+        >>> round(calculate_iou(outer, inner), 3)   # IoU cannot see it
+        0.01
+    """
+    x1 = max(box1[0], box2[0])
+    y1 = max(box1[1], box2[1])
+    x2 = min(box1[2], box2[2])
+    y2 = min(box1[3], box2[3])
+
+    if x2 <= x1 or y2 <= y1:
+        return 0.0
+
+    intersection = (x2 - x1) * (y2 - y1)
+    area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
+    area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
+    smaller = min(area1, area2)
+
+    return intersection / smaller if smaller > 0 else 0.0
+
+
+def _is_bounded(value) -> bool:
+    """True when a bound was actually chosen. None/NaN mean 'deliberately not bounded' (P4a)."""
+    return value is not None and not math.isnan(float(value))
+
+
+def _box_frame_coverage(box: List[float]) -> float:
+    """Fraction of the frame the box covers. Boxes are NORMALIZED, so this is just its area."""
+    return max(0.0, (box[2] - box[0])) * max(0.0, (box[3] - box[1]))
+
+
+def _box_area_um2(box: List[float], frame_area_um2: float) -> float:
+    """Physical box area. Boxes are normalized, so coverage x frame area gives um^2."""
+    return _box_frame_coverage(box) * frame_area_um2
+
+
+def filter_detections(
+    detections: List[Dict],
+    *,
+    iou_threshold,
+    containment_threshold,
+    min_detection_area_um2,
+    max_detection_area_um2,
+    max_frame_coverage,
+    frame_area_um2=None,
+) -> List[Dict]:
+    """Resolve raw candidate boxes to one box per real object.
+
+        raw detections
+          -> STEP 1  size / coverage bounds  -> potential detections
+          -> STEP 2  group boxes describing the SAME object (IoU or containment, transitively)
+          -> STEP 3  keep the LARGEST box in each group
+
+    EVERY knob is a required keyword argument, with no default — config owns the values and their
+    provenance (PIPELINE_PHILOSOPHY P4a). Pass ``None`` or ``float('nan')`` to declare a bound
+    deliberately absent; that check is then skipped. This is what keeps an option from becoming
+    dead code: a caller cannot fail to notice a filter exists, only choose not to use it.
+
+    Confidence gating already happened at detection time (``box_threshold`` in ``detect_embryos``);
+    re-applying a stricter cutoff here would silently drop real detections that already cleared the
+    detector's bar (a 0.45 filter over a 0.35 gate used to do exactly that — see the SAM3 exemplar
+    review's F05 recovery investigation). Confidence policy lives in one place.
+
+    Confidence is also NOT used to choose between grouped boxes: measured on the pilot, a nested
+    yolk fragment out-scored the whole embryo in 2 of 7 wells, which would seed SAM2 on the yolk.
+    The largest box wins instead.
+
+    Args:
+        detections: candidate dicts with ``box_xyxy`` (NORMALIZED 0-1) and ``confidence``.
+        iou_threshold: group two similar-sized boxes on one object. NaN/None disables.
+        containment_threshold: group a box nested inside another. NaN/None disables.
+        min_detection_area_um2: reject boxes smaller than an embryo. NaN/None disables.
+        max_detection_area_um2: reject boxes larger than an embryo. NaN/None disables.
+        max_frame_coverage: reject boxes covering ~the whole frame. Scale-free. NaN/None disables.
+        frame_area_um2: physical area of the full frame. REQUIRED when either um^2 bound is set;
+            passing None with a um^2 bound raises rather than silently skipping the check.
+
+    Returns:
+        The kept subset of ``detections`` (input dicts, not copies).
+
+    Raises:
+        ValueError: a um^2 bound was requested but ``frame_area_um2`` is missing or non-positive.
+
+    Example:
+        >>> dets = [
+        ...     {"box_xyxy": [0.2, 0.2, 0.6, 0.9], "confidence": 0.45},   # embryo
+        ...     {"box_xyxy": [0.3, 0.7, 0.5, 0.9], "confidence": 0.50},   # yolk, inside it
         ... ]
-        >>> filtered = filter_detections(detections, iou_threshold=0.5)
-        >>> len(filtered)  # Should remove the duplicate
-        2
+        >>> kept = filter_detections(
+        ...     dets, iou_threshold=0.5, containment_threshold=0.85,
+        ...     min_detection_area_um2=None, max_detection_area_um2=None,
+        ...     max_frame_coverage=None)
+        >>> [d["confidence"] for d in kept]   # the larger box wins, not the more confident
+        [0.45]
     """
     if not detections:
         return []
 
-    # Sort by confidence (descending)
-    filtered = sorted(detections, key=lambda x: x["confidence"], reverse=True)
+    wants_physical = _is_bounded(min_detection_area_um2) or _is_bounded(max_detection_area_um2)
+    if wants_physical and not (frame_area_um2 and float(frame_area_um2) > 0):
+        raise ValueError(
+            "filter_detections: min/max_detection_area_um2 was set but frame_area_um2 is "
+            f"{frame_area_um2!r}. A physical bound cannot be applied without the frame's physical "
+            "area — pass frame_area_um2, or set the bound to NaN to declare it deliberately absent."
+        )
 
-    # Non-Maximum Suppression
-    keep = []
-    while filtered:
-        # Keep highest confidence detection
-        current = filtered.pop(0)
-        keep.append(current)
+    # ── STEP 1 — size / coverage bounds ────────────────────────────────────────────────────────
+    potential_detections = []
+    for index, detection in enumerate(detections):
+        box = detection["box_xyxy"]
+        if _is_bounded(max_frame_coverage) and _box_frame_coverage(box) > float(max_frame_coverage):
+            continue
+        if wants_physical:
+            area_um2 = _box_area_um2(box, float(frame_area_um2))
+            if _is_bounded(min_detection_area_um2) and area_um2 < float(min_detection_area_um2):
+                continue
+            if _is_bounded(max_detection_area_um2) and area_um2 > float(max_detection_area_um2):
+                continue
+        potential_detections.append(index)
 
-        # Remove detections with high IoU to current
-        filtered = [
-            d for d in filtered
-            if calculate_iou(current["box_xyxy"], d["box_xyxy"]) < iou_threshold
-        ]
+    # ── STEP 2 — group boxes that describe the same object ─────────────────────────────────────
+    # Transitive on purpose: a fragment may be nested in a sibling that is itself absorbed. A
+    # greedy sequential loop drops that link and leaves the fragment orphaned (measured: a 3-box
+    # well where the smallest box was 1.00 inside the middle box but only 0.85 inside the largest).
+    same_object = {index: set() for index in potential_detections}
+    for position, left in enumerate(potential_detections):
+        for right in potential_detections[position + 1:]:
+            box_l, box_r = detections[left]["box_xyxy"], detections[right]["box_xyxy"]
+            grouped = (
+                (_is_bounded(iou_threshold)
+                 and calculate_iou(box_l, box_r) >= float(iou_threshold))
+                or (_is_bounded(containment_threshold)
+                    and calculate_containment(box_l, box_r) >= float(containment_threshold))
+            )
+            if grouped:
+                same_object[left].add(right)
+                same_object[right].add(left)
 
-    return keep
+    # ── STEP 3 — one representative per group: the largest box ─────────────────────────────────
+    # Two genuinely separate embryos do not contain each other, so they form separate groups and
+    # BOTH survive. That is why this is a component walk and not "keep the single biggest box".
+    kept_indices = []
+    visited = set()
+    for index in potential_detections:
+        if index in visited:
+            continue
+        group, stack = [], [index]
+        while stack:
+            node = stack.pop()
+            if node in visited:
+                continue
+            visited.add(node)
+            group.append(node)
+            stack.extend(same_object[node] - visited)
+        kept_indices.append(
+            max(group, key=lambda i: _box_frame_coverage(detections[i]["box_xyxy"]))
+        )
+
+    return [detections[index] for index in sorted(kept_indices)]
 
 
 def select_seed_frame(
