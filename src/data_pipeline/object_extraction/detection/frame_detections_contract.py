@@ -19,6 +19,8 @@ so the artifact proves every frame was processed.
 
 from __future__ import annotations
 
+import pandas as pd
+
 from data_pipeline.acquisition.image_materialization.frame_inventory_contract import (
     DOWNSTREAM_FRAME_IDENTITY_BLOCK,
 )
@@ -88,3 +90,21 @@ def no_candidate_detection_id(image_id: str) -> str:
 def is_no_candidate_id(value: str) -> bool:
     """True if ``value`` is a no-candidate placeholder detection id."""
     return str(value).endswith(NO_CANDIDATE_SUFFIX)
+
+
+def has_kept_detections(frame_detections: pd.DataFrame) -> bool:
+    """True when this well has at least one KEPT detection — i.e. something was found.
+
+    ``False`` is a normal, expected answer: a 96-well plate legitimately contains wells with no
+    embryo, and this contract states that outcome explicitly via the ``_det_none`` placeholder row
+    (``is_kept=False``), which ``validate_frame_detections`` accepts as a valid shape.
+
+    This predicate lives HERE, beside the vocabulary it reads, because ``is_kept`` and
+    ``_det_none`` are minted by THIS contract (P6: a contract lives with the code that mints it).
+    Every consumer that must branch on "did this well have anything?" — SAM2 prompting today,
+    anything else tomorrow — asks this one question rather than re-deriving it from ``is_kept``,
+    which is how a shared seam quietly grows two incompatible readings.
+    """
+    if frame_detections.empty or "is_kept" not in frame_detections.columns:
+        return False
+    return bool(frame_detections["is_kept"].astype(bool).any())

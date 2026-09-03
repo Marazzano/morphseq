@@ -1,5 +1,7 @@
 """Tests for detection/frame_detections_contract.py — manifests, id helpers, format constants."""
 
+import pandas as pd
+
 from data_pipeline.object_extraction.detection.frame_detections_contract import (
     ALLOWED_BBOX_FORMATS,
     BBOX_COLUMNS,
@@ -8,6 +10,7 @@ from data_pipeline.object_extraction.detection.frame_detections_contract import 
     REQUIRED_DETECTION_BLOCK,
     REQUIRED_FRAME_DETECTIONS_COLUMNS,
     detection_id,
+    has_kept_detections,
     is_no_candidate_id,
     no_candidate_detection_id,
 )
@@ -71,3 +74,58 @@ def test_no_candidate_detection_id_format():
 def test_is_no_candidate_id():
     assert is_no_candidate_id("20250912_B01_BF_t0000_det_none")
     assert not is_no_candidate_id("20250912_B01_BF_t0000_det0000")
+
+
+# ---------------------------------------------------------------------------
+# has_kept_detections — "did this well have anything?" asked ONCE, here
+# ---------------------------------------------------------------------------
+
+def _detection_row(image_id: str, *, detection_id_value: str, is_kept: bool) -> dict:
+    return {
+        "image_id": image_id,
+        "detection_id": detection_id_value,
+        "is_kept": is_kept,
+    }
+
+
+class TestHasKeptDetections:
+    """A well with no embryo is DATA, not an error.
+
+    This predicate lives beside the vocabulary it reads (``is_kept`` / ``_det_none``) so that every
+    consumer branching on "was anything found?" asks one question instead of re-deriving it. The
+    first consumer is SAM2 prompting: SAM2 cannot be seeded with nothing, so its caller skips the
+    model when this returns False.
+    """
+
+    def test_false_for_an_empty_table(self):
+        assert has_kept_detections(pd.DataFrame()) is False
+
+    def test_false_for_the_det_none_placeholder(self):
+        """The exact row the detector emits for a well it found nothing in."""
+        image_id = "20250912_B01_BF_t0000"
+        df = pd.DataFrame([
+            _detection_row(image_id, detection_id_value=no_candidate_detection_id(image_id), is_kept=False)
+        ])
+        assert has_kept_detections(df) is False
+        assert is_no_candidate_id(df["detection_id"].iloc[0])
+
+    def test_false_when_every_candidate_was_filtered_out(self):
+        """Real candidates found, all dropped by filtering — still nothing to prompt with."""
+        image_id = "20250912_B01_BF_t0000"
+        df = pd.DataFrame([
+            _detection_row(image_id, detection_id_value=detection_id(image_id, i), is_kept=False)
+            for i in range(3)
+        ])
+        assert has_kept_detections(df) is False
+
+    def test_true_when_any_row_is_kept(self):
+        image_id = "20250912_B01_BF_t0000"
+        df = pd.DataFrame([
+            _detection_row(image_id, detection_id_value=detection_id(image_id, 0), is_kept=True),
+            _detection_row(image_id, detection_id_value=detection_id(image_id, 1), is_kept=False),
+        ])
+        assert has_kept_detections(df) is True
+
+    def test_false_when_the_column_is_absent(self):
+        """Defensive: a frame without is_kept cannot claim to have kept anything."""
+        assert has_kept_detections(pd.DataFrame([{"image_id": "x"}])) is False

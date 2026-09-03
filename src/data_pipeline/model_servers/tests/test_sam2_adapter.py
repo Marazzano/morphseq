@@ -91,6 +91,38 @@ def _write_well(tmp_path: Path, experiment_id: str, local_well: str) -> tuple[Pa
     return inventory_csv, detections_csv
 
 
+def _write_empty_well(tmp_path: Path, experiment_id: str, local_well: str) -> tuple[Path, Path]:
+    """A well with NO embryo: the detector's `_det_none` placeholder, is_kept=False.
+
+    Exactly the shape GroundingDINO writes when it finds nothing (see
+    ``run_groundingdino_detection.py``), which is what well H09 of the pbx pilot plate produced.
+    """
+    from data_pipeline.object_extraction.detection.frame_detections_contract import (
+        no_candidate_detection_id,
+    )
+
+    inventory_csv, detections_csv = _write_well(tmp_path, experiment_id, local_well)
+    inventory = pd.read_csv(inventory_csv)
+    seed = inventory.iloc[0]
+    image_id = str(seed["image_id"])
+    pd.DataFrame(
+        [
+            {
+                "detection_id": no_candidate_detection_id(image_id),
+                "image_id": image_id,
+                "time_index": 0,
+                "channel_id": "BF",
+                "bbox_x_min_px": pd.NA,
+                "bbox_y_min_px": pd.NA,
+                "bbox_x_max_px": pd.NA,
+                "bbox_y_max_px": pd.NA,
+                "is_kept": False,
+            }
+        ]
+    ).to_csv(detections_csv, index=False)
+    return inventory_csv, detections_csv
+
+
 def _adapter() -> object:
     from data_pipeline.model_servers.adapters.sam2 import Sam2Adapter
 
@@ -101,6 +133,27 @@ def _adapter() -> object:
         sam2_model_id="sam2:test",
         device="cpu",
     )
+
+
+def _loaded_adapter_with_tripwire(monkeypatch):
+    """A LOADED adapter whose predictor fails the test if SAM2 is actually used.
+
+    load() is a lifecycle invariant -- a served adapter is always loaded before it serves -- so the
+    empty-well path must survive it. What must NOT happen is the model being USED, so the predictor
+    is a tripwire rather than the load being skipped.
+    """
+    import data_pipeline.model_servers.adapters.sam2 as sam2_adapter_mod
+
+    class _Tripwire:
+        def __getattr__(self, name):
+            raise AssertionError(f"SAM2 must not be used for an empty well (called {name!r})")
+
+    monkeypatch.setattr(
+        sam2_adapter_mod, "load_sam2_video_predictor", lambda **kwargs: _Tripwire()
+    )
+    adapter = _adapter()
+    adapter.load()
+    return adapter
 
 
 def test_adapter_registered_under_sam2():
@@ -218,3 +271,78 @@ def test_each_request_gets_fresh_tracking_state(tmp_path):
         ["20260724_test_A01"],
         ["20260724_test_A02"],
     ]
+
+
+# ---------------------------------------------------------------------------
+# Empty wells on the SERVED path
+# ---------------------------------------------------------------------------
+#
+# This is where the asymmetry lives, and why these tests are here rather than only beside the
+# contract. A served client shares a Snakemake GROUP with its service() rule, and a group fails as a
+# UNIT -- so on 2026-08-31 one empty well (H09) raised inside the adapter and deleted 87 SUCCESSFUL
+# frame_masks shards. The server itself was never at fault: harness.py:170 isolated the bad request
+# and kept serving. The fix has to make handle() RETURN NORMALLY for normal data, so the client
+# exits 0 with a valid artifact and Snakemake never sees a failure at all.
+
+
+def test_empty_well_returns_normally_without_calling_the_model(tmp_path, monkeypatch):
+    """handle() must not raise: a raise becomes ok=False -> client exit 1 -> whole group dies."""
+    inventory_csv, detections_csv = _write_empty_well(tmp_path, "20250912", "H09")
+    output_csv = tmp_path / "frame_masks.csv"
+    prompt_seeds_csv = tmp_path / "prompt_seeds.csv"
+
+    _loaded_adapter_with_tripwire(monkeypatch).handle(
+        {
+            "frame_inventory_csv": str(inventory_csv),
+            "frame_detections_csv": str(detections_csv),
+            "output_csv": str(output_csv),
+            "prompt_seeds_csv": str(prompt_seeds_csv),
+        }
+    )
+
+    assert output_csv.exists()
+    assert prompt_seeds_csv.exists()
+
+
+def test_empty_well_emits_no_mask_rows_not_a_zero_row_table(tmp_path, monkeypatch):
+    """The artifact uses the contract's existing no-mask placeholder, one row per frame."""
+    from data_pipeline.shared.identifiers import build_no_mask_id
+
+    inventory_csv, detections_csv = _write_empty_well(tmp_path, "20250912", "H09")
+    output_csv = tmp_path / "frame_masks.csv"
+
+    _loaded_adapter_with_tripwire(monkeypatch).handle(
+        {
+            "frame_inventory_csv": str(inventory_csv),
+            "frame_detections_csv": str(detections_csv),
+            "output_csv": str(output_csv),
+            "prompt_seeds_csv": str(tmp_path / "prompt_seeds.csv"),
+        }
+    )
+
+    masks = pd.read_csv(output_csv)
+    inventory = pd.read_csv(inventory_csv)
+    assert len(masks) == len(inventory), "one explicit no-mask row per frame, not a zero-row table"
+    assert not masks["is_valid_mask"].any()
+    assert masks["mask_id"].iloc[0] == build_no_mask_id(str(masks["image_id"].iloc[0]))
+
+
+def test_empty_well_output_passes_the_frame_masks_validator(tmp_path, monkeypatch):
+    """Indistinguishable from any other empty result -- downstream needs no special case."""
+    from data_pipeline.object_extraction.segmentation.validate_frame_masks import (
+        validate_frame_masks,
+    )
+
+    inventory_csv, detections_csv = _write_empty_well(tmp_path, "20250912", "H09")
+    output_csv = tmp_path / "frame_masks.csv"
+
+    _loaded_adapter_with_tripwire(monkeypatch).handle(
+        {
+            "frame_inventory_csv": str(inventory_csv),
+            "frame_detections_csv": str(detections_csv),
+            "output_csv": str(output_csv),
+            "prompt_seeds_csv": str(tmp_path / "prompt_seeds.csv"),
+        }
+    )
+
+    validate_frame_masks(pd.read_csv(output_csv), pd.read_csv(inventory_csv))

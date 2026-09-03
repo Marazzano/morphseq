@@ -8,6 +8,7 @@ import pytest
 from data_pipeline.object_extraction.segmentation.backends.sam2_video.prompt_detections import (
     PROMPT_DETECTION_COLUMNS,
     empty_prompt_detections,
+    unprompted_frame_masks,
     validate_frame_masks_against_sam2_prompts,
     validate_sam2_prompts,
 )
@@ -201,3 +202,50 @@ def test_validate_frame_masks_against_sam2_prompts_no_mask_placeholder_exempt():
     no_mask_row = no_mask_frame_mask_row(frame_row)
     frame_masks = pd.DataFrame([no_mask_row], columns=FRAME_MASKS_REQUIRED_COLUMNS)
     validate_frame_masks_against_sam2_prompts(frame_masks, prompts)  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# Empty wells — a well with no embryo is DATA, not an error
+# ---------------------------------------------------------------------------
+
+class TestEmptyWellIsNotAnError:
+    """The ARTIFACT a well with no embryo produces, and the validator that must stay strict.
+
+    The predicate that decides "did this well have anything?" is ``has_kept_detections``, which
+    lives with the contract that mints ``is_kept``/``_det_none`` — see
+    ``tests/.../detection/test_frame_detections_contract.py``. This file covers the segmentation
+    side: the rows emitted when SAM2 is skipped, and the fact that ``validate_sam2_prompts`` is
+    NOT relaxed to accommodate them.
+    """
+
+    def test_unprompted_frame_masks_emits_one_no_mask_row_per_frame(self):
+        inv = _frame_inventory(3)
+        masks = unprompted_frame_masks(inv)
+        assert len(masks) == 3
+        assert list(masks.columns) == list(FRAME_MASKS_REQUIRED_COLUMNS)
+        assert set(masks["image_id"]) == set(inv["image_id"])
+        assert not masks["is_valid_mask"].any()
+        assert (masks["area_px"] == 0.0).all()
+
+    def test_unprompted_frame_masks_passes_the_real_validator(self):
+        """The whole point: this artifact must be indistinguishable from a normal empty result."""
+        from data_pipeline.object_extraction.segmentation.validate_frame_masks import (
+            validate_frame_masks,
+        )
+
+        inv = _frame_inventory(2)
+        validate_frame_masks(unprompted_frame_masks(inv), inv)
+
+    def test_unprompted_frame_masks_uses_the_contract_placeholder_not_a_new_vocabulary(self):
+        """mask_id must be the minted no-mask id — the validator enforces this form."""
+        from data_pipeline.shared.identifiers import build_no_mask_id
+
+        inv = _frame_inventory(1)
+        masks = unprompted_frame_masks(inv)
+        assert masks["mask_id"].iloc[0] == build_no_mask_id(str(inv["image_id"].iloc[0]))
+
+    def test_validate_sam2_prompts_still_rejects_an_empty_prompt_set(self):
+        """The validator must NOT be relaxed: it is the guard against a broken detection stage."""
+        inv = _frame_inventory(1)
+        with pytest.raises(ValueError, match="at least one kept row"):
+            validate_sam2_prompts(empty_prompt_detections(), inv)

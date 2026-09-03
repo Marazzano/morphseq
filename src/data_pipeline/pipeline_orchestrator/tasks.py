@@ -1173,11 +1173,15 @@ def cmd_frame_masks(args: argparse.Namespace) -> None:
     from PIL import Image
 
     from data_pipeline.models.sam2 import load_sam2_video_predictor
+    from data_pipeline.object_extraction.detection.frame_detections_contract import (
+        has_kept_detections,
+    )
     from data_pipeline.object_extraction.segmentation.backends.sam2_video.adapt_sam2_output import (
         adapt_sam2_well_output,
     )
     from data_pipeline.object_extraction.segmentation.backends.sam2_video.prompt_detections import (
         select_segmentation_frame_view,
+        unprompted_frame_masks,
         validate_sam2_prompts,
     )
     from data_pipeline.object_extraction.segmentation.validate_frame_masks import validate_frame_masks
@@ -1200,6 +1204,25 @@ def cmd_frame_masks(args: argparse.Namespace) -> None:
             "is_kept",
         ]
     ]
+    # EMPTY WELL: no kept detection means there is no embryo to segment — a normal condition on a
+    # 96-well plate, and one the detection stage states explicitly via its `_det_none` placeholder.
+    # SAM2 cannot be prompted with nothing, so skip the model entirely and emit one explicit no-mask
+    # row per frame — the same shape adapt_sam2_output uses for an unmasked frame. Calling SAM2 here would raise inside validate_sam2_prompts and, on
+    # the served path, fail the whole Snakemake service GROUP (see ORCHESTRATION_TODOS.md).
+    if not has_kept_detections(frame_detections):
+        log_msg = (
+            f"EMPTY_WELL: {well_id} has no kept detections; writing no-mask frame_masks rows "
+            f"without calling SAM2."
+        )
+        print(log_msg, flush=True)
+        frame_masks = unprompted_frame_masks(model_inventory)
+        validate_frame_masks(frame_masks, model_inventory)
+        args.output_csv.parent.mkdir(parents=True, exist_ok=True)
+        frame_masks.to_csv(args.output_csv, index=False)
+        args.prompt_seeds_csv.parent.mkdir(parents=True, exist_ok=True)
+        prompt_detections.to_csv(args.prompt_seeds_csv, index=False)
+        return
+
     validate_sam2_prompts(prompt_detections, model_inventory)
 
     predictor = load_sam2_video_predictor(

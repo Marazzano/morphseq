@@ -13,7 +13,10 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from data_pipeline.object_extraction.segmentation.frame_masks_contract import FRAME_MASKS_REQUIRED_COLUMNS
+from data_pipeline.object_extraction.segmentation.frame_masks_contract import (
+    FRAME_MASKS_REQUIRED_COLUMNS,
+    no_mask_frame_mask_row,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -34,6 +37,21 @@ PROMPT_DETECTION_COLUMNS: tuple[str, ...] = (
 
 def empty_prompt_detections() -> pd.DataFrame:
     return pd.DataFrame(columns=PROMPT_DETECTION_COLUMNS)
+
+
+def unprompted_frame_masks(model_inventory: pd.DataFrame) -> pd.DataFrame:
+    """frame_masks for a well SAM2 was never run on: one explicit no-mask row per frame.
+
+    NOT a zero-row table. The contract already has a representation for "this frame has no mask" —
+    ``no_mask_frame_mask_row`` — and ``adapt_sam2_output`` emits exactly that for frames SAM2
+    returned nothing for. A well with no embryo is the same statement made for every frame, so it
+    produces the same shape as every other well and needs no special-casing downstream. The
+    validator enforces the placeholder's ``mask_id``/``is_valid_mask`` form
+    (``validate_frame_masks.py:46``), so this stays inside the existing contract rather than
+    inventing a second empty vocabulary beside it.
+    """
+    rows = [no_mask_frame_mask_row(row) for _, row in model_inventory.iterrows()]
+    return pd.DataFrame(rows, columns=list(FRAME_MASKS_REQUIRED_COLUMNS))
 
 
 # ---------------------------------------------------------------------------

@@ -31,6 +31,7 @@ garbage collected.
 
 from __future__ import annotations
 
+import logging
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -42,14 +43,21 @@ from PIL import Image
 from data_pipeline.model_servers.adapter_base import register_adapter
 from data_pipeline.model_servers.atomic_write import atomic_write_via
 from data_pipeline.models.sam2 import load_sam2_video_predictor
+from data_pipeline.object_extraction.detection.frame_detections_contract import (
+    has_kept_detections,
+)
 from data_pipeline.object_extraction.segmentation.backends.sam2_video.adapt_sam2_output import (
     adapt_sam2_well_output,
 )
 from data_pipeline.object_extraction.segmentation.backends.sam2_video.prompt_detections import (
     select_segmentation_frame_view,
+    unprompted_frame_masks,
     validate_sam2_prompts,
 )
 from data_pipeline.object_extraction.segmentation.validate_frame_masks import validate_frame_masks
+
+
+logger = logging.getLogger(__name__)
 
 
 def _to_rgb_jpeg(src: Path, dst: Path) -> None:
@@ -116,6 +124,28 @@ class Sam2Adapter:
                 "is_kept",
             ]
         ]
+        # EMPTY WELL: no kept detection means there is no embryo to segment — normal on a 96-well
+        # plate, and stated explicitly by the detection stage's `_det_none` placeholder. SAM2 cannot
+        # be prompted with nothing, so skip the model and emit one explicit no-mask row per frame.
+        #
+        # This matters MORE on the served path than in-process: raising here returns ok=False to the
+        # client (the harness isolates it correctly and keeps serving), but Snakemake groups served
+        # clients with their service rule, so one client's non-zero exit fails the GROUP and deletes
+        # every sibling's completed output. On 2026-08-31 one empty well destroyed 87 successful
+        # frame_masks shards that way. See ORCHESTRATION_TODOS.md.
+        if not has_kept_detections(frame_detections):
+            logger.info(
+                "EMPTY_WELL: %s has no kept detections; writing no-mask frame_masks rows "
+                "without calling SAM2.", well_id,
+            )
+            frame_masks = unprompted_frame_masks(model_inventory)
+            validate_frame_masks(frame_masks, model_inventory)
+            atomic_write_via(output_csv, lambda tmp: frame_masks.to_csv(tmp, index=False))
+            atomic_write_via(
+                prompt_seeds_csv, lambda tmp: prompt_detections.to_csv(tmp, index=False)
+            )
+            return
+
         validate_sam2_prompts(prompt_detections, model_inventory)
 
         ordered = (
