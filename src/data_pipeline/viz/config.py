@@ -42,6 +42,11 @@ class RenderConfig:
     font_thickness: int = 2
     bbox_thickness: int = 2
     mask_alpha: float = 0.4
+    # Contour thickness for mask outlines, in NATIVE frame pixels. The outline is what makes
+    # OVERLAPPING masks readable -- two alpha-blended fills stack into an ambiguous colour, but
+    # each mask's own-colour border stays traceable. Raise this when the frame will be scaled down
+    # for a contact sheet, or a 1px border disappears in the resize.
+    mask_outline_thickness: int = 1
     banner_height_px: int = 40
     text_color: tuple[int, int, int] = (255, 255, 255)
     banner_color: tuple[int, int, int] = (0, 0, 0)

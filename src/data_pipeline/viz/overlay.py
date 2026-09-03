@@ -130,9 +130,10 @@ def draw_masks(
         mask_3ch = np.stack([binary, binary, binary], axis=-1)
         out = np.where(mask_3ch, cv2.addWeighted(out, 1 - cfg.mask_alpha, colored, cfg.mask_alpha, 0), out)
 
-        # Contour outline
+        # Contour outline, in the mask's OWN colour: where two masks overlap the blended fills are
+        # ambiguous, so the per-mask border is what makes each one's extent traceable.
         contours, _ = cv2.findContours(binary.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        cv2.drawContours(out, contours, -1, color, 1)
+        cv2.drawContours(out, contours, -1, color, cfg.mask_outline_thickness)
 
         # Embryo label at centroid
         if cfg.show_embryo_labels and pd.notna(embryo_key) and str(embryo_key):

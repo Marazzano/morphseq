@@ -72,6 +72,8 @@ def test_surface_area_qc_plumbs_frame_inventory_from_cli_to_entrypoint():
     ) as run_surface_area_qc:
         args.func(args)
 
+    # config_overrides=None when no --config-yaml is passed: the product defaults in
+    # surface_area_qc/config.py stay in force for callers that supply no config.
     run_surface_area_qc.assert_called_once_with(
         mask_geometry_csv=Path("mask_geometry.csv"),
         stage_predictions_csv=Path("stage_predictions.csv"),
@@ -79,7 +81,68 @@ def test_surface_area_qc_plumbs_frame_inventory_from_cli_to_entrypoint():
         frame_inventory_csv=Path("frame_inventory.csv"),
         physical_embryo_registry_csv=Path("physical_embryo_registry.csv"),
         output_csv=Path("surface_area_qc.csv"),
+        config_overrides=None,
     )
+
+
+def test_surface_area_qc_plumbs_band_overrides_from_config_yaml(tmp_path):
+    """quality_control.surface_area_qc in the merged config must reach the entrypoint.
+
+    Guards the bug this wiring fixed: the entrypoint had always accepted config_overrides, but
+    the CLI/dispatcher never passed it, so a runtime overlay was silently ignored.
+    """
+    config_yaml = tmp_path / "merged_config.yaml"
+    config_yaml.write_text(
+        "quality_control:\n  surface_area_qc:\n    k_lower: 0.55\n    k_upper: 1.4\n",
+        encoding="utf-8",
+    )
+
+    parser = tasks.build_parser()
+    args = parser.parse_args([
+        "surface-area-qc",
+        "--mask-geometry-csv", "mask_geometry.csv",
+        "--stage-predictions-csv", "stage_predictions.csv",
+        "--snip-inventory-csv", "snip_inventory.csv",
+        "--frame-inventory-csv", "frame_inventory.csv",
+        "--physical-embryo-registry-csv", "physical_embryo_registry.csv",
+        "--output-csv", "surface_area_qc.csv",
+        "--config-yaml", str(config_yaml),
+    ])
+
+    with patch(
+        "data_pipeline.quality_control.surface_area_qc.entrypoint.run_surface_area_qc"
+    ) as run_surface_area_qc:
+        args.func(args)
+
+    assert run_surface_area_qc.call_args.kwargs["config_overrides"] == {
+        "k_lower": 0.55,
+        "k_upper": 1.4,
+    }
+
+
+def test_surface_area_qc_config_yaml_without_the_key_yields_no_overrides(tmp_path):
+    """A config with no quality_control.surface_area_qc block must not fabricate overrides."""
+    config_yaml = tmp_path / "merged_config.yaml"
+    config_yaml.write_text("microscope: Keyence\n", encoding="utf-8")
+
+    parser = tasks.build_parser()
+    args = parser.parse_args([
+        "surface-area-qc",
+        "--mask-geometry-csv", "mask_geometry.csv",
+        "--stage-predictions-csv", "stage_predictions.csv",
+        "--snip-inventory-csv", "snip_inventory.csv",
+        "--frame-inventory-csv", "frame_inventory.csv",
+        "--physical-embryo-registry-csv", "physical_embryo_registry.csv",
+        "--output-csv", "surface_area_qc.csv",
+        "--config-yaml", str(config_yaml),
+    ])
+
+    with patch(
+        "data_pipeline.quality_control.surface_area_qc.entrypoint.run_surface_area_qc"
+    ) as run_surface_area_qc:
+        args.func(args)
+
+    assert run_surface_area_qc.call_args.kwargs["config_overrides"] is None
 
 
 def test_surface_area_qc_rule_supplies_frame_inventory_cli_argument():
@@ -88,6 +151,15 @@ def test_surface_area_qc_rule_supplies_frame_inventory_cli_argument():
 
     assert 'frame_inventory=str(_saqc_frame_inventory(' in rule_text
     assert '--frame-inventory-csv "{input.frame_inventory}"' in rule_text
+
+
+def test_surface_area_qc_rule_supplies_config_yaml_cli_argument():
+    """The rule must pass the MERGED config so a per-experiment band overlay takes effect."""
+    rule_path = Path(tasks.__file__).with_name("rules") / "surface_area_qc.smk"
+    rule_text = rule_path.read_text(encoding="utf-8")
+
+    assert "config_yaml=str(CONFIG_YAML)," in rule_text
+    assert '--config-yaml "{params.config_yaml}"' in rule_text
 
 
 def test_materialize_well_parses_local_well_label():

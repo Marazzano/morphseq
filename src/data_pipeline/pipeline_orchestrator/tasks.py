@@ -834,6 +834,15 @@ def cmd_surface_area_qc(args: argparse.Namespace) -> None:
     """Compute the per-well surface_area_qc shard. Thin dispatcher; logic lives in the product."""
     from data_pipeline.quality_control.surface_area_qc.entrypoint import run_surface_area_qc
 
+    # Run-level band overrides (k_lower / k_upper / reference_version ...) live under
+    # quality_control.surface_area_qc in the merged config. A per-experiment overlay needs this
+    # because the packaged reference is a WILDTYPE percentile curve: a screen whose phenotype IS
+    # "small" (e.g. pbx) has its targets rejected by the wildtype-calibrated p5 floor. Passing None
+    # when no overlay key is present preserves the product defaults in surface_area_qc/config.py;
+    # resolve_config() rejects unknown keys, so a typo here fails loud.
+    config = yaml.safe_load(Path(args.config_yaml).read_text()) or {} if args.config_yaml else {}
+    config_overrides = (config.get("quality_control") or {}).get("surface_area_qc")
+
     run_surface_area_qc(
         mask_geometry_csv=args.mask_geometry_csv,
         stage_predictions_csv=args.stage_predictions_csv,
@@ -841,6 +850,7 @@ def cmd_surface_area_qc(args: argparse.Namespace) -> None:
         frame_inventory_csv=args.frame_inventory_csv,
         physical_embryo_registry_csv=args.physical_embryo_registry_csv,
         output_csv=args.output_csv,
+        config_overrides=config_overrides,
     )
 
 
@@ -1859,6 +1869,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_saqc.add_argument("--frame-inventory-csv", type=Path, required=True)
     p_saqc.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
     p_saqc.add_argument("--output-csv", type=Path, required=True)
+    # Optional: the merged config carrying quality_control.surface_area_qc band overrides.
+    # Default None keeps the product defaults, so callers that pass no config are unaffected.
+    p_saqc.add_argument("--config-yaml", type=Path, default=None)
     p_saqc.set_defaults(func=cmd_surface_area_qc)
 
     p_saqc_report = sub.add_parser("surface-area-qc-report")

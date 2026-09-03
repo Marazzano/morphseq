@@ -64,6 +64,11 @@ rule build_surface_area_qc_for_well:
         surface_area_qc=str(_saqc_artifact(
             "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
+    params:
+        # The MERGED config (base + runtime overlay), so a per-experiment
+        # quality_control.surface_area_qc block can retune the band. params: not input: —
+        # read lazily at execution time, never tracked or locked (see CONFIG_YAML in the Snakefile).
+        config_yaml=str(CONFIG_YAML),
     shell:
         """
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks surface-area-qc \
@@ -72,7 +77,8 @@ rule build_surface_area_qc_for_well:
           --snip-inventory-csv "{input.snip_inventory}" \
           --frame-inventory-csv "{input.frame_inventory}" \
           --physical-embryo-registry-csv "{input.physical_embryo_registry}" \
-          --output-csv "{output.surface_area_qc}"
+          --output-csv "{output.surface_area_qc}" \
+          --config-yaml "{params.config_yaml}"
         """
 
 
